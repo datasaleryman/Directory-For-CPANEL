@@ -1,5 +1,95 @@
 [
   {
+    "id": "a029cc88-b65f-4700-9fee-2ae015d1c9d8",
+    "timestamp": "2026-09-10T13:38:01.496Z",
+    "username": "admin",
+    "action": "Restored database backup (MERGE mode): 2 records across tables (Contacts: 1, Accounts: 0, Users: 0, Barangays: 1)"
+  },
+  {
+    "id": "b3b2f040-df77-4926-98f9-9a77df5058ca",
+    "timestamp": "2026-09-10T13:38:01.481Z",
+    "username": "admin",
+    "action": "Restored database backup (MERGE mode): 1 records across tables (Contacts: 1, Accounts: 0, Users: 0, Barangays: 0)"
+  },
+  {
+    "id": "74343a25-9866-4f8e-ba4f-9ea53be00e8f",
+    "timestamp": "2026-09-10T13:38:01.457Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "c5fcce60-74c3-4897-8c2d-f45586fe26af",
+    "timestamp": "2026-09-10T13:36:58.173Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "f0a56bc6-32b2-4297-896a-ea33f8e4195a",
+    "timestamp": "2026-09-10T13:36:53.027Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "3ce19fa5-5461-457d-b094-4a7b01524eae",
+    "timestamp": "2026-09-10T13:36:03.845Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "09a1b6a1-e71b-49ec-aab4-13b34922ad60",
+    "timestamp": "2026-09-10T13:35:17.971Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "686fed91-0730-4269-b0cd-6a0c09d2c2d8",
+    "timestamp": "2026-09-10T13:34:58.090Z",
+    "username": "admin",
+    "action": "Exported cPanel MySQL database full backup (8 tables, 449 total records)"
+  },
+  {
+    "id": "fd9be949-08b1-4bf4-90ac-eb5da01b2a75",
+    "timestamp": "2026-09-10T13:34:46.181Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "844e6349-2dbb-41b2-9c5c-c9843f964fab",
+    "timestamp": "2026-09-10T13:34:30.510Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "2b6dee14-0445-446b-be73-e8b89067eaa4",
+    "timestamp": "2026-09-10T13:34:26.371Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "e54597a3-44f1-41ee-b6a5-2c47102f1c2a",
+    "timestamp": "2026-09-10T13:34:12.665Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "1e1d3247-85ea-4f38-a35d-d0ac8f454f19",
+    "timestamp": "2026-09-10T13:33:47.978Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "def357e8-de5c-4364-a2cd-6faa5b4a1650",
+    "timestamp": "2026-09-10T13:32:50.016Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "b1ebb326-378e-402a-b3e8-97aed210e1ea",
+    "timestamp": "2026-09-10T13:24:41.691Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
     "id": "8b440e32-572a-428c-956a-5a2c18538d81",
     "timestamp": "2026-09-08T12:40:43.286Z",
     "username": "Automatic Background Sync",

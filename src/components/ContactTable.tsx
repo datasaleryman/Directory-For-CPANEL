@@ -835,6 +835,27 @@ export const ContactTable: React.FC<ContactTableProps> = ({
     lastSyncTime
   ]);
 
+  // Listen for database restore event to immediately refresh contacts and barangays
+  useEffect(() => {
+    const handleRestoreEvent = () => {
+      fetchContacts(true, 1);
+      fetch('/api/public/barangays')
+        .then(res => res.json())
+        .then(data => {
+          if (data && Array.isArray(data.barangays) && data.barangays.length > 0) {
+            const unique = Array.from(new Set([...data.barangays, ...DEFAULT_BARANGAYS])).filter(Boolean);
+            setDbBarangayList(unique);
+          }
+        })
+        .catch(err => console.warn('Failed to refresh barangays after restore:', err));
+    };
+
+    window.addEventListener('clinic-data-restored', handleRestoreEvent);
+    return () => {
+      window.removeEventListener('clinic-data-restored', handleRestoreEvent);
+    };
+  }, []);
+
   // Handle explicit page changes (e.g. Next / Prev page pagination)
   useEffect(() => {
     if (page > 1) {

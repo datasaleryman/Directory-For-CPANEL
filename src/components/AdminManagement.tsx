@@ -47,6 +47,15 @@ export const AdminManagement: React.FC<AdminManagementProps> = ({
     if (authToken) {
       fetchAdmins();
     }
+
+    const handleRestore = () => {
+      fetchAdmins();
+    };
+
+    window.addEventListener('clinic-data-restored', handleRestore);
+    return () => {
+      window.removeEventListener('clinic-data-restored', handleRestore);
+    };
   }, [authToken]);
 
   const handleCreateAdmin = async (e: React.FormEvent) => {

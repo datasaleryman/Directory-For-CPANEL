@@ -151,7 +151,7 @@ export function sanitizeInput(req: Request, res: Response, next: NextFunction) {
     } else if (typeof val === 'object' && val !== null) {
       const sanitized: any = {};
       for (const key of Object.keys(val)) {
-        if (key === 'fileData' || key === 'files' || key === 'photoDataUrl') {
+        if (key === 'fileData' || key === 'files' || key === 'photoDataUrl' || key === 'fileContent') {
           sanitized[key] = val[key];
         } else {
           sanitized[key] = sanitize(val[key]);

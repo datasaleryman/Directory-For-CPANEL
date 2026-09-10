@@ -11,7 +11,8 @@ import {
   deletedBarangaysCache,
   deletedExistingAccountsCache,
   deletedUsersCache,
-  addActivity
+  addActivity,
+  applyRestoredData
 } from './db.js';
 import { getCPanelDbStatus } from './cpanel_db.js';
 
@@ -391,3 +392,568 @@ export function formatBackupAsSql(backupData: BackupResult): string {
 
 // Backward-compatible alias
 export const getFullGoogleSheetsBackupData = getFullCPanelDbBackupData;
+
+/**
+ * Invalidates the in-memory cached backup data to force re-fetch
+ */
+export function invalidateBackupCache() {
+  cachedBackupResult = null;
+  lastBackupFetchTime = 0;
+}
+
+export interface TableDisplayInfo {
+  displayName: string;
+  destination: string;
+  category: string;
+  icon: string;
+}
+
+export function getTableDisplayInfo(key: string): TableDisplayInfo {
+  switch (key) {
+    case 'contacts':
+      return {
+        displayName: 'Contacts (PCU Directory)',
+        destination: 'Directory, Map, Print List & Dashboard',
+        category: 'Core Directory Records',
+        icon: 'contacts'
+      };
+    case 'existing_accounts':
+      return {
+        displayName: 'Existing Accounts',
+        destination: 'Existing Account & Exist. Acc. Files',
+        category: 'Member Accounts',
+        icon: 'accounts'
+      };
+    case 'users':
+      return {
+        displayName: 'User Accounts & Staff',
+        destination: 'Admin Credentials & Website Settings',
+        category: 'Access & Authentication',
+        icon: 'users'
+      };
+    case 'barangays':
+      return {
+        displayName: 'Barangays Master List',
+        destination: 'Barangay Filters, Analytics & Master Lists',
+        category: 'Geographic Master Data',
+        icon: 'barangays'
+      };
+    case 'site_settings':
+      return {
+        displayName: 'Website Settings & Branding',
+        destination: 'Site Branding, Nav Labels & Role Permissions',
+        category: 'System Configuration',
+        icon: 'settings'
+      };
+    case 'activities':
+      return {
+        displayName: 'Activity Logs',
+        destination: 'Dashboard Recent Activities & Audit Trail',
+        category: 'System Logs',
+        icon: 'activities'
+      };
+    case 'deleted_contacts':
+      return {
+        displayName: 'Deleted Contacts',
+        destination: 'Recycle Bin & Deleted Archives',
+        category: 'Archive',
+        icon: 'deleted'
+      };
+    case 'deleted_existing_accounts':
+      return {
+        displayName: 'Deleted Existing Accounts',
+        destination: 'Recycle Bin & Deleted Archives',
+        category: 'Archive',
+        icon: 'deleted'
+      };
+    case 'deleted_users':
+      return {
+        displayName: 'Deleted Users',
+        destination: 'Recycle Bin & Deleted Archives',
+        category: 'Archive',
+        icon: 'deleted'
+      };
+    case 'deleted_barangays':
+      return {
+        displayName: 'Deleted Barangays',
+        destination: 'Recycle Bin & Deleted Archives',
+        category: 'Archive',
+        icon: 'deleted'
+      };
+    default:
+      return {
+        displayName: key.charAt(0).toUpperCase() + key.slice(1).replace(/_/g, ' '),
+        destination: 'Database Table Storage',
+        category: 'Data Table',
+        icon: 'table'
+      };
+  }
+}
+
+export interface ParsedBackupPreview {
+  format: 'sql' | 'json';
+  fileName: string;
+  totalTables: number;
+  totalRecords: number;
+  tableCounts: Record<string, number>;
+  tableSummaries: Array<{
+    tableName: string;
+    displayName: string;
+    destination: string;
+    category: string;
+    count: number;
+    sampleKeys: string[];
+    sample: any[];
+  }>;
+}
+
+export interface ParsedBackupData extends ParsedBackupPreview {
+  data: {
+    contacts: any[];
+    existingAccounts: any[];
+    users: any[];
+    barangays: any[];
+    settings: any;
+    activities: any[];
+    deletedContacts: any[];
+    deletedUsers: any[];
+    deletedExistingAccounts: any[];
+    deletedBarangays: any[];
+  };
+}
+
+function normalizeTableKey(key: string): string {
+  const k = (key || '').toLowerCase().replace(/[`"'\s-]/g, '_');
+  if (k.includes('contact') && !k.includes('deleted')) return 'contacts';
+  if (k.includes('pcu') && !k.includes('update') && !k.includes('deleted')) return 'contacts';
+  if (k.includes('account') && !k.includes('deleted')) return 'existing_accounts';
+  if (k.includes('exist') && !k.includes('deleted')) return 'existing_accounts';
+  if (k.includes('user') && !k.includes('deleted')) return 'users';
+  if (k.includes('admin') && !k.includes('deleted')) return 'users';
+  if (k.includes('staff') && !k.includes('deleted')) return 'users';
+  if (k.includes('barangay') && !k.includes('deleted')) return 'barangays';
+  if (k.includes('brgy') && !k.includes('deleted')) return 'barangays';
+  if (k.includes('setting')) return 'site_settings';
+  if (k.includes('config')) return 'site_settings';
+  if (k.includes('activit') || k.includes('audit') || (k.includes('log') && !k.includes('logo'))) return 'activities';
+  if (k.includes('deleted') && (k.includes('contact') || k.includes('pcu'))) return 'deleted_contacts';
+  if (k.includes('deleted') && (k.includes('user') || k.includes('admin'))) return 'deleted_users';
+  if (k.includes('deleted') && (k.includes('account') || k.includes('exist'))) return 'deleted_existing_accounts';
+  if (k.includes('deleted') && (k.includes('barangay') || k.includes('brgy'))) return 'deleted_barangays';
+  return k;
+}
+
+function getTableDisplayName(key: string): string {
+  return getTableDisplayInfo(key).displayName;
+}
+
+function cleanSqlValueToken(raw: string): any {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.toUpperCase() === 'NULL') return null;
+  if (/^now\(\)$/i.test(trimmed)) return new Date().toISOString();
+  if (/^current_timestamp(?:\(\))?$/i.test(trimmed)) return new Date().toISOString();
+  if (/^true$/i.test(trimmed)) return true;
+  if (/^false$/i.test(trimmed)) return false;
+  if (/^-?\d+$/.test(trimmed)) {
+    const n = parseInt(trimmed, 10);
+    return isNaN(n) ? trimmed : n;
+  }
+  if (/^-?\d+\.\d+$/.test(trimmed)) {
+    const f = parseFloat(trimmed);
+    return isNaN(f) ? trimmed : f;
+  }
+  if ((trimmed.startsWith("'") && trimmed.endsWith("'")) || (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+    let unquoted = trimmed.slice(1, -1);
+    unquoted = unquoted
+      .replace(/\\'/g, "'")
+      .replace(/''/g, "'")
+      .replace(/\\"/g, '"')
+      .replace(/\\n/g, '\n')
+      .replace(/\\r/g, '\r')
+      .replace(/\\t/g, '\t')
+      .replace(/\\\\/g, '\\');
+    return unquoted;
+  }
+  return trimmed;
+}
+
+function parseSqlDump(sql: string): Record<string, any[]> {
+  const result: Record<string, any[]> = {
+    contacts: [],
+    existing_accounts: [],
+    users: [],
+    barangays: [],
+    site_settings: [],
+    activities: [],
+    deleted_contacts: [],
+    deleted_users: [],
+    deleted_existing_accounts: [],
+    deleted_barangays: []
+  };
+
+  const insertPattern = /INSERT\s+(?:IGNORE\s+)?INTO\s+([^\s(]+)\s*(?:\(([^)]+)\))?\s*VALUES\s*/gi;
+  let match: RegExpExecArray | null;
+
+  while ((match = insertPattern.exec(sql)) !== null) {
+    const rawTable = match[1].trim();
+    const cleanTable = rawTable.split('.').pop()!.replace(/[`"']/g, '').trim().toLowerCase();
+    const tableKey = normalizeTableKey(cleanTable);
+
+    let columns: string[] = [];
+    if (match[2]) {
+      columns = match[2].split(',').map(c => c.replace(/[`"']/g, '').trim().toLowerCase());
+    } else {
+      if (tableKey === 'contacts') {
+        columns = ['id', 'full_name', 'barangay', 'purok', 'contact_number', 'created_at', 'updated_at', 'latitude', 'longitude', 'geotagged', 'status', 'is_submitted', 'photo_url', 'pcu_file_url', 'pcu_uploaded_by', 'pcu_uploaded_at', 'deleted_at'];
+      } else if (tableKey === 'existing_accounts') {
+        columns = ['id', 'full_name', 'barangay', 'purok', 'contact_number', 'created_at', 'status', 'submitted_by', 'folder', 'remarks', 'deleted_at'];
+      } else if (tableKey === 'users') {
+        columns = ['username', 'password_hash', 'role', 'full_name', 'email', 'status', 'barangay', 'created_at', 'avatar_data_url', 'permissions'];
+      } else if (tableKey === 'barangays') {
+        columns = ['name'];
+      } else if (tableKey === 'site_settings') {
+        columns = ['setting_key', 'setting_value', 'updated_at'];
+      } else if (tableKey === 'activities') {
+        columns = ['id', 'timestamp', 'username', 'action'];
+      }
+    }
+
+    let pos = match.index + match[0].length;
+    let inSingleQuote = false;
+    let inDoubleQuote = false;
+    let inEscape = false;
+    let inTuple = false;
+    let currentVal = '';
+    let currentTuple: any[] = [];
+    const tuples: any[][] = [];
+
+    while (pos < sql.length) {
+      const ch = sql[pos];
+      const nextCh = pos + 1 < sql.length ? sql[pos + 1] : '';
+
+      if (inEscape) {
+        currentVal += ch;
+        inEscape = false;
+        pos++;
+        continue;
+      }
+
+      if (ch === '\\' && (inSingleQuote || inDoubleQuote)) {
+        inEscape = true;
+        pos++;
+        continue;
+      }
+
+      if (ch === "'" && !inDoubleQuote) {
+        if (inSingleQuote && nextCh === "'") {
+          currentVal += "'";
+          pos += 2;
+          continue;
+        }
+        inSingleQuote = !inSingleQuote;
+        pos++;
+        continue;
+      }
+
+      if (ch === '"' && !inSingleQuote) {
+        if (inDoubleQuote && nextCh === '"') {
+          currentVal += '"';
+          pos += 2;
+          continue;
+        }
+        inDoubleQuote = !inDoubleQuote;
+        pos++;
+        continue;
+      }
+
+      if (!inSingleQuote && !inDoubleQuote) {
+        if (ch === '(' && !inTuple) {
+          inTuple = true;
+          currentTuple = [];
+          currentVal = '';
+          pos++;
+          continue;
+        } else if (ch === ')' && inTuple) {
+          currentTuple.push(cleanSqlValueToken(currentVal));
+          tuples.push(currentTuple);
+          currentTuple = [];
+          currentVal = '';
+          inTuple = false;
+          pos++;
+          continue;
+        } else if (ch === ',' && inTuple) {
+          currentTuple.push(cleanSqlValueToken(currentVal));
+          currentVal = '';
+          pos++;
+          continue;
+        } else if (ch === ';') {
+          pos++;
+          break;
+        } else if (!inTuple && sql.slice(pos, pos + 12).toUpperCase() === 'ON DUPLICATE') {
+          while (pos < sql.length && sql[pos] !== ';') pos++;
+          if (pos < sql.length && sql[pos] === ';') pos++;
+          break;
+        } else if (ch === '-' && nextCh === '-') {
+          while (pos < sql.length && sql[pos] !== '\n') pos++;
+          continue;
+        }
+      }
+
+      if (inTuple) {
+        currentVal += ch;
+      }
+      pos++;
+    }
+
+    insertPattern.lastIndex = pos;
+
+    if (!result[tableKey]) {
+      result[tableKey] = [];
+    }
+
+    for (const tuple of tuples) {
+      const rowObj: Record<string, any> = {};
+      let colsToUse = columns;
+      if (colsToUse.length === 0 || colsToUse.length !== tuple.length) {
+        if (tableKey === 'barangays') {
+          colsToUse = tuple.length === 1 ? ['name'] : ['id', 'name'];
+        } else if (columns.length === 0) {
+          colsToUse = tuple.map((_, i) => `col_${i}`);
+        }
+      }
+      for (let i = 0; i < colsToUse.length; i++) {
+        const col = colsToUse[i];
+        rowObj[col] = i < tuple.length ? tuple[i] : null;
+      }
+      result[tableKey].push(rowObj);
+    }
+  }
+
+  return result;
+}
+
+function parseJsonBackup(content: any): Record<string, any[]> {
+  let parsed: any;
+  if (typeof content === 'object' && content !== null) {
+    parsed = content;
+  } else {
+    let raw = String(content || '').trim();
+    if (raw.charCodeAt(0) === 0xFEFF) {
+      raw = raw.slice(1).trim();
+    }
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e1: any) {
+      if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+        try {
+          parsed = JSON.parse(JSON.parse(raw));
+        } catch {
+          throw new Error(`${e1.message} (Raw snippet: ${raw.slice(0, 60)})`);
+        }
+      } else {
+        throw new Error(`${e1.message} (Raw snippet: ${raw.slice(0, 60)})`);
+      }
+    }
+  }
+  const result: Record<string, any[]> = {
+    contacts: [],
+    existing_accounts: [],
+    users: [],
+    barangays: [],
+    site_settings: [],
+    activities: [],
+    deleted_contacts: [],
+    deleted_users: [],
+    deleted_existing_accounts: [],
+    deleted_barangays: []
+  };
+
+  // Case 1: App's own export format with rawTables
+  if (parsed.rawTables && typeof parsed.rawTables === 'object') {
+    for (const [key, val] of Object.entries(parsed.rawTables)) {
+      if (Array.isArray(val)) {
+        const normKey = normalizeTableKey(key);
+        result[normKey] = val;
+      }
+    }
+    return result;
+  }
+
+  // Case 2: App's export format with tables array
+  if (Array.isArray(parsed.tables)) {
+    for (const tbl of parsed.tables) {
+      const normKey = normalizeTableKey(tbl.tableName || tbl.displayName || '');
+      if (Array.isArray(tbl.records) && tbl.records.length > 0) {
+        result[normKey] = tbl.records;
+      } else if (Array.isArray(tbl.rows) && Array.isArray(tbl.headers)) {
+        result[normKey] = tbl.rows.map((row: any[]) => {
+          const obj: Record<string, any> = {};
+          tbl.headers.forEach((h: string, i: number) => {
+            obj[h] = i < row.length ? row[i] : null;
+          });
+          return obj;
+        });
+      }
+    }
+    return result;
+  }
+
+  // Case 3: Direct key mapping
+  for (const [key, val] of Object.entries(parsed)) {
+    const normKey = normalizeTableKey(key);
+    if (Array.isArray(val)) {
+      result[normKey] = val;
+    } else if (key.includes('setting') && typeof val === 'object' && val !== null) {
+      result.site_settings = Object.entries(val).map(([k, v]) => ({
+        setting_key: k,
+        setting_value: typeof v === 'object' ? JSON.stringify(v) : v
+      }));
+    }
+  }
+
+  // Case 4: Top-level array of objects
+  if (Array.isArray(parsed) && parsed.length > 0) {
+    const first = parsed[0];
+    if (first && (first.full_name || first.barangay || first.contact_number)) {
+      result.contacts = parsed;
+    } else if (first && first.tableName) {
+      for (const item of parsed) {
+        const normKey = normalizeTableKey(item.tableName);
+        if (Array.isArray(item.records)) result[normKey] = item.records;
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Parses raw uploaded file content (SQL or JSON) and returns a structured preview and dataset
+ */
+export function parseBackupContent(content: string, fileName: string = 'backup'): ParsedBackupData {
+  let trimmed = (content || '').trim();
+  if (!trimmed) {
+    throw new Error('The backup file is empty.');
+  }
+
+  // Fallback: If payload was HTML-escaped by middleware, restore original characters
+  if (trimmed.includes('&quot;') || trimmed.includes('&#x27;') || trimmed.includes('&amp;') || trimmed.includes('&#x2F;')) {
+    trimmed = trimmed
+      .replace(/&quot;/g, '"')
+      .replace(/&#x27;/g, "'")
+      .replace(/&#x2F;/g, '/')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
+  }
+
+  const isExplicitSql = fileName.toLowerCase().endsWith('.sql');
+  const isExplicitJson = fileName.toLowerCase().endsWith('.json');
+
+  let format: 'sql' | 'json';
+  let rawExtracted: Record<string, any[]>;
+
+  if (isExplicitJson || (!isExplicitSql && (trimmed.startsWith('{') || trimmed.startsWith('[')))) {
+    format = 'json';
+    try {
+      rawExtracted = parseJsonBackup(trimmed);
+    } catch (err: any) {
+      if (isExplicitJson) {
+        throw new Error(`Failed to parse JSON backup file: ${err.message || err}`);
+      }
+      // If auto-detection failed, try SQL fallback
+      format = 'sql';
+      rawExtracted = parseSqlDump(trimmed);
+    }
+  } else {
+    format = 'sql';
+    try {
+      rawExtracted = parseSqlDump(trimmed);
+    } catch (err: any) {
+      throw new Error(`Failed to parse SQL backup file: ${err.message || err}`);
+    }
+  }
+
+  const tableCounts: Record<string, number> = {};
+  const tableSummaries: ParsedBackupPreview['tableSummaries'] = [];
+  let totalRecords = 0;
+
+  // Preferred order for displaying tables
+  const tableOrder = ['contacts', 'existing_accounts', 'users', 'barangays', 'site_settings', 'activities', 'deleted_contacts', 'deleted_existing_accounts', 'deleted_users', 'deleted_barangays'];
+  const sortedKeys = Object.keys(rawExtracted).sort((a, b) => {
+    const idxA = tableOrder.indexOf(a);
+    const idxB = tableOrder.indexOf(b);
+    if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+    if (idxA !== -1) return -1;
+    if (idxB !== -1) return 1;
+    return a.localeCompare(b);
+  });
+
+  for (const tKey of sortedKeys) {
+    const list = rawExtracted[tKey];
+    if (Array.isArray(list) && list.length > 0) {
+      tableCounts[tKey] = list.length;
+      totalRecords += list.length;
+      const sampleItem = list[0] || {};
+      const sampleKeys = typeof sampleItem === 'object' && sampleItem !== null ? Object.keys(sampleItem) : [];
+      const info = getTableDisplayInfo(tKey);
+      tableSummaries.push({
+        tableName: tKey,
+        displayName: info.displayName,
+        destination: info.destination,
+        category: info.category,
+        count: list.length,
+        sampleKeys,
+        sample: list.slice(0, 5)
+      });
+    }
+  }
+
+  if (totalRecords === 0) {
+    throw new Error(
+      `No compatible database records could be recognized in ${fileName}. Supported formats: SQL dumps with INSERT statements or JSON backup files.`
+    );
+  }
+
+  return {
+    format,
+    fileName,
+    totalTables: tableSummaries.length,
+    totalRecords,
+    tableCounts,
+    tableSummaries,
+    data: {
+      contacts: rawExtracted.contacts || [],
+      existingAccounts: rawExtracted.existing_accounts || [],
+      users: rawExtracted.users || [],
+      barangays: rawExtracted.barangays || [],
+      settings: rawExtracted.site_settings || [],
+      activities: rawExtracted.activities || [],
+      deletedContacts: rawExtracted.deleted_contacts || [],
+      deletedUsers: rawExtracted.deleted_users || [],
+      deletedExistingAccounts: rawExtracted.deleted_existing_accounts || [],
+      deletedBarangays: rawExtracted.deleted_barangays || []
+    }
+  };
+}
+
+/**
+ * Restores parsed backup content into the database and invalidates the export cache
+ */
+export async function restoreBackupFromContent(
+  content: string,
+  fileName: string = 'backup',
+  mode: 'merge' | 'replace' = 'merge',
+  username: string = 'admin'
+) {
+  const parsed = parseBackupContent(content, fileName);
+  const result = await applyRestoredData(parsed.data, mode, username);
+  invalidateBackupCache();
+  return {
+    ...result,
+    format: parsed.format,
+    fileName: parsed.fileName,
+    detectedTables: parsed.totalTables
+  };
+}
+

@@ -37,7 +37,7 @@ export function loadCPanelDbConfig(): CPanelDbConfig {
       fileConfig = JSON.parse(content);
     }
   } catch (err) {
-    console.warn('[cPanel DB] Could not read config file, using env/defaults:', err);
+    console.log('[cPanel DB] Could not read config file, using env/defaults:', err);
   }
 
   const envHost = process.env.DB_HOST || process.env.MYSQL_HOST;
@@ -48,12 +48,12 @@ export function loadCPanelDbConfig(): CPanelDbConfig {
   const envSsl = process.env.DB_SSL === 'true' || process.env.MYSQL_SSL === 'true';
 
   return {
-    host: envHost || fileConfig.host || 'localhost',
-    port: envPort ? parseInt(envPort, 10) : (fileConfig.port || 3306),
-    user: envUser || fileConfig.user || '',
-    password: envPass !== undefined ? envPass : (fileConfig.password || ''),
-    database: envName || fileConfig.database || '',
-    ssl: envSsl || fileConfig.ssl || false,
+    host: fileConfig.host || envHost || 'localhost',
+    port: fileConfig.port ? fileConfig.port : (envPort ? parseInt(envPort, 10) : 3306),
+    user: fileConfig.user !== undefined ? fileConfig.user : (envUser || ''),
+    password: fileConfig.password !== undefined ? fileConfig.password : (envPass !== undefined ? envPass : ''),
+    database: fileConfig.database !== undefined ? fileConfig.database : (envName || ''),
+    ssl: fileConfig.ssl !== undefined ? fileConfig.ssl : envSsl,
     enabled: fileConfig.enabled !== undefined ? fileConfig.enabled : Boolean(envName && envUser)
   };
 }
@@ -255,13 +255,35 @@ export async function reinitializePool(customConfig?: CPanelDbConfig): Promise<b
     tables: []
   };
 
-  if (!config.enabled && !config.database) {
-    currentStatus.lastError = 'cPanel MySQL Database not configured. Running in Local Storage mode.';
+  if (!config.enabled || !config.database) {
+    currentStatus.lastError = 'cPanel MySQL Database disabled or not configured. Running in Local Storage mode.';
     return false;
   }
 
+  const isContainerEnv = Boolean(
+    process.env.K_SERVICE || 
+    process.env.APPLET_ID || 
+    process.env.LAMBDA_TASK_ROOT || 
+    process.env.NETLIFY
+  );
+  const isLocalhost = 
+    config.host === 'localhost' || 
+    config.host === '127.0.0.1' || 
+    config.host === '::1';
+
+  // In cloud preview / container environments, localhost MySQL is not hosted inside the container.
+  // We avoid attempting an unfulfillable network connection that triggers ECONNREFUSED alarms.
+  if (isContainerEnv && isLocalhost) {
+    currentStatus.connected = false;
+    currentStatus.isMainDatabase = false;
+    currentStatus.lastError = 'Local MySQL is not running inside this Cloud Run preview container. Operating safely in Local Storage mode (data/*.json). For cPanel deployment, deploy to your cPanel hosting where localhost MySQL is available, or specify your remote cPanel server hostname/IP in Settings.';
+    console.log('[cPanel DB] Notice: Local MySQL is not present in cloud preview container. Running in Local Storage mode.');
+    return false;
+  }
+
+  let newPool: mysql.Pool | null = null;
   try {
-    const newPool = mysql.createPool({
+    newPool = mysql.createPool({
       host: config.host || 'localhost',
       port: config.port || 3306,
       user: config.user,
@@ -317,7 +339,12 @@ export async function reinitializePool(customConfig?: CPanelDbConfig): Promise<b
     currentStatus.connected = false;
     currentStatus.isMainDatabase = false;
     currentStatus.lastError = errMsg;
-    console.warn(`[cPanel DB] Connection to MySQL failed (${config.host}:${config.port}/${config.database}): ${errMsg}. App running in Local Storage mode.`);
+    console.log(`[cPanel DB] Notice: Connection to MySQL (${config.host}:${config.port}/${config.database}) not established (${errMsg}). Running in Local Storage mode.`);
+    if (newPool) {
+      try {
+        await newPool.end();
+      } catch {}
+    }
     return false;
   }
 }
@@ -326,6 +353,24 @@ export async function reinitializePool(customConfig?: CPanelDbConfig): Promise<b
  * Tests MySQL connection with arbitrary config parameters without saving
  */
 export async function testCPanelDbConnection(config: CPanelDbConfig): Promise<{ success: boolean; message: string; tableCount?: number }> {
+  const isContainerEnv = Boolean(
+    process.env.K_SERVICE || 
+    process.env.APPLET_ID || 
+    process.env.LAMBDA_TASK_ROOT || 
+    process.env.NETLIFY
+  );
+  const isLocalhost = 
+    config.host === 'localhost' || 
+    config.host === '127.0.0.1' || 
+    config.host === '::1';
+
+  if (isContainerEnv && isLocalhost) {
+    return {
+      success: false,
+      message: 'Cannot connect to "localhost" MySQL inside this cloud preview environment. To test connection to your cPanel database from here, enter your remote cPanel server hostname or IP (and ensure Remote MySQL access is allowed in your cPanel dashboard).'
+    };
+  }
+
   let testPool: mysql.Pool | null = null;
   try {
     testPool = mysql.createPool({

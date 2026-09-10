@@ -226,11 +226,19 @@ export default function App() {
       fetchSettings();
     };
 
+    const handleDataRestoredEvent = () => {
+      setLastSyncTime(new Date().toISOString());
+      fetchStats();
+      fetchSettings();
+    };
+
     window.addEventListener('focus', handleFocus);
+    window.addEventListener('clinic-data-restored', handleDataRestoredEvent);
     const interval = setInterval(fetchSettings, 15000);
 
     return () => {
       window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('clinic-data-restored', handleDataRestoredEvent);
       clearInterval(interval);
     };
   }, []);
@@ -1139,6 +1147,17 @@ export default function App() {
                     if (newToken) {
                       setAuthToken(newToken);
                       localStorage.setItem('dir_auth_token', newToken);
+                    }
+                  }}
+                  onDataRestored={() => {
+                    setLastSyncTime(new Date().toISOString());
+                    fetchStats();
+                    fetchSettings();
+                  }}
+                  onNavigateTab={(tab) => {
+                    setActiveTab(tab as any);
+                    if (['bulk', 'print', 'existing-account'].includes(tab)) {
+                      setIsDataEntryOpen(true);
                     }
                   }}
                 />

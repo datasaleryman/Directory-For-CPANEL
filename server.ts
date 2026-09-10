@@ -101,7 +101,9 @@ import {
   getFullGoogleSheetsBackupData,
   getFullCPanelDbBackupData,
   formatBackupAsJson,
-  formatBackupAsSql
+  formatBackupAsSql,
+  parseBackupContent,
+  restoreBackupFromContent
 } from './server/backup.js';
 
 export async function getApp(httpServer?: http.Server) {
@@ -1168,6 +1170,55 @@ export async function getApp(httpServer?: http.Server) {
     } catch (err: any) {
       console.error('[Backup] Error generating backup export:', err);
       res.status(500).json({ error: err.message || 'Failed to export backup data.' });
+    }
+  });
+
+  // Inspect and parse an uploaded backup file (.sql or .json) without applying changes
+  app.post('/api/backup/upload-preview', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { fileContent, fileName } = req.body || {};
+      if (!fileContent || typeof fileContent !== 'string') {
+        return res.status(400).json({ error: 'Missing or invalid fileContent in request body.' });
+      }
+
+      const parsed = parseBackupContent(fileContent, fileName || 'backup');
+      res.json({
+        success: true,
+        preview: {
+          format: parsed.format,
+          fileName: parsed.fileName,
+          totalTables: parsed.totalTables,
+          totalRecords: parsed.totalRecords,
+          tableCounts: parsed.tableCounts,
+          tableSummaries: parsed.tableSummaries
+        }
+      });
+    } catch (err: any) {
+      console.error('[Backup] Error previewing uploaded backup:', err);
+      res.status(400).json({ error: err.message || 'Failed to parse backup file.' });
+    }
+  });
+
+  // Restore database from an uploaded backup file (.sql or .json)
+  app.post('/api/backup/restore', requireAdmin, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'admin';
+      const { fileContent, fileName, mode } = req.body || {};
+      if (!fileContent || typeof fileContent !== 'string') {
+        return res.status(400).json({ error: 'Missing or invalid fileContent in request body.' });
+      }
+
+      const restoreMode: 'merge' | 'replace' = mode === 'replace' ? 'replace' : 'merge';
+      const result = await restoreBackupFromContent(fileContent, fileName || 'backup', restoreMode, username);
+
+      res.json({
+        success: true,
+        message: result.message,
+        details: result
+      });
+    } catch (err: any) {
+      console.error('[Backup] Error restoring uploaded backup:', err);
+      res.status(400).json({ error: err.message || 'Failed to restore database from backup.' });
     }
   });
 

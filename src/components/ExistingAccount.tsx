@@ -342,6 +342,16 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
   useEffect(() => {
     fetchExistingAccounts();
     fetchBarangays();
+
+    const handleRestore = () => {
+      fetchExistingAccounts();
+      fetchBarangays();
+    };
+
+    window.addEventListener('clinic-data-restored', handleRestore);
+    return () => {
+      window.removeEventListener('clinic-data-restored', handleRestore);
+    };
   }, [authToken]);
 
   // Aggregate unique barangays for filter dropdown from active unsubmitted accounts

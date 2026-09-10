@@ -62,6 +62,8 @@ interface SettingsPageProps {
   onSettingsSaved: (updated: any) => void;
   adminUser?: any;
   onAdminUserUpdated?: (user: any, newToken?: string) => void;
+  onDataRestored?: () => void;
+  onNavigateTab?: (tab: string) => void;
 }
 
 const DEFAULT_ROLES = [
@@ -135,7 +137,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   showToast,
   siteSettings,
   onSettingsSaved,
-  adminUser
+  adminUser,
+  onDataRestored,
+  onNavigateTab
 }) => {
   const [activeSettingsTab, setActiveSettingsTab] = useState<'branding' | 'cpanelDb' | 'nav' | 'roles' | 'addAccount' | 'backup'>('branding');
   const [syncing, setSyncing] = useState(false);
@@ -1725,6 +1729,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         <BackupDataSettings
           authToken={authToken}
           showToast={showToast}
+          onDataRestored={onDataRestored}
+          onNavigateTab={onNavigateTab}
         />
       )}
     </div>

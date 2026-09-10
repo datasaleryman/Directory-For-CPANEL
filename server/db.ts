@@ -1388,7 +1388,7 @@ export async function initDb() {
         console.log('[cPanel DB] Note: cPanel MySQL Database not yet connected. Ready to connect via Settings or .env');
       }
     } catch (cpanelErr: any) {
-      console.warn('[cPanel DB] Initialization warning:', cpanelErr.message);
+      console.log('[cPanel DB] Initialization note:', cpanelErr.message);
     }
 
     // Ensure all Base44 JSON Cache files exist on disk to prevent read-only filesystem crash or empty fallback failures
@@ -9172,6 +9172,443 @@ export async function autoMergeAllPerfectMatches(username: string) {
   }
 
   return { mergedCount: mergedGroups.length, mergedGroups };
+}
+
+/**
+ * Applies restored database data from a parsed backup (JSON or SQL).
+ * Handles contacts, existing accounts, users, barangays, settings, and activities.
+ * Can either merge with current records or replace them (with safety safeguards).
+ */
+export async function applyRestoredData(
+  payload: {
+    contacts?: any[];
+    existingAccounts?: any[];
+    users?: any[];
+    barangays?: any[];
+    settings?: any;
+    activities?: any[];
+    deletedContacts?: any[];
+    deletedUsers?: any[];
+    deletedExistingAccounts?: any[];
+    deletedBarangays?: any[];
+  },
+  mode: 'merge' | 'replace' = 'merge',
+  username: string = 'admin'
+): Promise<{
+  success: boolean;
+  message: string;
+  counts: {
+    contacts: number;
+    existingAccounts: number;
+    users: number;
+    barangays: number;
+    settings: number;
+    activities: number;
+  };
+  destinations?: Record<string, string>;
+  totalRecords: number;
+}> {
+  let contactsCount = 0;
+  let accountsCount = 0;
+  let usersCount = 0;
+  let barangaysCount = 0;
+  let settingsCount = 0;
+  let activitiesCount = 0;
+
+  // 1. Process Contacts
+  if (Array.isArray(payload.contacts) && payload.contacts.length > 0) {
+    const normalizedContacts: Contact[] = [];
+    for (const raw of payload.contacts) {
+      if (!raw) continue;
+      const fullName = String(raw.full_name || raw.fullName || raw.name || '').trim();
+      if (!fullName) continue;
+
+      let id: number | string = raw.id;
+      if (typeof id === 'string' && /^\d+$/.test(id)) {
+        id = parseInt(id, 10);
+      } else if (typeof id !== 'number' && typeof id !== 'string') {
+        id = Date.now() + Math.floor(Math.random() * 10000);
+      }
+      if (typeof id === 'number' && (isNaN(id) || id <= 0)) {
+        id = Date.now() + Math.floor(Math.random() * 10000);
+      }
+
+      const brgy = String(raw.barangay || '').trim().toUpperCase();
+      const purok = String(raw.purok || '').trim();
+
+      // Clear any tombstone so contact is immediately visible everywhere
+      unTombstoneContact(id, fullName, brgy);
+      if (brgy) unTombstoneBarangay(brgy);
+
+      normalizedContacts.push({
+        id,
+        full_name: fullName,
+        barangay: brgy,
+        purok,
+        contact_number: String(raw.contact_number ?? raw.contactNumber ?? raw.phone ?? '').trim(),
+        created_at: String(raw.created_at || raw.createdAt || new Date().toISOString()),
+        updated_at: String(raw.updated_at || raw.updatedAt || new Date().toISOString()),
+        latitude: raw.latitude !== null && raw.latitude !== undefined && raw.latitude !== '' ? parseFloat(String(raw.latitude)) : undefined,
+        longitude: raw.longitude !== null && raw.longitude !== undefined && raw.longitude !== '' ? parseFloat(String(raw.longitude)) : undefined,
+        geotagged: Boolean(raw.geotagged === 1 || raw.geotagged === '1' || raw.geotagged === true || (raw.latitude && raw.longitude)),
+        status: String(raw.status || 'ACTIVE').toUpperCase(),
+        isSubmitted: Boolean(raw.isSubmitted || raw.is_submitted === 1 || raw.is_submitted === '1' || raw.is_submitted === true),
+        photo_url: String(raw.photo_url || raw.photoUrl || ''),
+        pcu_file_url: String(raw.pcu_file_url || raw.pcuFileUrl || ''),
+        pcu_uploaded_by: String(raw.pcu_uploaded_by || raw.pcuUploadedBy || ''),
+        pcu_uploaded_at: String(raw.pcu_uploaded_at || raw.pcuUploadedAt || ''),
+        added_from_print_list: Boolean(raw.added_from_print_list || raw.addedFromPrintList),
+        pin: raw.pin ? String(raw.pin) : undefined,
+        facebookLink: raw.facebookLink || raw.facebook_link ? String(raw.facebookLink || raw.facebook_link) : undefined,
+        category: (raw.category as any) || 'pcu',
+        deleted_at: raw.deleted_at || raw.deletedAt ? String(raw.deleted_at || raw.deletedAt) : undefined
+      });
+    }
+
+    if (mode === 'replace') {
+      contactsCache = normalizedContacts;
+    } else {
+      const existingMap = new Map<string, Contact>();
+      for (const c of contactsCache) {
+        existingMap.set(String(c.id), c);
+        const nameKey = `${c.full_name.toLowerCase()}_${(c.barangay || '').toLowerCase()}`;
+        existingMap.set(nameKey, c);
+      }
+      for (const newC of normalizedContacts) {
+        const idKey = String(newC.id);
+        const nameKey = `${newC.full_name.toLowerCase()}_${(newC.barangay || '').toLowerCase()}`;
+        if (existingMap.has(idKey)) {
+          const idx = contactsCache.findIndex(c => String(c.id) === idKey);
+          if (idx >= 0) contactsCache[idx] = { ...contactsCache[idx], ...newC };
+        } else if (existingMap.has(nameKey)) {
+          const idx = contactsCache.findIndex(c => `${c.full_name.toLowerCase()}_${(c.barangay || '').toLowerCase()}` === nameKey);
+          if (idx >= 0) contactsCache[idx] = { ...contactsCache[idx], ...newC };
+        } else {
+          contactsCache.push(newC);
+          existingMap.set(idKey, newC);
+          existingMap.set(nameKey, newC);
+        }
+      }
+    }
+    contactsCount = normalizedContacts.length;
+    await safeWriteFile(CONTACTS_FILE, JSON.stringify(contactsCache, null, 2), 'utf-8');
+  }
+
+  // 2. Process Existing Accounts
+  if (Array.isArray(payload.existingAccounts) && payload.existingAccounts.length > 0) {
+    const normalizedAccounts: ExistingAccountItem[] = [];
+    for (const raw of payload.existingAccounts) {
+      if (!raw) continue;
+      const fullName = String(raw.full_name || raw.fullName || raw.name || '').trim();
+      if (!fullName) continue;
+
+      const id = String(raw.id || (Date.now() + '-' + Math.random().toString(36).substring(2, 7)));
+      const brgy = String(raw.barangay || raw.folder || '').trim().toUpperCase();
+
+      // Clear any tombstone so existing account is immediately visible
+      unTombstoneExistingAccount(id, fullName, brgy);
+      if (brgy) unTombstoneBarangay(brgy);
+
+      normalizedAccounts.push({
+        id,
+        full_name: fullName,
+        barangay: brgy,
+        purok: String(raw.purok || '').trim(),
+        contact_number: String(raw.contact_number ?? raw.contactNumber ?? raw.phone ?? '').trim(),
+        created_at: String(raw.created_at || raw.createdAt || new Date().toISOString()),
+        latitude: raw.latitude !== null && raw.latitude !== undefined && raw.latitude !== '' ? parseFloat(String(raw.latitude)) : undefined,
+        longitude: raw.longitude !== null && raw.longitude !== undefined && raw.longitude !== '' ? parseFloat(String(raw.longitude)) : undefined,
+        geotagged: Boolean(raw.geotagged === 1 || raw.geotagged === '1' || raw.geotagged === true || (raw.latitude && raw.longitude)),
+        existingAcc: true,
+        existingAccVerified: Boolean(raw.existingAccVerified || raw.existing_acc_verified || String(raw.status || '').toUpperCase() === 'VERIFIED'),
+        existingAccVisited: Boolean(raw.existingAccVisited || raw.existing_acc_visited),
+        status: String(raw.status || 'PENDING').toUpperCase(),
+        submittedBy: String(raw.submittedBy || raw.submitted_by || 'Admin'),
+        pin: String(raw.pin || ''),
+        addedToFiles: Boolean(raw.addedToFiles || raw.added_to_files),
+        facebookLink: String(raw.facebookLink || raw.facebook_link || ''),
+        folder: String(raw.folder || brgy || 'GENERAL'),
+        remarks: String(raw.remarks || ''),
+        uploadedFiles: Array.isArray(raw.uploadedFiles) ? raw.uploadedFiles : []
+      });
+    }
+
+    if (mode === 'replace') {
+      existingAccountsCache = normalizedAccounts;
+    } else {
+      const existMap = new Map<string, ExistingAccountItem>();
+      for (const a of existingAccountsCache) {
+        existMap.set(a.id, a);
+      }
+      for (const newA of normalizedAccounts) {
+        if (existMap.has(newA.id)) {
+          const idx = existingAccountsCache.findIndex(a => a.id === newA.id);
+          if (idx >= 0) existingAccountsCache[idx] = { ...existingAccountsCache[idx], ...newA };
+        } else {
+          existingAccountsCache.push(newA);
+          existMap.set(newA.id, newA);
+        }
+      }
+    }
+    accountsCount = normalizedAccounts.length;
+    await safeWriteFile(EXISTING_ACCOUNTS_FILE, JSON.stringify(existingAccountsCache, null, 2), 'utf-8');
+  }
+
+  // 3. Process Users
+  if (Array.isArray(payload.users) && payload.users.length > 0) {
+    const normalizedUsers: User[] = [];
+    for (const raw of payload.users) {
+      if (!raw) continue;
+      const uName = String(raw.username || '').trim();
+      if (!uName) continue;
+
+      let pHash = raw.password_hash || raw.passwordHash;
+      if (!pHash && (raw.password || raw.passwordPlain)) {
+        pHash = hashPassword(String(raw.password || raw.passwordPlain));
+      }
+      if (!pHash) {
+        pHash = hashPassword('2026');
+      }
+
+      const rawStatus = String(raw.status || 'Active').trim();
+      let userStatus: 'Active' | 'Pending' | 'Suspended' = 'Active';
+      if (/pending/i.test(rawStatus)) userStatus = 'Pending';
+      else if (/suspended/i.test(rawStatus) || /inactive/i.test(rawStatus)) userStatus = 'Suspended';
+
+      const emailStr = String(raw.email || '');
+      unTombstoneUser(uName, emailStr || undefined);
+
+      normalizedUsers.push({
+        username: uName,
+        email: emailStr,
+        fullName: String(raw.full_name || raw.fullName || raw.displayName || uName),
+        displayName: String(raw.displayName || raw.full_name || raw.fullName || uName),
+        barangay: String(raw.barangay || ''),
+        passwordHash: String(pHash),
+        passwordPlain: raw.passwordPlain ? String(raw.passwordPlain) : undefined,
+        role: String(raw.role || 'STAFF').toUpperCase(),
+        status: userStatus,
+        createdAt: String(raw.created_at || raw.createdAt || new Date().toISOString()),
+        avatarDataUrl: raw.avatar_data_url || raw.avatarDataUrl ? String(raw.avatar_data_url || raw.avatarDataUrl) : undefined,
+        permissions: Array.isArray(raw.permissions) ? raw.permissions : undefined
+      });
+    }
+
+    if (mode === 'replace') {
+      // Safeguard: make sure admin is never accidentally locked out
+      const hasAdmin = normalizedUsers.some(u => u.role === 'ADMIN' || u.username === 'admin');
+      if (!hasAdmin) {
+        const existingAdmin = usersCache.find(u => u.username === 'admin' || u.role === 'ADMIN');
+        if (existingAdmin) {
+          normalizedUsers.unshift(existingAdmin);
+        } else {
+          normalizedUsers.unshift({
+            username: 'admin',
+            passwordHash: hashPassword('2026'),
+            role: 'ADMIN',
+            fullName: 'Master Administrator',
+            displayName: 'Master Administrator',
+            status: 'Active',
+            createdAt: new Date().toISOString()
+          });
+        }
+      }
+      usersCache = normalizedUsers;
+    } else {
+      const uMap = new Map<string, User>();
+      for (const u of usersCache) {
+        uMap.set(u.username.toLowerCase(), u);
+      }
+      for (const newU of normalizedUsers) {
+        const key = newU.username.toLowerCase();
+        if (uMap.has(key)) {
+          const idx = usersCache.findIndex(u => u.username.toLowerCase() === key);
+          if (idx >= 0) usersCache[idx] = { ...usersCache[idx], ...newU };
+        } else {
+          usersCache.push(newU);
+          uMap.set(key, newU);
+        }
+      }
+    }
+    usersCount = normalizedUsers.length;
+    await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
+  }
+
+  // 4. Process Barangays
+  if (Array.isArray(payload.barangays) && payload.barangays.length > 0) {
+    const newBarangayNames = payload.barangays
+      .map(b => (typeof b === 'string' ? b : (b?.name || '')).trim().toUpperCase())
+      .filter(b => b.length > 0);
+
+    if (newBarangayNames.length > 0) {
+      for (const b of newBarangayNames) {
+        unTombstoneBarangay(b);
+      }
+      if (mode === 'replace') {
+        barangaysCache = Array.from(new Set(newBarangayNames)).sort();
+      } else {
+        const currentSet = new Set(barangaysCache);
+        for (const b of newBarangayNames) {
+          currentSet.add(b);
+        }
+        barangaysCache = Array.from(currentSet).sort();
+      }
+      barangaysCount = newBarangayNames.length;
+      await saveBarangays();
+    }
+  }
+
+  // 5. Process Site Settings
+  if (payload.settings) {
+    let settingsObj: Record<string, any> = {};
+    if (Array.isArray(payload.settings)) {
+      for (const s of payload.settings) {
+        const key = s.setting_key || s.key;
+        if (key) {
+          let val = s.setting_value !== undefined ? s.setting_value : s.value;
+          try {
+            if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+              val = JSON.parse(val);
+            }
+          } catch {}
+          settingsObj[key] = val;
+        }
+      }
+    } else if (typeof payload.settings === 'object') {
+      settingsObj = payload.settings;
+    }
+
+    if (Object.keys(settingsObj).length > 0) {
+      siteSettings = { ...siteSettings, ...settingsObj };
+      settingsCount = Object.keys(settingsObj).length;
+      await safeWriteFile(SETTINGS_FILE, JSON.stringify(siteSettings, null, 2), 'utf-8');
+
+      if (settingsObj.logoDataUrl) {
+        safeWriteFile(LOGO_DATA_FILE, settingsObj.logoDataUrl, 'utf-8').catch(() => {});
+      }
+      if (settingsObj.faviconDataUrl) {
+        safeWriteFile(FAVICON_DATA_FILE, settingsObj.faviconDataUrl, 'utf-8').catch(() => {});
+      }
+    }
+  }
+
+  // 6. Process Activities / Audit Logs
+  if (Array.isArray(payload.activities) && payload.activities.length > 0) {
+    for (const raw of payload.activities) {
+      if (!raw || !raw.action) continue;
+      const actId = raw.id || crypto.randomUUID();
+      const existing = activitiesCache.find(a => a.id === actId);
+      if (!existing) {
+        activitiesCache.unshift({
+          id: actId,
+          timestamp: raw.timestamp || new Date().toISOString(),
+          username: raw.username || 'admin',
+          action: raw.action
+        });
+        activitiesCount++;
+      }
+    }
+    if (activitiesCache.length > 500) {
+      activitiesCache = activitiesCache.slice(0, 500);
+    }
+    await safeWriteFile(ACTIVITIES_FILE, JSON.stringify(activitiesCache, null, 2), 'utf-8');
+  }
+
+  // 7. Process Deleted Archives (Recycle Bin) if supplied
+  if (Array.isArray(payload.deletedContacts) && payload.deletedContacts.length > 0) {
+    if (mode === 'replace') {
+      deletedContactsCache = payload.deletedContacts;
+    } else {
+      for (const d of payload.deletedContacts) {
+        if (!deletedContactsCache.some(dc => dc.id === d.id)) {
+          deletedContactsCache.push(d);
+        }
+      }
+    }
+    await safeWriteFile(DELETED_CONTACTS_FILE, JSON.stringify(deletedContactsCache, null, 2), 'utf-8');
+  }
+  if (Array.isArray(payload.deletedUsers) && payload.deletedUsers.length > 0) {
+    if (mode === 'replace') {
+      deletedUsersCache = payload.deletedUsers;
+    } else {
+      for (const du of payload.deletedUsers) {
+        if (!deletedUsersCache.some(u => u.username === du.username)) {
+          deletedUsersCache.push(du);
+        }
+      }
+    }
+    await safeWriteFile(DELETED_USERS_FILE, JSON.stringify(deletedUsersCache, null, 2), 'utf-8');
+  }
+  if (Array.isArray(payload.deletedExistingAccounts) && payload.deletedExistingAccounts.length > 0) {
+    if (mode === 'replace') {
+      deletedExistingAccountsCache = payload.deletedExistingAccounts;
+    } else {
+      for (const dea of payload.deletedExistingAccounts) {
+        if (!deletedExistingAccountsCache.some(ea => ea.id === dea.id)) {
+          deletedExistingAccountsCache.push(dea);
+        }
+      }
+    }
+    await safeWriteFile(DELETED_EXISTING_ACCOUNTS_FILE, JSON.stringify(deletedExistingAccountsCache, null, 2), 'utf-8');
+  }
+  if (Array.isArray(payload.deletedBarangays) && payload.deletedBarangays.length > 0) {
+    if (mode === 'replace') {
+      deletedBarangaysCache = payload.deletedBarangays;
+    } else {
+      for (const db of payload.deletedBarangays) {
+        if (!deletedBarangaysCache.includes(db)) {
+          deletedBarangaysCache.push(db);
+        }
+      }
+    }
+    await safeWriteFile(DELETED_BARANGAYS_FILE, JSON.stringify(deletedBarangaysCache, null, 2), 'utf-8');
+  }
+
+  // 7. Sync with cPanel MySQL if live database is connected
+  try {
+    const dbStatus = getCPanelDbStatus();
+    if (dbStatus.connected) {
+      await migrateAllDataToCPanelDb({
+        contacts: contactsCache,
+        users: usersCache,
+        existingAccounts: existingAccountsCache,
+        barangays: barangaysCache,
+        activities: activitiesCache,
+        settings: siteSettings
+      });
+    }
+  } catch (cpanelErr: any) {
+    console.log('[Backup Restore] cPanel DB sync note:', cpanelErr.message);
+  }
+
+  const totalRecords = contactsCount + accountsCount + usersCount + barangaysCount + settingsCount + activitiesCount;
+
+  await addActivity(
+    username,
+    `Restored database backup (${mode.toUpperCase()} mode): ${totalRecords} records across tables (Contacts: ${contactsCount}, Accounts: ${accountsCount}, Users: ${usersCount}, Barangays: ${barangaysCount})`
+  );
+
+  return {
+    success: true,
+    message: `Successfully restored backup in ${mode} mode! Restored ${totalRecords} records across tables.`,
+    counts: {
+      contacts: contactsCount,
+      existingAccounts: accountsCount,
+      users: usersCount,
+      barangays: barangaysCount,
+      settings: settingsCount,
+      activities: activitiesCount
+    },
+    destinations: {
+      contacts: 'PCU Directory (/directory) & Map View',
+      existingAccounts: 'Existing Account (/existing-account) & Files',
+      users: 'Admin Credentials (/accounts) & Staff',
+      barangays: 'Barangay Filters & Master Lists',
+      settings: 'Website Settings & Branding',
+      activities: 'Dashboard Recent Activities'
+    },
+    totalRecords
+  };
 }
 
 
