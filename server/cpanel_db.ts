@@ -45,7 +45,7 @@ export function loadCPanelDbConfig(): CPanelDbConfig {
   const envUser = process.env.DB_USER || process.env.MYSQL_USER;
   const envPass = process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD;
   const envName = process.env.DB_NAME || process.env.MYSQL_DATABASE;
-  const envSsl = process.env.DB_SSL === 'true' || process.env.MYSQL_SSL === 'true';
+  const envSsl = process.env.MYSQL_SSL === 'true';
 
   return {
     host: fileConfig.host || envHost || 'localhost',

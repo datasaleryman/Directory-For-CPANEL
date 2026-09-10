@@ -125,6 +125,10 @@ export async function safeWriteFile(file: string, data: string, options: any = '
   }
 }
 
+export async function safeReadFile(file: string, encoding: BufferEncoding = 'utf-8'): Promise<string> {
+  return await fs.promises.readFile(file, encoding);
+}
+
 export function safeMkdirSync(dir: string, options: any = { recursive: true }) {
   try {
     if (!fs.existsSync(dir)) {
@@ -9346,7 +9350,7 @@ export async function applyRestoredData(
         if (!pcuUpdatesCache.some(p => String(p.contactId) === String(id) || p.id === pcuId)) {
           pcuUpdatesCache.unshift({
             id: pcuId,
-            contactId: id,
+            contactId: typeof id === 'number' ? id : (parseInt(String(id), 10) || 0),
             fullName,
             barangay: brgy,
             purok,

@@ -348,7 +348,8 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
       fetchBarangays();
       setSelectedBarangay('all');
       setSelectedVerification('all');
-      setPage(1);
+      setUnifiedPage(1);
+      setFolderPage(1);
     };
 
     window.addEventListener('clinic-data-restored', handleRestore);

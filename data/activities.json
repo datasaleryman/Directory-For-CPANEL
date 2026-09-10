@@ -1,5 +1,35 @@
 [
   {
+    "id": "cca45860-54eb-48ab-81b1-581dba906e22",
+    "timestamp": "2026-09-10T23:41:31.938Z",
+    "username": "admin",
+    "action": "Performed bulk entry import. Saved: 1 records (including 0 updated records), Skipped: 0."
+  },
+  {
+    "id": "95822371-3035-44a5-9f50-5509045e3b8e",
+    "timestamp": "2026-09-10T23:41:31.921Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "00257cf6-12cd-4736-a7dc-64654cfc46f5",
+    "timestamp": "2026-09-10T23:41:29.564Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "2de12559-a314-4034-897e-e41d1d1f4f2b",
+    "timestamp": "2026-09-10T23:41:26.782Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "1c133f6b-182b-4abf-9b4b-c8b613dfaf22",
+    "timestamp": "2026-09-10T23:41:23.903Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
     "id": "a029cc88-b65f-4700-9fee-2ae015d1c9d8",
     "timestamp": "2026-09-10T13:38:01.496Z",
     "username": "admin",

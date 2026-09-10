@@ -793,7 +793,7 @@ function parseSqlDump(sql: string): Record<string, any[]> {
   return result;
 }
 
-function parseJsonBackup(content: any): Record<string, any[]> {
+function parseJsonBackup(content: any, fileName: string = ''): Record<string, any[]> {
   let parsed: any;
   if (typeof content === 'object' && content !== null) {
     parsed = content;
