@@ -1,0 +1,393 @@
+import fs from 'fs';
+import path from 'path';
+import {
+  getAllContactsRaw,
+  getAllExistingAccountsRaw,
+  getUsers,
+  getAllBarangaysRaw,
+  getSiteSettings,
+  getAllActivitiesRaw,
+  deletedContactsCache,
+  deletedBarangaysCache,
+  deletedExistingAccountsCache,
+  deletedUsersCache,
+  addActivity
+} from './db.js';
+import { getCPanelDbStatus } from './cpanel_db.js';
+
+export interface TableBackupEntry {
+  tableName: string;
+  displayName: string;
+  headers: string[];
+  rowCount: number;
+  rows: any[][];
+  records: Record<string, any>[];
+}
+
+export interface BackupMetadata {
+  title: string;
+  timestamp: string;
+  source: string;
+  databaseName: string;
+  exportedBy: string;
+  totalTables: number;
+  totalRecords: number;
+  isLiveCPanelDb: boolean;
+  tableSummaries: Array<{
+    tableName: string;
+    displayName: string;
+    rowCount: number;
+    columnCount: number;
+  }>;
+}
+
+export interface BackupResult {
+  metadata: BackupMetadata;
+  tables: TableBackupEntry[];
+  rawTables: Record<string, any[]>;
+}
+
+function escapeSqlValue(val: any): string {
+  if (val === null || val === undefined) return 'NULL';
+  if (typeof val === 'boolean') return val ? '1' : '0';
+  if (typeof val === 'number') return String(val);
+  if (typeof val === 'object') {
+    const jsonStr = JSON.stringify(val);
+    return `'${jsonStr.replace(/'/g, "''").replace(/\\/g, '\\\\')}'`;
+  }
+  const str = String(val);
+  return `'${str.replace(/'/g, "''").replace(/\\/g, '\\\\')}'`;
+}
+
+function toSqlIdentifier(str: string): string {
+  if (!str) return 'column_name';
+  let cleaned = str
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!cleaned) cleaned = 'table_name';
+  if (/^[0-9]/.test(cleaned)) cleaned = 't_' + cleaned;
+  return cleaned;
+}
+
+let cachedBackupResult: BackupResult | null = null;
+let lastBackupFetchTime = 0;
+const BACKUP_CACHE_TTL_MS = 30 * 1000; // 30s cache
+
+export async function getFullCPanelDbBackupData(
+  requestedBy: string = 'admin',
+  forceRefresh: boolean = false
+): Promise<BackupResult> {
+  const now = Date.now();
+  if (!forceRefresh && cachedBackupResult && now - lastBackupFetchTime < BACKUP_CACHE_TTL_MS) {
+    return cachedBackupResult;
+  }
+
+  const dbStatus = getCPanelDbStatus();
+  const contacts = getAllContactsRaw();
+  const existingAccounts = getAllExistingAccountsRaw();
+  const users = getUsers();
+  const barangays = getAllBarangaysRaw();
+  const siteSettings = getSiteSettings();
+  const activities = getAllActivitiesRaw();
+  const deletedContacts = deletedContactsCache || [];
+  const deletedBarangays = deletedBarangaysCache || [];
+  const deletedExistingAccounts = deletedExistingAccountsCache || [];
+  const deletedUsers = deletedUsersCache || [];
+
+  const tables: TableBackupEntry[] = [];
+  const rawTables: Record<string, any[]> = {};
+
+  // 1. Contacts
+  const contactHeaders = [
+    'id', 'full_name', 'barangay', 'purok', 'contact_number',
+    'created_at', 'updated_at', 'latitude', 'longitude', 'geotagged',
+    'status', 'is_submitted', 'photo_url', 'pcu_file_url', 'pcu_uploaded_by', 'pcu_uploaded_at'
+  ];
+  const contactRows = contacts.map(c => [
+    c.id, c.full_name, c.barangay, c.purok, c.contact_number,
+    c.created_at, c.updated_at, c.latitude ?? '', c.longitude ?? '', c.geotagged ? 1 : 0,
+    c.status || 'ACTIVE', c.isSubmitted ? 1 : 0, c.photo_url || '', c.pcu_file_url || '',
+    c.pcu_uploaded_by || '', c.pcu_uploaded_at || ''
+  ]);
+  tables.push({
+    tableName: 'contacts',
+    displayName: 'Contacts (PCU Directory)',
+    headers: contactHeaders,
+    rowCount: contactRows.length,
+    rows: contactRows,
+    records: contacts
+  });
+  rawTables['contacts'] = contacts;
+
+  // 2. Existing Accounts
+  const existHeaders = ['id', 'full_name', 'barangay', 'purok', 'contact_number', 'created_at', 'status', 'submitted_by', 'folder', 'remarks'];
+  const existRows = existingAccounts.map((e: any) => [
+    e.id, e.full_name, e.barangay, e.purok, e.contact_number, e.created_at, e.status, e.submittedBy, e.folder || 'GENERAL', e.remarks || ''
+  ]);
+  tables.push({
+    tableName: 'existing_accounts',
+    displayName: 'Existing Accounts Matching',
+    headers: existHeaders,
+    rowCount: existRows.length,
+    rows: existRows,
+    records: existingAccounts
+  });
+  rawTables['existing_accounts'] = existingAccounts;
+
+  // 3. Users / Admins
+  const userHeaders = ['username', 'password_hash', 'role', 'full_name', 'email', 'status', 'barangay', 'created_at'];
+  const userRows = users.map((u: any) => [
+    u.username, u.passwordHash || u.passwordPlain || '', u.role, u.fullName || u.displayName || '', u.email || '', u.status || 'Active', u.barangay || '', u.createdAt || ''
+  ]);
+  tables.push({
+    tableName: 'users',
+    displayName: 'Administrators & Staff',
+    headers: userHeaders,
+    rowCount: userRows.length,
+    rows: userRows,
+    records: users
+  });
+  rawTables['users'] = users;
+
+  // 4. Barangays
+  const bgHeaders = ['name'];
+  const bgRows = barangays.map(b => [b]);
+  tables.push({
+    tableName: 'barangays',
+    displayName: 'Barangays Master List',
+    headers: bgHeaders,
+    rowCount: bgRows.length,
+    rows: bgRows,
+    records: barangays.map(b => ({ name: b }))
+  });
+  rawTables['barangays'] = barangays.map(b => ({ name: b }));
+
+  // 5. Site Settings
+  const settingsHeaders = ['setting_key', 'setting_value'];
+  const settingsRows = Object.entries(siteSettings).map(([k, v]) => [
+    k, typeof v === 'object' ? JSON.stringify(v) : String(v ?? '')
+  ]);
+  tables.push({
+    tableName: 'site_settings',
+    displayName: 'Website Settings & Branding',
+    headers: settingsHeaders,
+    rowCount: settingsRows.length,
+    rows: settingsRows,
+    records: Object.entries(siteSettings).map(([k, v]) => ({ setting_key: k, setting_value: v }))
+  });
+  rawTables['site_settings'] = Object.entries(siteSettings).map(([k, v]) => ({ setting_key: k, setting_value: v }));
+
+  // 6. Activities / Audit Logs
+  const actHeaders = ['id', 'timestamp', 'username', 'action'];
+  const actRows = activities.map(a => [a.id, a.timestamp, a.username, a.action]);
+  tables.push({
+    tableName: 'activities',
+    displayName: 'Audit Logs',
+    headers: actHeaders,
+    rowCount: actRows.length,
+    rows: actRows,
+    records: activities
+  });
+  rawTables['activities'] = activities;
+
+  // 7. Deleted Contacts
+  const delContactHeaders = ['id', 'full_name', 'barangay', 'deleted_at'];
+  const delContactRows = deletedContacts.map(d => [d.id || '', d.full_name, d.barangay, d.deletedAt]);
+  tables.push({
+    tableName: 'deleted_contacts',
+    displayName: 'Trash: Deleted Contacts',
+    headers: delContactHeaders,
+    rowCount: delContactRows.length,
+    rows: delContactRows,
+    records: deletedContacts
+  });
+  rawTables['deleted_contacts'] = deletedContacts;
+
+  // 8. Deleted Users
+  const delUserHeaders = ['username', 'email', 'deleted_at'];
+  const delUserRows = deletedUsers.map(u => [u.username, u.email || '', u.deletedAt]);
+  tables.push({
+    tableName: 'deleted_users',
+    displayName: 'Trash: Deleted Users',
+    headers: delUserHeaders,
+    rowCount: delUserRows.length,
+    rows: delUserRows,
+    records: deletedUsers
+  });
+  rawTables['deleted_users'] = deletedUsers;
+
+  const totalRecords = tables.reduce((sum, t) => sum + t.rowCount, 0);
+
+  const metadata: BackupMetadata = {
+    title: 'cPanel MySQL Database Full Backup',
+    timestamp: new Date().toISOString(),
+    source: dbStatus.connected ? `cPanel MySQL (${dbStatus.host}:${dbStatus.port}/${dbStatus.database})` : 'Local Storage Cache (cPanel Ready)',
+    databaseName: dbStatus.database || 'sfc_directory',
+    exportedBy: requestedBy,
+    totalTables: tables.length,
+    totalRecords,
+    isLiveCPanelDb: dbStatus.connected,
+    tableSummaries: tables.map(t => ({
+      tableName: t.tableName,
+      displayName: t.displayName,
+      rowCount: t.rowCount,
+      columnCount: t.headers.length
+    }))
+  };
+
+  addActivity(requestedBy, `Exported cPanel MySQL database full backup (${tables.length} tables, ${totalRecords} total records)`);
+
+  const result: BackupResult = {
+    metadata,
+    tables,
+    rawTables
+  };
+
+  cachedBackupResult = result;
+  lastBackupFetchTime = Date.now();
+
+  return result;
+}
+
+export function formatBackupAsJson(backupData: BackupResult): string {
+  return JSON.stringify(backupData, null, 2);
+}
+
+export function formatBackupAsSql(backupData: BackupResult): string {
+  const meta = backupData.metadata;
+  const lines: string[] = [];
+
+  lines.push('-- =========================================================================');
+  lines.push(`-- CPANEL MYSQL DATABASE BACKUP (SQL DUMP)`);
+  lines.push(`-- Title:         ${meta.title}`);
+  lines.push(`-- Exported At:   ${meta.timestamp}`);
+  lines.push(`-- Exported By:   ${meta.exportedBy}`);
+  lines.push(`-- Source:        ${meta.source}`);
+  lines.push(`-- Database:      ${meta.databaseName}`);
+  lines.push(`-- Total Tables:  ${meta.totalTables}`);
+  lines.push(`-- Total Records: ${meta.totalRecords}`);
+  lines.push(`-- Target Engine: MySQL 5.7+ / MySQL 8.0+ / MariaDB 10.3+ (phpMyAdmin Ready)`);
+  lines.push('-- =========================================================================\n');
+
+  lines.push('SET FOREIGN_KEY_CHECKS = 0;');
+  lines.push('SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";\n');
+
+  for (const table of backupData.tables) {
+    const tableName = toSqlIdentifier(table.tableName);
+    const headers = table.headers.map(h => `\`${toSqlIdentifier(h)}\``);
+    const rowCount = table.rowCount;
+
+    lines.push(`-- -------------------------------------------------------------------------`);
+    lines.push(`-- Table: ${tableName} (${table.displayName})`);
+    lines.push(`-- Total Records: ${rowCount}`);
+    lines.push(`-- -------------------------------------------------------------------------`);
+    lines.push(`DROP TABLE IF EXISTS \`${tableName}\`;`);
+
+    // DDL definition
+    if (tableName === 'contacts') {
+      lines.push(`CREATE TABLE \`contacts\` (
+  \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  \`full_name\` VARCHAR(255) NOT NULL,
+  \`barangay\` VARCHAR(255) NOT NULL DEFAULT '',
+  \`purok\` VARCHAR(255) DEFAULT '',
+  \`contact_number\` VARCHAR(100) DEFAULT '',
+  \`created_at\` VARCHAR(100) DEFAULT '',
+  \`updated_at\` VARCHAR(100) DEFAULT '',
+  \`latitude\` DECIMAL(10, 7) NULL,
+  \`longitude\` DECIMAL(10, 7) NULL,
+  \`geotagged\` TINYINT(1) DEFAULT 0,
+  \`status\` VARCHAR(50) DEFAULT 'ACTIVE',
+  \`is_submitted\` TINYINT(1) DEFAULT 0,
+  \`photo_url\` LONGTEXT,
+  \`pcu_file_url\` LONGTEXT,
+  \`pcu_uploaded_by\` VARCHAR(255) DEFAULT '',
+  \`pcu_uploaded_at\` VARCHAR(100) DEFAULT '',
+  \`deleted_at\` VARCHAR(100) NULL,
+  INDEX \`idx_barangay\` (\`barangay\`),
+  INDEX \`idx_status\` (\`status\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
+    } else if (tableName === 'users') {
+      lines.push(`CREATE TABLE \`users\` (
+  \`username\` VARCHAR(100) PRIMARY KEY,
+  \`password_hash\` VARCHAR(255) NOT NULL,
+  \`role\` VARCHAR(50) NOT NULL DEFAULT 'STAFF',
+  \`full_name\` VARCHAR(255) DEFAULT '',
+  \`email\` VARCHAR(255) DEFAULT '',
+  \`status\` VARCHAR(50) DEFAULT 'Active',
+  \`barangay\` VARCHAR(255) DEFAULT '',
+  \`created_at\` VARCHAR(100) DEFAULT '',
+  \`avatar_data_url\` LONGTEXT,
+  \`permissions\` TEXT,
+  INDEX \`idx_role\` (\`role\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
+    } else if (tableName === 'existing_accounts') {
+      lines.push(`CREATE TABLE \`existing_accounts\` (
+  \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  \`full_name\` VARCHAR(255) NOT NULL,
+  \`barangay\` VARCHAR(255) DEFAULT '',
+  \`purok\` VARCHAR(255) DEFAULT '',
+  \`contact_number\` VARCHAR(100) DEFAULT '',
+  \`created_at\` VARCHAR(100) DEFAULT '',
+  \`status\` VARCHAR(50) DEFAULT 'PENDING',
+  \`submitted_by\` VARCHAR(255) DEFAULT '',
+  \`folder\` VARCHAR(255) DEFAULT 'GENERAL',
+  \`remarks\` TEXT,
+  \`deleted_at\` VARCHAR(100) NULL,
+  INDEX \`idx_exist_barangay\` (\`barangay\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
+    } else if (tableName === 'barangays') {
+      lines.push(`CREATE TABLE \`barangays\` (
+  \`id\` INT AUTO_INCREMENT PRIMARY KEY,
+  \`name\` VARCHAR(255) UNIQUE NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
+    } else if (tableName === 'site_settings') {
+      lines.push(`CREATE TABLE \`site_settings\` (
+  \`setting_key\` VARCHAR(100) PRIMARY KEY,
+  \`setting_value\` LONGTEXT,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
+    } else if (tableName === 'activities') {
+      lines.push(`CREATE TABLE \`activities\` (
+  \`id\` VARCHAR(100) PRIMARY KEY,
+  \`timestamp\` VARCHAR(100) NOT NULL,
+  \`username\` VARCHAR(100) NOT NULL,
+  \`action\` TEXT NOT NULL,
+  INDEX \`idx_timestamp\` (\`timestamp\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
+    } else {
+      lines.push(`CREATE TABLE \`${tableName}\` (
+  \`id\` VARCHAR(100) PRIMARY KEY,
+  \`col1\` TEXT,
+  \`col2\` TEXT,
+  \`deleted_at\` VARCHAR(100) NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
+    }
+
+    if (rowCount > 0 && table.rows.length > 0) {
+      const BATCH_SIZE = 100;
+      for (let i = 0; i < table.rows.length; i += BATCH_SIZE) {
+        const batch = table.rows.slice(i, i + BATCH_SIZE);
+        lines.push(`INSERT INTO \`${tableName}\` (${headers.join(', ')}) VALUES`);
+        const valueTuples = batch.map(row => {
+          const escapedValues = row.map(val => escapeSqlValue(val));
+          return `  (${escapedValues.join(', ')})`;
+        });
+        lines.push(valueTuples.join(',\n') + ';');
+      }
+    }
+
+    lines.push('');
+  }
+
+  lines.push('SET FOREIGN_KEY_CHECKS = 1;');
+  lines.push('-- =========================================================================');
+  lines.push(`-- End of Backup Dump: ${meta.totalTables} tables exported successfully.`);
+  lines.push('-- =========================================================================\n');
+
+  return lines.join('\n');
+}
+
+// Backward-compatible alias
+export const getFullGoogleSheetsBackupData = getFullCPanelDbBackupData;

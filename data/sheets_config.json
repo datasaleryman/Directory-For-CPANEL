@@ -1,0 +1,10 @@
+{
+  "authType": "serviceAccount",
+  "apiKey": "",
+  "clientEmail": "",
+  "privateKey": "",
+  "spreadsheetId": "",
+  "sheetName": "",
+  "syncEnabled": false,
+  "webAppUrl": ""
+}

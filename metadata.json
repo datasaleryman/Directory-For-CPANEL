@@ -1,0 +1,6 @@
+{
+  "name": "Saint Francis Clinic Directory",
+  "description": "A secure, professional sorting and directory management system for Saint Francis Clinic featuring bulk importing, sorting, filtering, and printing capabilities.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
