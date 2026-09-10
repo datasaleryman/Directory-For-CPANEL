@@ -171,7 +171,7 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
   const fetchHouseholds = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/base44/households', {
+      const res = await fetch(`/api/base44/households?_t=${Date.now()}`, {
         headers: { 'Authorization': `Bearer ${authToken}` }
       });
       const data = await res.json();
@@ -188,6 +188,16 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
 
   useEffect(() => {
     fetchHouseholds();
+
+    const handleRestore = () => {
+      fetchHouseholds();
+      setCurrentPage(1);
+    };
+
+    window.addEventListener('clinic-data-restored', handleRestore);
+    return () => {
+      window.removeEventListener('clinic-data-restored', handleRestore);
+    };
   }, [authToken]);
 
   // Deduplicate households strictly by Full Name (case-insensitive)

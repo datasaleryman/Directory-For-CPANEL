@@ -161,7 +161,7 @@ export default function App() {
     if (activeTabRef.current === 'settings') {
       return;
     }
-    fetch('/api/site/settings')
+    fetch(`/api/site/settings?_t=${Date.now()}`)
       .then(async (res) => {
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
@@ -437,7 +437,7 @@ export default function App() {
     if (!authToken) return;
     setLoadingStats(true);
     try {
-      const res = await fetch('/api/dashboard/stats', {
+      const res = await fetch(`/api/dashboard/stats?_t=${Date.now()}`, {
         headers: { Authorization: `Bearer ${authToken}` }
       });
       const data = await res.json();

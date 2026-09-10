@@ -740,7 +740,8 @@ export const ContactTable: React.FC<ContactTableProps> = ({
         sortOrder,
         page: queryPage.toString(),
         limit: limit.toString(),
-        sync: forceSync ? 'true' : 'false'
+        sync: forceSync ? 'true' : 'false',
+        _t: Date.now().toString()
       });
 
       const res = await fetch(`/api/contacts?${queryParams}`, {
@@ -838,8 +839,9 @@ export const ContactTable: React.FC<ContactTableProps> = ({
   // Listen for database restore event to immediately refresh contacts and barangays
   useEffect(() => {
     const handleRestoreEvent = () => {
+      setPage(1);
       fetchContacts(true, 1);
-      fetch('/api/public/barangays')
+      fetch(`/api/public/barangays?_t=${Date.now()}`)
         .then(res => res.json())
         .then(data => {
           if (data && Array.isArray(data.barangays) && data.barangays.length > 0) {

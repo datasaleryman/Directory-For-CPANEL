@@ -927,7 +927,7 @@ export async function saveContactToCPanel(c: any): Promise<void> {
   }
 }
 
-export async function deleteContactFromCPanel(id: number, deletedAt: string): Promise<void> {
+export async function deleteContactFromCPanel(id: number | string, deletedAt: string): Promise<void> {
   if (!pool || !currentStatus.connected) return;
   try {
     await pool.query('UPDATE contacts SET deleted_at = ?, status = "DELETED" WHERE id = ?', [deletedAt, id]);

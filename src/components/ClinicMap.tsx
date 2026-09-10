@@ -278,7 +278,7 @@ export const ClinicMap: React.FC<ClinicMapProps> = ({
   const fetchGeotaggedContacts = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/contacts/export', {
+      const res = await fetch(`/api/contacts/export?_t=${Date.now()}`, {
         headers: { 'Authorization': `Bearer ${authToken}` }
       });
       const data = await res.json();
@@ -299,6 +299,15 @@ export const ClinicMap: React.FC<ClinicMapProps> = ({
 
   useEffect(() => {
     fetchGeotaggedContacts();
+
+    const handleRestore = () => {
+      fetchGeotaggedContacts();
+    };
+
+    window.addEventListener('clinic-data-restored', handleRestore);
+    return () => {
+      window.removeEventListener('clinic-data-restored', handleRestore);
+    };
   }, [lastSyncTime]);
 
   // Set custom style animations on mount

@@ -87,7 +87,7 @@ export const Inbox: React.FC<InboxProps> = ({ authToken, showToast, onNewMessage
   const fetchMessages = async (force = false) => {
     try {
       if (!force) setLoading(true);
-      const res = await fetch(`/api/messages?force=${force}`, {
+      const res = await fetch(`/api/messages?force=${force}&_t=${Date.now()}`, {
         headers: {
           'Authorization': `Bearer ${authToken}`
         }
@@ -141,7 +141,16 @@ export const Inbox: React.FC<InboxProps> = ({ authToken, showToast, onNewMessage
       fetchMessages(false);
     }, 15000);
 
-    return () => clearInterval(interval);
+    const handleRestore = () => {
+      fetchMessages(true);
+    };
+
+    window.addEventListener('clinic-data-restored', handleRestore);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('clinic-data-restored', handleRestore);
+    };
   }, [authToken]);
 
   // Robust resolver that checks all raw fields and maps username/displayNames to the official Full Name

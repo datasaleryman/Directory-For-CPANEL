@@ -77,7 +77,8 @@ export const RecentUpload: React.FC<RecentUploadProps> = ({
         limit: '2000',
         page: '1',
         sortBy: 'date',
-        sortOrder: 'desc'
+        sortOrder: 'desc',
+        _t: Date.now().toString()
       });
 
       const res = await fetch(`/api/contacts/recent-uploads?${queryParams}`, {
@@ -101,6 +102,16 @@ export const RecentUpload: React.FC<RecentUploadProps> = ({
 
   useEffect(() => {
     fetchRecentUploads();
+
+    const handleRestore = () => {
+      fetchRecentUploads();
+      setCurrentPage(1);
+    };
+
+    window.addEventListener('clinic-data-restored', handleRestore);
+    return () => {
+      window.removeEventListener('clinic-data-restored', handleRestore);
+    };
   }, [authToken]);
 
   // Reset page when filters or active folder change

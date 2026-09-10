@@ -192,7 +192,7 @@ export const AccountManagement: React.FC<AccountManagementProps> = ({
   const fetchAccounts = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/users', {
+      const res = await fetch(`/api/users?_t=${Date.now()}`, {
         headers: { Authorization: `Bearer ${authToken}` }
       });
       const data = await res.json();
@@ -210,7 +210,7 @@ export const AccountManagement: React.FC<AccountManagementProps> = ({
   // Fetch roles from Base44 database
   const fetchBase44Roles = async () => {
     try {
-      const res = await fetch('/api/base44/roles');
+      const res = await fetch(`/api/base44/roles?_t=${Date.now()}`);
       const data = await res.json();
       if (res.ok && Array.isArray(data.roles) && data.roles.length > 0) {
         setBase44Roles(data.roles);
@@ -224,7 +224,7 @@ export const AccountManagement: React.FC<AccountManagementProps> = ({
   const fetchBarangays = async () => {
     setFetchingBarangays(true);
     try {
-      const res = await fetch('/api/public/barangays');
+      const res = await fetch(`/api/public/barangays?_t=${Date.now()}`);
       const data = await res.json();
       if (res.ok && Array.isArray(data.barangays)) {
         const filtered = data.barangays.filter((b: string) => isRealBarangay(b));
@@ -246,6 +246,17 @@ export const AccountManagement: React.FC<AccountManagementProps> = ({
       fetchBarangays();
       fetchBase44Roles();
     }
+
+    const handleRestore = () => {
+      fetchAccounts();
+      fetchBarangays();
+      fetchBase44Roles();
+    };
+
+    window.addEventListener('clinic-data-restored', handleRestore);
+    return () => {
+      window.removeEventListener('clinic-data-restored', handleRestore);
+    };
   }, [authToken]);
 
   // Handle Add Account

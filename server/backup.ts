@@ -104,13 +104,15 @@ export async function getFullCPanelDbBackupData(
   const contactHeaders = [
     'id', 'full_name', 'barangay', 'purok', 'contact_number',
     'created_at', 'updated_at', 'latitude', 'longitude', 'geotagged',
-    'status', 'is_submitted', 'photo_url', 'pcu_file_url', 'pcu_uploaded_by', 'pcu_uploaded_at'
+    'status', 'is_submitted', 'photo_url', 'pcu_file_url', 'pcu_uploaded_by', 'pcu_uploaded_at',
+    'added_from_print_list', 'pin', 'facebook_link', 'category'
   ];
   const contactRows = contacts.map(c => [
     c.id, c.full_name, c.barangay, c.purok, c.contact_number,
     c.created_at, c.updated_at, c.latitude ?? '', c.longitude ?? '', c.geotagged ? 1 : 0,
     c.status || 'ACTIVE', c.isSubmitted ? 1 : 0, c.photo_url || '', c.pcu_file_url || '',
-    c.pcu_uploaded_by || '', c.pcu_uploaded_at || ''
+    c.pcu_uploaded_by || '', c.pcu_uploaded_at || '',
+    c.added_from_print_list !== false ? 1 : 0, c.pin || '', c.facebookLink || '', c.category || 'pcu'
   ]);
   tables.push({
     tableName: 'contacts',
@@ -123,9 +125,17 @@ export async function getFullCPanelDbBackupData(
   rawTables['contacts'] = contacts;
 
   // 2. Existing Accounts
-  const existHeaders = ['id', 'full_name', 'barangay', 'purok', 'contact_number', 'created_at', 'status', 'submitted_by', 'folder', 'remarks'];
+  const existHeaders = [
+    'id', 'full_name', 'barangay', 'purok', 'contact_number', 'created_at',
+    'status', 'submitted_by', 'folder', 'remarks',
+    'added_to_files', 'pin', 'facebook_link', 'latitude', 'longitude', 'geotagged',
+    'existing_acc_verified', 'existing_acc_visited'
+  ];
   const existRows = existingAccounts.map((e: any) => [
-    e.id, e.full_name, e.barangay, e.purok, e.contact_number, e.created_at, e.status, e.submittedBy, e.folder || 'GENERAL', e.remarks || ''
+    e.id, e.full_name, e.barangay, e.purok, e.contact_number, e.created_at,
+    e.status, e.submittedBy, e.folder || 'GENERAL', e.remarks || '',
+    e.addedToFiles ? 1 : 0, e.pin || '', e.facebookLink || '', e.latitude ?? '', e.longitude ?? '', e.geotagged ? 1 : 0,
+    e.existingAccVerified ? 1 : 0, e.existingAccVisited ? 1 : 0
   ]);
   tables.push({
     tableName: 'existing_accounts',
@@ -426,8 +436,8 @@ export function getTableDisplayInfo(key: string): TableDisplayInfo {
       };
     case 'users':
       return {
-        displayName: 'User Accounts & Staff',
-        destination: 'Admin Credentials & Website Settings',
+        displayName: 'Administrators & Staff',
+        destination: 'Admin Credentials (/accounts) & Website Settings',
         category: 'Access & Authentication',
         icon: 'users'
       };
@@ -450,6 +460,21 @@ export function getTableDisplayInfo(key: string): TableDisplayInfo {
         displayName: 'Activity Logs',
         destination: 'Dashboard Recent Activities & Audit Trail',
         category: 'System Logs',
+        icon: 'activities'
+      };
+    case 'pcu_updates':
+      return {
+        displayName: 'PCU Uploaded Documents',
+        destination: 'Recent Uploads (/recent-upload)',
+        category: 'Uploaded Patient Files',
+        icon: 'contacts'
+      };
+    case 'inbox_messages':
+    case 'messages':
+      return {
+        displayName: 'Internal Inbox Messages',
+        destination: 'Internal Inbox (/inbox)',
+        category: 'Communications',
         icon: 'activities'
       };
     case 'deleted_contacts':
@@ -515,6 +540,8 @@ export interface ParsedBackupData extends ParsedBackupPreview {
     barangays: any[];
     settings: any;
     activities: any[];
+    pcuUpdates?: any[];
+    messages?: any[];
     deletedContacts: any[];
     deletedUsers: any[];
     deletedExistingAccounts: any[];
@@ -524,8 +551,15 @@ export interface ParsedBackupData extends ParsedBackupPreview {
 
 function normalizeTableKey(key: string): string {
   const k = (key || '').toLowerCase().replace(/[`"'\s-]/g, '_');
+  if (k.includes('pcu_update') || k.includes('recent_upload') || (k.includes('update') && !k.includes('updated_at'))) return 'pcu_updates';
+  if (k.includes('message') || k.includes('inbox')) return 'inbox_messages';
+  if (k.includes('deleted_record') || k === 'deleted_records') return 'deleted_records';
+  if (k.includes('deleted') && (k.includes('contact') || k.includes('pcu'))) return 'deleted_contacts';
+  if (k.includes('deleted') && (k.includes('user') || k.includes('admin') || k.includes('staff'))) return 'deleted_users';
+  if (k.includes('deleted') && (k.includes('account') || k.includes('exist'))) return 'deleted_existing_accounts';
+  if (k.includes('deleted') && (k.includes('barangay') || k.includes('brgy'))) return 'deleted_barangays';
   if (k.includes('contact') && !k.includes('deleted')) return 'contacts';
-  if (k.includes('pcu') && !k.includes('update') && !k.includes('deleted')) return 'contacts';
+  if (k.includes('pcu') && !k.includes('deleted')) return 'contacts';
   if (k.includes('account') && !k.includes('deleted')) return 'existing_accounts';
   if (k.includes('exist') && !k.includes('deleted')) return 'existing_accounts';
   if (k.includes('user') && !k.includes('deleted')) return 'users';
@@ -536,10 +570,6 @@ function normalizeTableKey(key: string): string {
   if (k.includes('setting')) return 'site_settings';
   if (k.includes('config')) return 'site_settings';
   if (k.includes('activit') || k.includes('audit') || (k.includes('log') && !k.includes('logo'))) return 'activities';
-  if (k.includes('deleted') && (k.includes('contact') || k.includes('pcu'))) return 'deleted_contacts';
-  if (k.includes('deleted') && (k.includes('user') || k.includes('admin'))) return 'deleted_users';
-  if (k.includes('deleted') && (k.includes('account') || k.includes('exist'))) return 'deleted_existing_accounts';
-  if (k.includes('deleted') && (k.includes('barangay') || k.includes('brgy'))) return 'deleted_barangays';
   return k;
 }
 
@@ -585,6 +615,8 @@ function parseSqlDump(sql: string): Record<string, any[]> {
     barangays: [],
     site_settings: [],
     activities: [],
+    pcu_updates: [],
+    inbox_messages: [],
     deleted_contacts: [],
     deleted_users: [],
     deleted_existing_accounts: [],
@@ -604,9 +636,9 @@ function parseSqlDump(sql: string): Record<string, any[]> {
       columns = match[2].split(',').map(c => c.replace(/[`"']/g, '').trim().toLowerCase());
     } else {
       if (tableKey === 'contacts') {
-        columns = ['id', 'full_name', 'barangay', 'purok', 'contact_number', 'created_at', 'updated_at', 'latitude', 'longitude', 'geotagged', 'status', 'is_submitted', 'photo_url', 'pcu_file_url', 'pcu_uploaded_by', 'pcu_uploaded_at', 'deleted_at'];
+        columns = ['id', 'full_name', 'barangay', 'purok', 'contact_number', 'created_at', 'updated_at', 'latitude', 'longitude', 'geotagged', 'status', 'is_submitted', 'photo_url', 'pcu_file_url', 'pcu_uploaded_by', 'pcu_uploaded_at', 'added_from_print_list', 'pin', 'facebook_link', 'category', 'deleted_at'];
       } else if (tableKey === 'existing_accounts') {
-        columns = ['id', 'full_name', 'barangay', 'purok', 'contact_number', 'created_at', 'status', 'submitted_by', 'folder', 'remarks', 'deleted_at'];
+        columns = ['id', 'full_name', 'barangay', 'purok', 'contact_number', 'created_at', 'status', 'submitted_by', 'folder', 'remarks', 'added_to_files', 'pin', 'facebook_link', 'latitude', 'longitude', 'geotagged', 'existing_acc_verified', 'existing_acc_visited', 'deleted_at'];
       } else if (tableKey === 'users') {
         columns = ['username', 'password_hash', 'role', 'full_name', 'email', 'status', 'barangay', 'created_at', 'avatar_data_url', 'permissions'];
       } else if (tableKey === 'barangays') {
@@ -615,6 +647,12 @@ function parseSqlDump(sql: string): Record<string, any[]> {
         columns = ['setting_key', 'setting_value', 'updated_at'];
       } else if (tableKey === 'activities') {
         columns = ['id', 'timestamp', 'username', 'action'];
+      } else if (tableKey === 'pcu_updates') {
+        columns = ['id', 'contact_id', 'full_name', 'barangay', 'purok', 'file_name', 'file_data', 'uploaded_at', 'uploaded_by'];
+      } else if (tableKey === 'inbox_messages') {
+        columns = ['id', 'sender', 'recipient', 'subject', 'message', 'created_at', 'is_read'];
+      } else if (tableKey === 'deleted_records') {
+        columns = ['id', 'table_name', 'record_id', 'record_data', 'deleted_at', 'deleted_by'];
       }
     }
 
@@ -706,6 +744,29 @@ function parseSqlDump(sql: string): Record<string, any[]> {
     }
 
     insertPattern.lastIndex = pos;
+
+    if (tableKey === 'deleted_records') {
+      for (const tuple of tuples) {
+        const rowObj: Record<string, any> = {};
+        for (let i = 0; i < columns.length; i++) {
+          rowObj[columns[i]] = i < tuple.length ? tuple[i] : null;
+        }
+        const targetTable = (rowObj.table_name || '').toLowerCase();
+        let data = rowObj.record_data;
+        try {
+          if (typeof data === 'string' && (data.startsWith('{') || data.startsWith('['))) {
+            data = JSON.parse(data);
+          }
+        } catch {}
+        if (data) {
+          if (targetTable.includes('contact') || targetTable.includes('pcu')) result.deleted_contacts.push(data);
+          else if (targetTable.includes('user') || targetTable.includes('admin') || targetTable.includes('staff')) result.deleted_users.push(data);
+          else if (targetTable.includes('account') || targetTable.includes('exist')) result.deleted_existing_accounts.push(data);
+          else if (targetTable.includes('barangay') || targetTable.includes('brgy')) result.deleted_barangays.push(data);
+        }
+      }
+      continue;
+    }
 
     if (!result[tableKey]) {
       result[tableKey] = [];
@@ -811,17 +872,96 @@ function parseJsonBackup(content: any): Record<string, any[]> {
     }
   }
 
-  // Case 4: Top-level array of objects
+  // Case 4: Top-level array of objects or strings (e.g. single table backup uploaded directly)
   if (Array.isArray(parsed) && parsed.length > 0) {
-    const first = parsed[0];
-    if (first && (first.full_name || first.barangay || first.contact_number)) {
-      result.contacts = parsed;
-    } else if (first && first.tableName) {
-      for (const item of parsed) {
+    const fName = (fileName || '').toLowerCase();
+    if (fName.includes('exist') || fName.includes('account')) {
+      result.existing_accounts = parsed;
+      return result;
+    }
+    if (fName.includes('user') || fName.includes('admin') || fName.includes('staff')) {
+      result.users = parsed;
+      return result;
+    }
+    if (fName.includes('brgy') || fName.includes('barangay')) {
+      result.barangays = parsed;
+      return result;
+    }
+    if (fName.includes('pcu_update') || fName.includes('recent_upload') || fName.includes('update')) {
+      result.pcu_updates = parsed;
+      return result;
+    }
+    if (fName.includes('message') || fName.includes('inbox')) {
+      result.inbox_messages = parsed;
+      return result;
+    }
+    if (fName.includes('activit') || fName.includes('audit') || fName.includes('log')) {
+      result.activities = parsed;
+      return result;
+    }
+
+    // Inspect items to accurately place records where they belong
+    const contacts: any[] = [];
+    const existingAccounts: any[] = [];
+    const users: any[] = [];
+    const barangays: any[] = [];
+    const activities: any[] = [];
+    const pcuUpdates: any[] = [];
+    const messages: any[] = [];
+
+    for (const item of parsed) {
+      if (!item) continue;
+      if (typeof item === 'string') {
+        barangays.push(item);
+        continue;
+      }
+      if (item.tableName) {
         const normKey = normalizeTableKey(item.tableName);
         if (Array.isArray(item.records)) result[normKey] = item.records;
+        continue;
+      }
+      if (item.username && (item.passwordHash || item.password || item.role || item.passwordPlain)) {
+        users.push(item);
+        continue;
+      }
+      if (item.action && (item.timestamp || item.username)) {
+        activities.push(item);
+        continue;
+      }
+      if (item.fileData && (item.contactId || item.fileName || item.fullName)) {
+        pcuUpdates.push(item);
+        continue;
+      }
+      if (item.recipient && item.message) {
+        messages.push(item);
+        continue;
+      }
+
+      // Check if it's an existing account vs a directory contact
+      const isExistAccount =
+        item.existingAcc === true ||
+        item.existingAcc === 'true' ||
+        item.existingAccVerified !== undefined ||
+        item.addedToFiles !== undefined ||
+        item.category === 'existing_account' ||
+        item.isExistingAccount === true ||
+        (item.folder && item.folder.toUpperCase() !== 'GENERAL' && item.folder.trim() !== '') ||
+        Boolean(item.submittedBy);
+
+      if (isExistAccount) {
+        existingAccounts.push(item);
+      } else if (item.full_name || item.fullName || item.name || item.barangay || item.contact_number) {
+        contacts.push(item);
       }
     }
+
+    if (contacts.length > 0) result.contacts = contacts;
+    if (existingAccounts.length > 0) result.existing_accounts = existingAccounts;
+    if (users.length > 0) result.users = users;
+    if (barangays.length > 0) result.barangays = barangays;
+    if (activities.length > 0) result.activities = activities;
+    if (pcuUpdates.length > 0) result.pcu_updates = pcuUpdates;
+    if (messages.length > 0) result.inbox_messages = messages;
   }
 
   return result;
@@ -856,7 +996,7 @@ export function parseBackupContent(content: string, fileName: string = 'backup')
   if (isExplicitJson || (!isExplicitSql && (trimmed.startsWith('{') || trimmed.startsWith('[')))) {
     format = 'json';
     try {
-      rawExtracted = parseJsonBackup(trimmed);
+      rawExtracted = parseJsonBackup(trimmed, fileName);
     } catch (err: any) {
       if (isExplicitJson) {
         throw new Error(`Failed to parse JSON backup file: ${err.message || err}`);
@@ -879,7 +1019,7 @@ export function parseBackupContent(content: string, fileName: string = 'backup')
   let totalRecords = 0;
 
   // Preferred order for displaying tables
-  const tableOrder = ['contacts', 'existing_accounts', 'users', 'barangays', 'site_settings', 'activities', 'deleted_contacts', 'deleted_existing_accounts', 'deleted_users', 'deleted_barangays'];
+  const tableOrder = ['contacts', 'existing_accounts', 'users', 'barangays', 'site_settings', 'activities', 'pcu_updates', 'inbox_messages', 'deleted_contacts', 'deleted_existing_accounts', 'deleted_users', 'deleted_barangays'];
   const sortedKeys = Object.keys(rawExtracted).sort((a, b) => {
     const idxA = tableOrder.indexOf(a);
     const idxB = tableOrder.indexOf(b);
@@ -929,6 +1069,8 @@ export function parseBackupContent(content: string, fileName: string = 'backup')
       barangays: rawExtracted.barangays || [],
       settings: rawExtracted.site_settings || [],
       activities: rawExtracted.activities || [],
+      pcuUpdates: rawExtracted.pcu_updates || [],
+      messages: rawExtracted.inbox_messages || [],
       deletedContacts: rawExtracted.deleted_contacts || [],
       deletedUsers: rawExtracted.deleted_users || [],
       deletedExistingAccounts: rawExtracted.deleted_existing_accounts || [],

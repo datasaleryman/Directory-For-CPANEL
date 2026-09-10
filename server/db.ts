@@ -170,14 +170,14 @@ const base44 = createClient({
 });
 
 export interface Contact {
-  id: number;
+  id: number | string;
   full_name: string;
   barangay: string;
   purok: string;
   contact_number: string;
   created_at: string;
   updated_at: string;
-  deleted_at: string | null;
+  deleted_at?: string | null;
   latitude?: number;
   longitude?: number;
   geotagged?: boolean;
@@ -193,6 +193,9 @@ export interface Contact {
   submittedToBase44?: boolean;
   submittedAt?: string;
   isExistingAccount?: boolean;
+  category?: 'pcu' | 'existing_account';
+  pin?: string;
+  facebookLink?: string;
   uploadedFiles?: { name: string; url: string; uploadedAt: string; uploadedBy?: string }[];
 }
 
@@ -229,6 +232,7 @@ export interface User {
   displayName?: string;
   avatarDataUrl?: string;
   passwordPlain?: string;
+  permissions?: string[];
 }
 
 export interface ExistingAccountItem {
@@ -254,6 +258,8 @@ export interface ExistingAccountItem {
   isBulkEntry?: boolean;
   isSubmitted?: boolean;
   submittedAt?: string;
+  folder?: string;
+  remarks?: string;
 }
 
 const DATA_DIR = path.join(process.cwd(), 'data');
@@ -9187,6 +9193,8 @@ export async function applyRestoredData(
     barangays?: any[];
     settings?: any;
     activities?: any[];
+    pcuUpdates?: any[];
+    messages?: any[];
     deletedContacts?: any[];
     deletedUsers?: any[];
     deletedExistingAccounts?: any[];
@@ -9204,6 +9212,7 @@ export async function applyRestoredData(
     barangays: number;
     settings: number;
     activities: number;
+    pcuUpdates?: number;
   };
   destinations?: Record<string, string>;
   totalRecords: number;
@@ -9214,11 +9223,56 @@ export async function applyRestoredData(
   let barangaysCount = 0;
   let settingsCount = 0;
   let activitiesCount = 0;
+  let pcuUpdatesCount = 0;
 
-  // 1. Process Contacts
-  if (Array.isArray(payload.contacts) && payload.contacts.length > 0) {
+  // Accurately partition incoming records between Contacts and Existing Accounts
+  const contactsToProcess: any[] = [];
+  const accountsToProcess: any[] = [];
+
+  if (Array.isArray(payload.contacts)) {
+    for (const c of payload.contacts) {
+      if (!c) continue;
+      const isExistAccount =
+        c.existingAcc === true ||
+        c.existingAcc === 'true' ||
+        c.existingAccVerified !== undefined ||
+        c.addedToFiles !== undefined ||
+        c.category === 'existing_account' ||
+        c.isExistingAccount === true ||
+        (c.folder && c.folder.toUpperCase() !== 'GENERAL' && c.folder.trim() !== '') ||
+        Boolean(c.submittedBy);
+      if (isExistAccount) {
+        accountsToProcess.push(c);
+      } else {
+        contactsToProcess.push(c);
+      }
+    }
+  }
+
+  if (Array.isArray(payload.existingAccounts)) {
+    for (const a of payload.existingAccounts) {
+      if (!a) continue;
+      const isExistAccount =
+        a.existingAcc === true ||
+        a.existingAcc === 'true' ||
+        a.existingAccVerified !== undefined ||
+        a.addedToFiles !== undefined ||
+        a.category === 'existing_account' ||
+        a.isExistingAccount === true ||
+        (a.folder && a.folder.toUpperCase() !== 'GENERAL' && a.folder.trim() !== '') ||
+        Boolean(a.submittedBy);
+      if (!isExistAccount && (a.category === 'pcu' || (!a.folder && !a.remarks && !a.submittedBy))) {
+        contactsToProcess.push(a);
+      } else {
+        accountsToProcess.push(a);
+      }
+    }
+  }
+
+  // 1. Process Contacts (PCU Directory, Map View & Print List)
+  if (contactsToProcess.length > 0) {
     const normalizedContacts: Contact[] = [];
-    for (const raw of payload.contacts) {
+    for (const raw of contactsToProcess) {
       if (!raw) continue;
       const fullName = String(raw.full_name || raw.fullName || raw.name || '').trim();
       if (!fullName) continue;
@@ -9240,7 +9294,25 @@ export async function applyRestoredData(
       unTombstoneContact(id, fullName, brgy);
       if (brgy) unTombstoneBarangay(brgy);
 
-      normalizedContacts.push({
+      const statusStr = String(raw.status || '').toUpperCase();
+      const isSubmitted = Boolean(
+        raw.isSubmitted === true ||
+        raw.is_submitted === 1 ||
+        raw.is_submitted === '1' ||
+        raw.is_submitted === true ||
+        raw.isSubmitted === 'true' ||
+        statusStr === 'SUBMITTED' ||
+        statusStr === 'LOCKED'
+      );
+
+      // Default added_from_print_list to true so contacts appear in PCU Directory, Map View & Print list
+      const addedFromPrintList = raw.added_from_print_list !== undefined 
+        ? Boolean(raw.added_from_print_list === true || raw.added_from_print_list === 1 || raw.added_from_print_list === '1' || raw.added_from_print_list === 'true')
+        : (raw.addedFromPrintList !== undefined 
+            ? Boolean(raw.addedFromPrintList === true || raw.addedFromPrintList === 1 || raw.addedFromPrintList === '1' || raw.addedFromPrintList === 'true')
+            : true);
+
+      const contactObj: Contact = {
         id,
         full_name: fullName,
         barangay: brgy,
@@ -9251,18 +9323,40 @@ export async function applyRestoredData(
         latitude: raw.latitude !== null && raw.latitude !== undefined && raw.latitude !== '' ? parseFloat(String(raw.latitude)) : undefined,
         longitude: raw.longitude !== null && raw.longitude !== undefined && raw.longitude !== '' ? parseFloat(String(raw.longitude)) : undefined,
         geotagged: Boolean(raw.geotagged === 1 || raw.geotagged === '1' || raw.geotagged === true || (raw.latitude && raw.longitude)),
-        status: String(raw.status || 'ACTIVE').toUpperCase(),
-        isSubmitted: Boolean(raw.isSubmitted || raw.is_submitted === 1 || raw.is_submitted === '1' || raw.is_submitted === true),
+        status: statusStr || (isSubmitted ? 'SUBMITTED' : 'ACTIVE'),
+        isSubmitted,
         photo_url: String(raw.photo_url || raw.photoUrl || ''),
         pcu_file_url: String(raw.pcu_file_url || raw.pcuFileUrl || ''),
         pcu_uploaded_by: String(raw.pcu_uploaded_by || raw.pcuUploadedBy || ''),
         pcu_uploaded_at: String(raw.pcu_uploaded_at || raw.pcuUploadedAt || ''),
-        added_from_print_list: Boolean(raw.added_from_print_list || raw.addedFromPrintList),
+        added_from_print_list: addedFromPrintList,
         pin: raw.pin ? String(raw.pin) : undefined,
         facebookLink: raw.facebookLink || raw.facebook_link ? String(raw.facebookLink || raw.facebook_link) : undefined,
         category: (raw.category as any) || 'pcu',
-        deleted_at: raw.deleted_at || raw.deletedAt ? String(raw.deleted_at || raw.deletedAt) : undefined
-      });
+        deleted_at: raw.deleted_at || raw.deletedAt ? String(raw.deleted_at || raw.deletedAt) : undefined,
+        uploadedFiles: Array.isArray(raw.uploadedFiles) ? raw.uploadedFiles : undefined
+      };
+
+      normalizedContacts.push(contactObj);
+
+      // If contact has an uploaded PCU document, ensure it is added to pcuUpdatesCache for Recent Uploads
+      if (raw.pcu_file_url || raw.pcuFileUrl || (Array.isArray(raw.uploadedFiles) && raw.uploadedFiles.length > 0)) {
+        const fileUrl = String(raw.pcu_file_url || raw.pcuFileUrl || raw.uploadedFiles?.[0]?.url || '');
+        const pcuId = 'pcu-' + id;
+        if (!pcuUpdatesCache.some(p => String(p.contactId) === String(id) || p.id === pcuId)) {
+          pcuUpdatesCache.unshift({
+            id: pcuId,
+            contactId: id,
+            fullName,
+            barangay: brgy,
+            purok,
+            fileName: fileUrl.includes('/') ? (fileUrl.split('/').pop() || 'PCU Document') : (fileUrl || 'PCU Document'),
+            fileData: fileUrl,
+            uploadedAt: String(raw.pcu_uploaded_at || raw.created_at || new Date().toISOString()),
+            uploadedBy: String(raw.pcu_uploaded_by || 'Admin')
+          });
+        }
+      }
     }
 
     if (mode === 'replace') {
@@ -9294,10 +9388,10 @@ export async function applyRestoredData(
     await safeWriteFile(CONTACTS_FILE, JSON.stringify(contactsCache, null, 2), 'utf-8');
   }
 
-  // 2. Process Existing Accounts
-  if (Array.isArray(payload.existingAccounts) && payload.existingAccounts.length > 0) {
+  // 2. Process Existing Accounts (Existing Account Directory & Exist. Acc. Files)
+  if (accountsToProcess.length > 0) {
     const normalizedAccounts: ExistingAccountItem[] = [];
-    for (const raw of payload.existingAccounts) {
+    for (const raw of accountsToProcess) {
       if (!raw) continue;
       const fullName = String(raw.full_name || raw.fullName || raw.name || '').trim();
       if (!fullName) continue;
@@ -9308,6 +9402,14 @@ export async function applyRestoredData(
       // Clear any tombstone so existing account is immediately visible
       unTombstoneExistingAccount(id, fullName, brgy);
       if (brgy) unTombstoneBarangay(brgy);
+
+      const isAddedToFiles = raw.addedToFiles !== undefined 
+        ? Boolean(raw.addedToFiles === true || raw.addedToFiles === 1 || raw.addedToFiles === '1' || raw.addedToFiles === 'true')
+        : (raw.added_to_files !== undefined
+            ? Boolean(raw.added_to_files === true || raw.added_to_files === 1 || raw.added_to_files === '1' || raw.added_to_files === 'true')
+            : Boolean(raw.folder && raw.folder.toUpperCase() !== 'GENERAL' && raw.folder.trim() !== ''));
+
+      const folderName = String(raw.folder || brgy || 'GENERAL').trim().toUpperCase();
 
       normalizedAccounts.push({
         id,
@@ -9325,9 +9427,9 @@ export async function applyRestoredData(
         status: String(raw.status || 'PENDING').toUpperCase(),
         submittedBy: String(raw.submittedBy || raw.submitted_by || 'Admin'),
         pin: String(raw.pin || ''),
-        addedToFiles: Boolean(raw.addedToFiles || raw.added_to_files),
+        addedToFiles: isAddedToFiles,
         facebookLink: String(raw.facebookLink || raw.facebook_link || ''),
-        folder: String(raw.folder || brgy || 'GENERAL'),
+        folder: folderName,
         remarks: String(raw.remarks || ''),
         uploadedFiles: Array.isArray(raw.uploadedFiles) ? raw.uploadedFiles : []
       });
@@ -9564,7 +9666,50 @@ export async function applyRestoredData(
     await safeWriteFile(DELETED_BARANGAYS_FILE, JSON.stringify(deletedBarangaysCache, null, 2), 'utf-8');
   }
 
-  // 7. Sync with cPanel MySQL if live database is connected
+  // 6. Process PCU Updates (Recent Uploads)
+  if (Array.isArray(payload.pcuUpdates) && payload.pcuUpdates.length > 0) {
+    for (const raw of payload.pcuUpdates) {
+      if (!raw) continue;
+      const updId = String(raw.id || raw.contactId || (Date.now() + '-' + Math.random().toString(36).substring(2, 7)));
+      if (!pcuUpdatesCache.some(p => p.id === updId)) {
+        pcuUpdatesCache.unshift({
+          id: updId,
+          contactId: raw.contactId || raw.contact_id || updId,
+          fullName: String(raw.fullName || raw.full_name || ''),
+          barangay: String(raw.barangay || '').toUpperCase(),
+          purok: String(raw.purok || ''),
+          fileName: String(raw.fileName || raw.file_name || 'document.pdf'),
+          fileData: String(raw.fileData || raw.file_data || ''),
+          uploadedAt: String(raw.uploadedAt || raw.uploaded_at || new Date().toISOString()),
+          uploadedBy: String(raw.uploadedBy || raw.uploaded_by || 'Admin')
+        });
+        pcuUpdatesCount++;
+      }
+    }
+    await safeWriteFile(PCU_UPDATES_FILE, JSON.stringify(pcuUpdatesCache, null, 2), 'utf-8');
+  }
+
+  // 7. Process Messages if present
+  if (Array.isArray(payload.messages) && payload.messages.length > 0) {
+    try {
+      const msgFile = path.join(DATA_DIR, 'base44_messages.json');
+      let msgCache: any[] = [];
+      try {
+        const rawMsg = await safeReadFile(msgFile, 'utf-8');
+        msgCache = JSON.parse(rawMsg);
+      } catch {}
+      for (const m of payload.messages) {
+        if (!m) continue;
+        const mId = m.id || (Date.now() + '-' + Math.random().toString(36).substring(2, 7));
+        if (!msgCache.some(existing => existing.id === mId)) {
+          msgCache.unshift(m);
+        }
+      }
+      await safeWriteFile(msgFile, JSON.stringify(msgCache, null, 2), 'utf-8');
+    } catch {}
+  }
+
+  // 8. Sync with cPanel MySQL if live database is connected
   try {
     const dbStatus = getCPanelDbStatus();
     if (dbStatus.connected) {
@@ -9581,7 +9726,7 @@ export async function applyRestoredData(
     console.log('[Backup Restore] cPanel DB sync note:', cpanelErr.message);
   }
 
-  const totalRecords = contactsCount + accountsCount + usersCount + barangaysCount + settingsCount + activitiesCount;
+  const totalRecords = contactsCount + accountsCount + usersCount + barangaysCount + settingsCount + activitiesCount + pcuUpdatesCount;
 
   await addActivity(
     username,
@@ -9597,15 +9742,17 @@ export async function applyRestoredData(
       users: usersCount,
       barangays: barangaysCount,
       settings: settingsCount,
-      activities: activitiesCount
+      activities: activitiesCount,
+      pcuUpdates: pcuUpdatesCount
     },
     destinations: {
-      contacts: 'PCU Directory (/directory) & Map View',
-      existingAccounts: 'Existing Account (/existing-account) & Files',
-      users: 'Admin Credentials (/accounts) & Staff',
-      barangays: 'Barangay Filters & Master Lists',
+      contacts: 'PCU Directory (/directory), Map View & Print List',
+      existingAccounts: 'Existing Account (/existing-account) & Exist. Acc. Files (/exist-acc-files)',
+      users: 'Admin Credentials (/accounts) & Staff Management',
+      barangays: 'Barangay Filters & Dropdowns',
       settings: 'Website Settings & Branding',
-      activities: 'Dashboard Recent Activities'
+      activities: 'Dashboard Recent Activities',
+      pcuUpdates: 'Recent Uploads (/recent-upload)'
     },
     totalRecords
   };

@@ -309,7 +309,7 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
   const fetchExistingAccounts = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/existing-accounts', {
+      const res = await fetch(`/api/existing-accounts?_t=${Date.now()}`, {
         headers: {
           'Authorization': `Bearer ${authToken}`
         }
@@ -329,7 +329,7 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
   // Fetch Barangay List
   const fetchBarangays = async () => {
     try {
-      const res = await fetch('/api/public/barangays');
+      const res = await fetch(`/api/public/barangays?_t=${Date.now()}`);
       const data = await res.json();
       if (data && Array.isArray(data.barangays)) {
         setBarangayList(data.barangays);
@@ -346,6 +346,9 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
     const handleRestore = () => {
       fetchExistingAccounts();
       fetchBarangays();
+      setSelectedBarangay('all');
+      setSelectedVerification('all');
+      setPage(1);
     };
 
     window.addEventListener('clinic-data-restored', handleRestore);
@@ -354,9 +357,9 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
     };
   }, [authToken]);
 
-  // Aggregate unique barangays for filter dropdown from active unsubmitted accounts
+  // Aggregate unique barangays for filter dropdown from active accounts
   const unsubmittedAccounts = useMemo(() => {
-    return existingAccounts.filter(acc => !acc.uploadedFiles || acc.uploadedFiles.length === 0);
+    return existingAccounts;
   }, [existingAccounts]);
 
   const uniqueBarangays = useMemo(() => {
@@ -407,8 +410,8 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
   const barangayFolders = useMemo(() => {
     const foldersMap: { [key: string]: { count: number; verifiedCount: number; list: ExistingAccountItem[] } } = {};
     
-    // Only aggregate accounts that have been added to files and not yet submitted
-    const addedAccounts = unsubmittedAccounts.filter(acc => acc.addedToFiles === true);
+    // Aggregate accounts that have been added to files or assigned to a folder
+    const addedAccounts = unsubmittedAccounts.filter(acc => acc.addedToFiles === true || (acc.folder && acc.folder.toUpperCase() !== 'GENERAL'));
 
     addedAccounts.forEach(acc => {
       const bName = acc.barangay || 'Unknown Barangay';
