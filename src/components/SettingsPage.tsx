@@ -240,6 +240,32 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     }
   }, [authToken]);
 
+  // Live cPanel database status
+  const [cpanelStatus, setCpanelStatus] = useState<{
+    connected: boolean;
+    database?: string;
+    host?: string;
+    port?: number;
+    lastError?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const fetchDbStatus = async () => {
+      try {
+        const headers: Record<string, string> = {};
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        const res = await fetch('/api/cpanel-db/status', { headers });
+        if (res.ok) {
+          const data = await res.json();
+          setCpanelStatus(data);
+        }
+      } catch (err) {
+        console.warn('Failed to fetch cpanel-db status:', err);
+      }
+    };
+    fetchDbStatus();
+  }, [authToken, activeSettingsTab]);
+
   useEffect(() => {
     if (activeSettingsTab === 'addAccount' && authToken) {
       fetchAccounts();
@@ -887,10 +913,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Storage Engine</span>
                     <div className="mt-1">
                       <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-xs">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
-                          MySQL Primary
-                        </span>
+                        {cpanelStatus?.connected ? (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-xs">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                            cPanel MySQL Live
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-amber-100 text-amber-800 border border-amber-200 shadow-xs">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                            Local Storage Mode
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -901,18 +934,25 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                     className="px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wide transition-all inline-flex items-center gap-1.5 border bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border-indigo-200/50 cursor-pointer"
                   >
                     <Server className="w-3 h-3" />
-                    Manage DB
+                    Configure Database
                   </button>
                 </div>
 
                 {/* Technical Details */}
                 <div className="space-y-2 text-xs font-mono bg-slate-50/50 border border-slate-100 rounded-xl p-4">
                   <div className="flex justify-between py-1 border-b border-slate-100">
-                    <span className="text-slate-400">Database Type:</span>
-                    <span className="text-slate-700 font-semibold flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                      cPanel MySQL
-                    </span>
+                    <span className="text-slate-400">Database Engine:</span>
+                    {cpanelStatus?.connected ? (
+                      <span className="text-emerald-700 font-semibold flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        cPanel MySQL ({cpanelStatus.database} on {cpanelStatus.host})
+                      </span>
+                    ) : (
+                      <span className="text-amber-700 font-semibold flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3 text-amber-600" />
+                        Local JSON Storage (MySQL Offline)
+                      </span>
+                    )}
                   </div>
                   <div className="flex justify-between py-1 border-b border-slate-100">
                     <span className="text-slate-400">Driver:</span>

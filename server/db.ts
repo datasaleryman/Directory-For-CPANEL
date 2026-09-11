@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { createClient } from '@base44/sdk';
 import {
   saveContactToCPanel,
+  saveContactsBulkToCPanel,
   deleteContactFromCPanel,
   saveUserToCPanel,
   deleteUserFromCPanel,
@@ -21,7 +22,8 @@ import {
   loadCPanelDbConfig,
   saveCPanelDbConfig,
   testCPanelDbConnection,
-  generateCPanelSchemaSql
+  generateCPanelSchemaSql,
+  checkCPanelDbNeedsSync
 } from './cpanel_db.js';
 
 // Intercept console functions to suppress Base44 429 rate-limiting logs (preventing artificial AI Studio applet failures)
@@ -345,16 +347,37 @@ export function unTombstoneUser(username?: string, email?: string) {
   }
 }
 
-export function unTombstoneBarangay(barangay?: string) {
-  if (!barangay || typeof barangay !== 'string') return;
-  const target = barangay.trim().toLowerCase();
-  if (!target) return;
+export function extractBarangayName(item: any): string {
+  if (!item) return '';
+  if (typeof item === 'string') return item.trim();
+  if (typeof item === 'object') {
+    return (
+      item.barangay_name ||
+      item.barangayName ||
+      item.name ||
+      item.barangay ||
+      item.folder ||
+      item.record_data ||
+      item.recordId ||
+      item.id ||
+      ''
+    ).toString().trim();
+  }
+  return String(item).trim();
+}
+
+export function unTombstoneBarangay(barangay?: any) {
+  const targetName = extractBarangayName(barangay);
+  if (!targetName) return;
+  const target = targetName.toLowerCase();
   const prevLen = deletedBarangaysCache.length;
-  deletedBarangaysCache = deletedBarangaysCache.filter(b => {
-    if (!b) return false;
-    const bg = b.trim().toLowerCase();
-    return bg !== target && !isBarangayMatch(b, barangay) && normalizeBarangayName(b).toLowerCase() !== normalizeBarangayName(barangay).toLowerCase();
-  });
+  deletedBarangaysCache = deletedBarangaysCache
+    .map(extractBarangayName)
+    .filter(b => {
+      if (!b) return false;
+      const bg = b.toLowerCase();
+      return bg !== target && !isBarangayMatch(b, targetName) && normalizeBarangayName(b).toLowerCase() !== normalizeBarangayName(targetName).toLowerCase();
+    });
   if (deletedBarangaysCache.length !== prevLen) {
     safeWriteFile(DELETED_BARANGAYS_FILE, JSON.stringify(deletedBarangaysCache, null, 2), 'utf-8').catch(err => {
       console.warn('Failed to save updated deleted barangays cache:', err.message || err);
@@ -412,14 +435,15 @@ export function unTombstoneExistingAccount(id?: string, full_name?: string, bara
   }
 }
 
-export function isBarangayTombstoned(bg: string): boolean {
-  if (!bg || typeof bg !== 'string') return false;
-  const target = bg.trim().toLowerCase();
-  if (!target) return false;
-  return deletedBarangaysCache.some(deletedBg => {
+export function isBarangayTombstoned(bg: any): boolean {
+  const targetName = extractBarangayName(bg);
+  if (!targetName) return false;
+  const target = targetName.toLowerCase();
+  return deletedBarangaysCache.some(rawDeletedBg => {
+    const deletedBg = extractBarangayName(rawDeletedBg);
     if (!deletedBg) return false;
-    const del = deletedBg.trim().toLowerCase();
-    return del === target || isBarangayMatch(deletedBg, bg) || normalizeBarangayName(deletedBg).toLowerCase() === normalizeBarangayName(bg).toLowerCase();
+    const del = deletedBg.toLowerCase();
+    return del === target || isBarangayMatch(deletedBg, targetName) || normalizeBarangayName(deletedBg).toLowerCase() === normalizeBarangayName(targetName).toLowerCase();
   });
 }
 
@@ -1073,8 +1097,16 @@ export async function initDb() {
     if (fs.existsSync(DELETED_BARANGAYS_FILE)) {
       try {
         const raw = fs.readFileSync(DELETED_BARANGAYS_FILE, 'utf-8');
-        deletedBarangaysCache = JSON.parse(raw);
-        if (!Array.isArray(deletedBarangaysCache)) deletedBarangaysCache = [];
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          deletedBarangaysCache = Array.from(
+            new Set(
+              parsed.map(extractBarangayName).filter((b: string) => typeof b === 'string' && b.length > 0)
+            )
+          );
+        } else {
+          deletedBarangaysCache = [];
+        }
       } catch (e) {
         deletedBarangaysCache = [];
       }
@@ -1441,20 +1473,56 @@ export async function syncWithCPanelDb(username: string = 'admin'): Promise<{ su
   try {
     const cpanelData = await fetchAllFromCPanelDb();
     if (cpanelData) {
-      contactsCache = deduplicateContactsByName(cpanelData.contacts.filter(isContactForDirectory));
-      usersCache = cpanelData.users;
-      existingAccountsCache = cpanelData.existingAccounts;
+      const activeContacts = (cpanelData.contacts || []).filter(c => c && !c.deleted_at && c.status !== 'DELETED');
+      contactsCache = deduplicateContactsByName(activeContacts);
+
+      // Preserve master admin if absent from cpanel
+      const hasAdmin = (cpanelData.users || []).some(u => u.username?.toLowerCase() === 'admin');
+      if (hasAdmin) {
+        usersCache = cpanelData.users;
+      } else {
+        const existingAdmin = usersCache.find(u => u.username?.toLowerCase() === 'admin');
+        usersCache = existingAdmin ? [existingAdmin, ...(cpanelData.users || [])] : (cpanelData.users || []);
+      }
+
+      existingAccountsCache = cpanelData.existingAccounts || [];
       if (cpanelData.barangays && cpanelData.barangays.length > 0) {
         barangaysCache = cpanelData.barangays;
       }
       if (cpanelData.settings && Object.keys(cpanelData.settings).length > 0) {
         siteSettings = { ...siteSettings, ...cpanelData.settings };
       }
+
+      // Reconstruct PCU uploads cache from contacts that have pcu_file_url or are marked submitted
+      for (const c of cpanelData.contacts || []) {
+        if (c.pcu_file_url || c.isSubmitted) {
+          const exists = pcuUpdatesCache.some(p => 
+            (p.contactId && c.id && String(p.contactId) === String(c.id)) ||
+            (p.fullName && c.full_name && p.fullName.trim().toLowerCase() === c.full_name.trim().toLowerCase())
+          );
+          if (!exists) {
+            pcuUpdatesCache.push({
+              id: `pcu_${c.id || Date.now()}`,
+              contactId: Number(c.id) || Date.now(),
+              fullName: c.full_name,
+              barangay: c.barangay || '',
+              purok: c.purok || '',
+              fileName: c.pcu_file_url ? (c.pcu_file_url.split('/').pop()?.split('?')[0] || 'Household_PCU_Document.pdf') : 'PCU_Document.pdf',
+              fileData: c.pcu_file_url || '',
+              uploadedAt: c.pcu_uploaded_at || c.updated_at || c.created_at || new Date().toISOString(),
+              uploadedBy: c.pcu_uploaded_by || 'Staff',
+              added_from_website: true
+            });
+          }
+        }
+      }
+
       await safeWriteFile(CONTACTS_FILE, JSON.stringify(contactsCache, null, 2), 'utf-8');
       await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
       await safeWriteFile(EXISTING_ACCOUNTS_FILE, JSON.stringify(existingAccountsCache, null, 2), 'utf-8');
       await safeWriteFile(BARANGAYS_FILE, JSON.stringify(barangaysCache, null, 2), 'utf-8');
       await safeWriteFile(SETTINGS_FILE, JSON.stringify(siteSettings, null, 2), 'utf-8');
+      await safeWriteFile(PCU_UPDATES_FILE, JSON.stringify(pcuUpdatesCache, null, 2), 'utf-8');
       await addActivity(username, `Synchronized data with cPanel MySQL Database (${contactsCache.length} contacts)`);
       return {
         success: true,
@@ -1513,9 +1581,10 @@ function getExactBarangay(sub: any): string {
   return normalizeBarangayName(raw);
 }
 
-function normalizeBarangayName(bName: string): string {
-  if (!bName) return 'Barangay Central';
-  const bUpper = bName.toUpperCase().trim();
+function normalizeBarangayName(bName: any): string {
+  const str = extractBarangayName(bName);
+  if (!str) return 'Barangay Central';
+  const bUpper = str.toUpperCase();
   if (bUpper.includes('KWT') || bUpper.includes('KAWIT')) return 'Kawit';
   if (bUpper.includes('BLNGSN') || bUpper.includes('BALANGASAN')) return 'Balangasan';
   if (bUpper.includes('NPLN') || bUpper.includes('NAPOLAN')) return 'Napolan';
@@ -3048,10 +3117,12 @@ function capitalizeWords(str: string): string {
 }
 
 // Flexible Barangay comparison function
-export function isBarangayMatch(b1?: string, b2?: string): boolean {
-  if (!b1 || !b2) return false;
-  const c1 = b1.trim().toLowerCase();
-  const c2 = b2.trim().toLowerCase();
+export function isBarangayMatch(b1?: any, b2?: any): boolean {
+  const str1 = extractBarangayName(b1);
+  const str2 = extractBarangayName(b2);
+  if (!str1 || !str2) return false;
+  const c1 = str1.toLowerCase();
+  const c2 = str2.toLowerCase();
   if (c1 === c2) return true;
 
   // Clean prefixes like "barangay ", "brgy. ", "brgy "
@@ -3060,8 +3131,8 @@ export function isBarangayMatch(b1?: string, b2?: string): boolean {
   if (clean1 === clean2 && clean1.length > 0) return true;
 
   // Compare normalized versions
-  const norm1 = normalizeBarangayName(b1).toLowerCase();
-  const norm2 = normalizeBarangayName(b2).toLowerCase();
+  const norm1 = normalizeBarangayName(str1).toLowerCase();
+  const norm2 = normalizeBarangayName(str2).toLowerCase();
   if (norm1 === norm2 && norm1.length > 0) return true;
 
   return false;
@@ -3100,12 +3171,11 @@ export function isContactSubmitted(c: Contact): boolean {
   return false;
 }
 
-// Helper to filter all active contacts for PCU Directory (only available, never submitted to Base44)
+// Helper to filter all active contacts for PCU Directory (active, non-deleted records)
 export function isContactForDirectory(c: Contact): boolean {
   if (!c || c.deleted_at) return false;
   if (c.added_from_print_list === false) return false;
   if (isContactTombstoned(c)) return false;
-  if (isContactSubmitted(c)) return false;
   return true;
 }
 
@@ -3207,11 +3277,13 @@ export async function getContacts(params: {
 }) {
   const { search, barangay, address, purok, sortBy = 'date', sortOrder = 'desc', page = 1, limit = 10, forceSync = false } = params;
 
-  if (isCPanelDbConnected() && forceSync) {
-    try {
-      await syncWithCPanelDb();
-    } catch (err: any) {
-      console.error('[cPanel DB] Failed to sync contacts in getContacts:', err.message || err);
+  if (isCPanelDbConnected()) {
+    if (forceSync || contactsCache.length === 0 || (await checkCPanelDbNeedsSync())) {
+      try {
+        await syncWithCPanelDb();
+      } catch (err: any) {
+        console.error('[cPanel DB] Failed to sync contacts in getContacts:', err.message || err);
+      }
     }
   }
 
@@ -4761,9 +4833,31 @@ export async function saveBulkImport(
     `Performed bulk entry import. Saved: ${savedCount} records (including ${replacedCount} updated records), Skipped: ${skippedCount}.`
   );
 
+  // Sync bulk contacts to cPanel MySQL database if connected
+  const dbStatus = getCPanelDbStatus();
+  const dbResult = {
+    connected: isCPanelDbConnected(),
+    target: isCPanelDbConnected() ? 'cPanel MySQL' : 'Local Storage Mode (data/contacts.json)',
+    database: dbStatus.database || '',
+    savedToDb: 0,
+    error: null as string | null
+  };
+
   if (isCPanelDbConnected()) {
-    for (const c of [...appended, ...updated]) {
-      saveContactToCPanel(c).catch(err => console.warn('Failed to save bulk contact to cPanel DB:', err));
+    const contactsToSync = [...appended, ...updated];
+    if (contactsToSync.length > 0) {
+      try {
+        const cpanelSync = await saveContactsBulkToCPanel(contactsToSync);
+        if (cpanelSync.success) {
+          dbResult.savedToDb = cpanelSync.saved;
+        } else {
+          dbResult.error = cpanelSync.error || 'Failed to save to cPanel MySQL database';
+          console.warn('[cPanel DB] Warning: Bulk contacts save to cPanel returned failure:', cpanelSync.error);
+        }
+      } catch (err: any) {
+        dbResult.error = err.message || 'Database error occurred while saving to cPanel MySQL';
+        console.error('[cPanel DB] Failed to save bulk contacts to cPanel DB:', err);
+      }
     }
   }
 
@@ -4771,7 +4865,8 @@ export async function saveBulkImport(
     total: items.length,
     saved: savedCount,
     replaced: replacedCount,
-    skipped: skippedCount
+    skipped: skippedCount,
+    database: dbResult
   };
 }
 
@@ -5984,7 +6079,7 @@ export async function syncDeletedRecordsToGoogleSheets(force = false) {
       existingSheets.add(bgSheetName);
     }
     await sheets.spreadsheets.values.clear({ spreadsheetId, range: `${bgSheetName}!A:Z` });
-    const bgRows = [['Barangay Name'], ...deletedBarangaysCache.map(b => [b])];
+    const bgRows = [['Barangay Name'], ...deletedBarangaysCache.map(extractBarangayName).filter(Boolean).map(b => [b])];
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range: `${bgSheetName}!A1`,
@@ -9658,10 +9753,17 @@ export async function applyRestoredData(
     await safeWriteFile(DELETED_EXISTING_ACCOUNTS_FILE, JSON.stringify(deletedExistingAccountsCache, null, 2), 'utf-8');
   }
   if (Array.isArray(payload.deletedBarangays) && payload.deletedBarangays.length > 0) {
+    const cleanedBgs = Array.from(
+      new Set(
+        payload.deletedBarangays
+          .map(extractBarangayName)
+          .filter((b: string) => typeof b === 'string' && b.length > 0)
+      )
+    );
     if (mode === 'replace') {
-      deletedBarangaysCache = payload.deletedBarangays;
+      deletedBarangaysCache = cleanedBgs;
     } else {
-      for (const db of payload.deletedBarangays) {
+      for (const db of cleanedBgs) {
         if (!deletedBarangaysCache.includes(db)) {
           deletedBarangaysCache.push(db);
         }

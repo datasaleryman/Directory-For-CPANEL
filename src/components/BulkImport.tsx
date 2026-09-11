@@ -18,7 +18,10 @@ import {
   FileUp,
   Phone,
   User,
-  MapPin
+  MapPin,
+  Database,
+  AlertCircle,
+  HardDrive
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { ParseResult, BulkPreviewResponse } from '../types.js';
@@ -68,9 +71,25 @@ export const BulkImport: React.FC<BulkImportProps> = ({
     saved: number;
     replaced: number;
     skipped: number;
+    database?: {
+      connected: boolean;
+      target: string;
+      database: string;
+      savedToDb: number;
+      error: string | null;
+    };
   } | null>(null);
 
-  // Fetch known barangays for the default selector
+  // Live cPanel MySQL / storage target status
+  const [dbStatus, setDbStatus] = useState<{
+    connected: boolean;
+    database: string;
+    host: string;
+    port: number;
+    lastError: string | null;
+  } | null>(null);
+
+  // Fetch known barangays and database connection status
   useEffect(() => {
     const fetchBarangays = async () => {
       try {
@@ -85,8 +104,30 @@ export const BulkImport: React.FC<BulkImportProps> = ({
         // Fall back to default list
       }
     };
+
+    const fetchDbStatus = async () => {
+      try {
+        const headers: Record<string, string> = {};
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        const res = await fetch('/api/cpanel-db/status', { headers });
+        if (res.ok) {
+          const data = await res.json();
+          setDbStatus({
+            connected: Boolean(data.connected),
+            database: data.database || '',
+            host: data.host || 'localhost',
+            port: data.port || 3306,
+            lastError: data.lastError || null
+          });
+        }
+      } catch (err) {
+        console.warn('Could not fetch DB status in BulkImport:', err);
+      }
+    };
+
     fetchBarangays();
-  }, []);
+    fetchDbStatus();
+  }, [authToken]);
 
   // Handle File Input or Drag-and-Drop
   const handleProcessFile = (file: File) => {
@@ -171,7 +212,14 @@ export const BulkImport: React.FC<BulkImportProps> = ({
       }
 
       setImportSummary(data);
-      showToast(`Bulk Entry Complete! Saved ${data.saved} contact records.`, 'success');
+      if (data.database?.connected) {
+        showToast(`Bulk Entry Complete! Saved ${data.saved} contact records directly into cPanel MySQL Database (${data.database.database || 'active'}).`, 'success');
+      } else {
+        showToast(`Bulk Entry Complete! Saved ${data.saved} contact records to Local Storage (cPanel MySQL is disconnected).`, 'info');
+      }
+      if (data.database?.error) {
+        showToast(`Warning: Records were saved locally, but cPanel MySQL sync reported: ${data.database.error}`, 'warning');
+      }
       setInputText('');
       setPreviewData(null);
       onImportComplete();
@@ -249,7 +297,14 @@ export const BulkImport: React.FC<BulkImportProps> = ({
       }
 
       setImportSummary(data);
-      showToast(`Bulk Entry Complete! Saved ${data.saved} contact records.`, 'success');
+      if (data.database?.connected) {
+        showToast(`Bulk Entry Complete! Saved ${data.saved} contact records directly into cPanel MySQL Database (${data.database.database || 'active'}).`, 'success');
+      } else {
+        showToast(`Bulk Entry Complete! Saved ${data.saved} contact records to Local Storage (cPanel MySQL is disconnected).`, 'info');
+      }
+      if (data.database?.error) {
+        showToast(`Warning: Records were saved locally, but cPanel MySQL sync reported: ${data.database.error}`, 'warning');
+      }
       setInputText('');
       onImportComplete();
     } catch (err: any) {
@@ -334,6 +389,42 @@ export const BulkImport: React.FC<BulkImportProps> = ({
           >
             Dashboard
           </button>
+        </div>
+      </div>
+
+      {/* Live Database Destination Banner */}
+      <div className={`p-4 rounded-2xl border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs ${
+        dbStatus?.connected
+          ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+          : 'bg-amber-50/80 border-amber-200 text-amber-900'
+      }`}>
+        <div className="flex items-start sm:items-center gap-3">
+          <div className={`p-2 rounded-xl shrink-0 ${dbStatus?.connected ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+            <Database className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-slate-800">
+                Database Target:
+              </span>
+              {dbStatus?.connected ? (
+                <span className="inline-flex items-center gap-1 font-bold text-emerald-800 bg-emerald-100 px-2.5 py-0.5 rounded-full text-[11px] border border-emerald-200">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  cPanel MySQL Connected ({dbStatus.database} on {dbStatus.host}:{dbStatus.port})
+                </span>
+              ) : (
+                <span className="inline-flex items-center gap-1 font-bold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-full text-[11px] border border-amber-200">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-600" />
+                  Local Storage Mode (MySQL Disconnected)
+                </span>
+              )}
+            </div>
+            <p className="text-[11px] mt-1 text-slate-600">
+              {dbStatus?.connected
+                ? 'Contacts entered or uploaded below will be saved directly into your cPanel MySQL "contacts" table.'
+                : 'cPanel MySQL is currently not connected. Contacts are saved to local JSON storage (data/contacts.json). To save directly to MySQL, configure credentials in Settings > cPanel Database.'}
+            </p>
+          </div>
         </div>
       </div>
 
@@ -789,7 +880,9 @@ export const BulkImport: React.FC<BulkImportProps> = ({
               <span className="text-lg font-black text-slate-800 block mt-1">{importSummary.total}</span>
             </div>
             <div>
-              <span className="block text-[10px] font-bold text-emerald-600 uppercase">Saved to DB</span>
+              <span className="block text-[10px] font-bold text-emerald-600 uppercase">
+                {importSummary.database?.connected ? 'Saved to MySQL' : 'Saved Locally'}
+              </span>
               <span className="text-lg font-black text-emerald-700 block mt-1">{importSummary.saved}</span>
             </div>
             <div>
@@ -800,6 +893,51 @@ export const BulkImport: React.FC<BulkImportProps> = ({
               <span className="block text-[10px] font-bold text-slate-400 uppercase">Skipped</span>
               <span className="text-lg font-black text-slate-500 block mt-1">{importSummary.skipped}</span>
             </div>
+          </div>
+
+          {/* Database Target Confirmation Card */}
+          <div className="w-full max-w-xl text-left">
+            {importSummary.database?.connected ? (
+              <div className="bg-emerald-100/70 border border-emerald-300/80 rounded-2xl p-4 flex items-start gap-3">
+                <div className="p-2 bg-emerald-600 text-white rounded-xl shrink-0 mt-0.5">
+                  <Database className="w-4 h-4" />
+                </div>
+                <div className="text-xs text-emerald-950 space-y-1">
+                  <p className="font-bold flex items-center gap-1.5 text-emerald-900">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    Persisted to Live cPanel MySQL Database
+                  </p>
+                  <p className="text-emerald-800 leading-relaxed">
+                    Database: <code className="font-mono bg-emerald-200/60 px-1 py-0.5 rounded text-emerald-950 font-bold">{importSummary.database.database || dbStatus?.database || 'sfc_directory'}</code>.
+                    All {importSummary.database.savedToDb || importSummary.saved} records were synchronized directly to MySQL table <code className="font-mono bg-emerald-200/60 px-1 py-0.5 rounded text-emerald-950">contacts</code>.
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
+                <div className="p-2 bg-amber-500 text-white rounded-xl shrink-0 mt-0.5">
+                  <HardDrive className="w-4 h-4" />
+                </div>
+                <div className="text-xs text-amber-950 space-y-1">
+                  <p className="font-bold flex items-center gap-1.5 text-amber-900">
+                    <AlertCircle className="w-4 h-4 text-amber-600" />
+                    Saved to Local JSON Storage (MySQL is Offline / Inactive)
+                  </p>
+                  <p className="text-amber-800 leading-relaxed">
+                    The {importSummary.saved} contact records were saved to <code className="font-mono bg-amber-100 px-1 py-0.5 rounded text-amber-950 font-bold">data/contacts.json</code>.
+                    {dbStatus?.lastError ? (
+                      <span className="block mt-1 text-[11px] text-amber-900 font-medium">
+                        MySQL Status: {dbStatus.lastError}
+                      </span>
+                    ) : (
+                      <span className="block mt-1 text-[11px] text-amber-900 font-medium">
+                        To save directly into MySQL or sync existing records, go to Website Settings &gt; cPanel Database.
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row items-center gap-3 pt-2 w-full sm:w-auto">

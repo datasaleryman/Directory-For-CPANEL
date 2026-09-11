@@ -12,7 +12,8 @@ import {
   deletedExistingAccountsCache,
   deletedUsersCache,
   addActivity,
-  applyRestoredData
+  applyRestoredData,
+  extractBarangayName
 } from './db.js';
 import { getCPanelDbStatus } from './cpanel_db.js';
 
@@ -762,7 +763,10 @@ function parseSqlDump(sql: string): Record<string, any[]> {
           if (targetTable.includes('contact') || targetTable.includes('pcu')) result.deleted_contacts.push(data);
           else if (targetTable.includes('user') || targetTable.includes('admin') || targetTable.includes('staff')) result.deleted_users.push(data);
           else if (targetTable.includes('account') || targetTable.includes('exist')) result.deleted_existing_accounts.push(data);
-          else if (targetTable.includes('barangay') || targetTable.includes('brgy')) result.deleted_barangays.push(data);
+          else if (targetTable.includes('barangay') || targetTable.includes('brgy')) {
+            const bgName = extractBarangayName(data);
+            if (bgName) result.deleted_barangays.push(bgName);
+          }
         }
       }
       continue;
@@ -1074,7 +1078,7 @@ export function parseBackupContent(content: string, fileName: string = 'backup')
       deletedContacts: rawExtracted.deleted_contacts || [],
       deletedUsers: rawExtracted.deleted_users || [],
       deletedExistingAccounts: rawExtracted.deleted_existing_accounts || [],
-      deletedBarangays: rawExtracted.deleted_barangays || []
+      deletedBarangays: (rawExtracted.deleted_barangays || []).map(extractBarangayName).filter(Boolean)
     }
   };
 }

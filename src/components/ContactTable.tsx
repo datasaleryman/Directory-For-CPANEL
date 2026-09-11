@@ -759,8 +759,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
       }
 
       const rawContacts: Contact[] = data.contacts || [];
-      const visibleContacts = rawContacts.filter(c => !isContactLocked(c));
-      setContacts(visibleContacts);
+      setContacts(rawContacts);
       setTotal(data.total || 0);
       setTotalPages(data.totalPages || 1);
       setAllPuroks(data.allPuroks || []);

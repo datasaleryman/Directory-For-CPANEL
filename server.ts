@@ -88,7 +88,8 @@ import {
   generateCPanelSchemaSql,
   reinitializePool,
   fetchAllFromCPanelDb,
-  isCPanelDbConnected
+  isCPanelDbConnected,
+  checkCPanelDbNeedsSync
 } from './server/cpanel_db.js';
 import {
   createToken,
@@ -404,8 +405,16 @@ export async function getApp(httpServer?: http.Server) {
   });
 
   // Get all filtered contacts without pagination (for CSV/Excel/PDF print and exports)
-  app.get('/api/contacts/export', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/contacts/export', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
+      if (isCPanelDbConnected() && (await checkCPanelDbNeedsSync())) {
+        try {
+          await syncWithCPanelDb();
+        } catch (syncErr: any) {
+          console.warn('[cPanel DB] Export sync warning:', syncErr.message);
+        }
+      }
+
       const userObj = req.user ? findUser(req.user.username) : null;
       const userRole = (userObj?.role || req.user?.role || '').toUpperCase();
       const userBarangay = userObj?.barangay || '';
@@ -947,8 +956,15 @@ export async function getApp(httpServer?: http.Server) {
   });
 
   // Get Dashboard Metrics & logs
-  app.get('/api/dashboard/stats', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.get('/api/dashboard/stats', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
+      if (isCPanelDbConnected() && (await checkCPanelDbNeedsSync())) {
+        try {
+          await syncWithCPanelDb();
+        } catch (syncErr: any) {
+          console.warn('[cPanel DB] Dashboard stats sync warning:', syncErr.message);
+        }
+      }
       const stats = getDashboardStats();
       res.json(stats);
     } catch (err: any) {
@@ -1011,6 +1027,13 @@ export async function getApp(httpServer?: http.Server) {
 
       await saveCPanelDbConfig(newConfig);
       const status = getCPanelDbStatus();
+      if (status.connected) {
+        try {
+          await syncWithCPanelDb(username);
+        } catch (syncErr: any) {
+          console.warn('[cPanel DB] Initial sync warning:', syncErr.message);
+        }
+      }
       await addActivity(username, `Updated cPanel MySQL database connection settings (${newConfig.database || 'default'})`);
 
       res.json({

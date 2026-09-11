@@ -35,12 +35,12 @@
   },
   {
     "id": 1789047486080,
-    "full_name": "Pedro Penduko",
-    "barangay": "Barangay Central",
-    "purok": "Purok 3",
-    "contact_number": "09112223333",
-    "created_at": "2026-09-10T23:41:31.938Z",
-    "updated_at": "2026-09-10T23:41:31.938Z",
+    "full_name": "Juan Dela Cruz",
+    "barangay": "09171234567",
+    "purok": "Barangay Central",
+    "contact_number": "Purok 1",
+    "created_at": "2026-09-11T00:11:51.451Z",
+    "updated_at": "2026-09-11T00:11:51.451Z",
     "deleted_at": null,
     "added_locally": true,
     "added_from_print_list": true

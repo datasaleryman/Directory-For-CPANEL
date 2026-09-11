@@ -1,5 +1,17 @@
 [
   {
+    "id": "f91a457b-9f0a-423f-8061-58d02437d849",
+    "timestamp": "2026-09-11T00:11:51.452Z",
+    "username": "admin",
+    "action": "Performed bulk entry import. Saved: 1 records (including 0 updated records), Skipped: 0."
+  },
+  {
+    "id": "afcbdb92-4048-4c4d-9692-05c1eb1318d8",
+    "timestamp": "2026-09-11T00:11:51.429Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
     "id": "cca45860-54eb-48ab-81b1-581dba906e22",
     "timestamp": "2026-09-10T23:41:31.938Z",
     "username": "admin",

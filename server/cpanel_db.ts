@@ -209,6 +209,40 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
     }
   }
 
+  // Ensure all necessary columns exist in `contacts` table if it was created with an older schema
+  try {
+    const [colRows]: any = await connectionPool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'contacts'`
+    );
+    const existingCols = new Set((colRows || []).map((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase()));
+    if (existingCols.size > 0) {
+      const missingCols = [
+        { name: 'latitude', type: 'DECIMAL(10, 7) NULL' },
+        { name: 'longitude', type: 'DECIMAL(10, 7) NULL' },
+        { name: 'geotagged', type: 'TINYINT(1) DEFAULT 0' },
+        { name: 'status', type: "VARCHAR(50) DEFAULT 'ACTIVE'" },
+        { name: 'is_submitted', type: 'TINYINT(1) DEFAULT 0' },
+        { name: 'photo_url', type: 'LONGTEXT' },
+        { name: 'pcu_file_url', type: 'LONGTEXT' },
+        { name: 'pcu_uploaded_by', type: "VARCHAR(255) DEFAULT ''" },
+        { name: 'pcu_uploaded_at', type: "VARCHAR(100) DEFAULT ''" },
+        { name: 'deleted_at', type: 'VARCHAR(100) NULL' }
+      ];
+      for (const col of missingCols) {
+        if (!existingCols.has(col.name.toLowerCase())) {
+          try {
+            await connectionPool.query(`ALTER TABLE contacts ADD COLUMN \`${col.name}\` ${col.type}`);
+            console.log(`[cPanel DB] Added missing column '${col.name}' to contacts table.`);
+          } catch (e: any) {
+            console.warn(`[cPanel DB] Column migration notice for ${col.name}:`, e.message);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[cPanel DB] Schema inspection notice:', err.message);
+  }
+
   // Ensure default Master Admin exists in MySQL
   try {
     const [rows]: any = await connectionPool.query('SELECT username FROM users WHERE username = ?', ['admin']);
@@ -773,6 +807,61 @@ export async function migrateAllDataToCPanelDb(data: {
   };
 }
 
+let lastSyncCheck = {
+  count: -1,
+  maxUpdated: '',
+  maxId: -1,
+  lastCheckedTime: 0
+};
+
+export function updateLastSyncMetadata(count: number, maxUpdated: string, maxId: number) {
+  lastSyncCheck.count = count;
+  lastSyncCheck.maxUpdated = maxUpdated;
+  lastSyncCheck.maxId = maxId;
+  lastSyncCheck.lastCheckedTime = Date.now();
+}
+
+/**
+ * Lightweight check to see if cPanel MySQL contacts table has changed since last sync
+ */
+export async function checkCPanelDbNeedsSync(): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  const now = Date.now();
+  if (now - lastSyncCheck.lastCheckedTime < 2500) {
+    return false;
+  }
+  lastSyncCheck.lastCheckedTime = now;
+
+  try {
+    const [rows]: any = await pool.query(
+      `SELECT COUNT(*) AS cnt, COALESCE(MAX(updated_at), '') AS max_updated, COALESCE(MAX(id), 0) AS max_id 
+       FROM contacts WHERE deleted_at IS NULL AND status != 'DELETED'`
+    );
+    if (rows && rows.length > 0) {
+      const cnt = Number(rows[0].cnt) || 0;
+      const maxUpdated = String(rows[0].max_updated || '');
+      const maxId = Number(rows[0].max_id) || 0;
+
+      if (lastSyncCheck.count === -1) {
+        lastSyncCheck.count = cnt;
+        lastSyncCheck.maxUpdated = maxUpdated;
+        lastSyncCheck.maxId = maxId;
+        return true;
+      }
+
+      if (cnt !== lastSyncCheck.count || maxUpdated !== lastSyncCheck.maxUpdated || maxId !== lastSyncCheck.maxId) {
+        lastSyncCheck.count = cnt;
+        lastSyncCheck.maxUpdated = maxUpdated;
+        lastSyncCheck.maxId = maxId;
+        return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Fetch all records from cPanel MySQL database
  */
@@ -794,25 +883,88 @@ export async function fetchAllFromCPanelDb(): Promise<{
     const [aRows]: any = await pool.query('SELECT * FROM activities ORDER BY timestamp DESC LIMIT 200');
     const [sRows]: any = await pool.query('SELECT setting_key, setting_value FROM site_settings');
 
-    const contacts = (cRows || []).map((r: any) => ({
-      id: Number(r.id),
-      full_name: r.full_name,
-      barangay: r.barangay,
-      purok: r.purok,
-      contact_number: r.contact_number,
-      created_at: r.created_at,
-      updated_at: r.updated_at,
-      latitude: r.latitude ? Number(r.latitude) : undefined,
-      longitude: r.longitude ? Number(r.longitude) : undefined,
-      geotagged: Boolean(r.geotagged),
-      status: r.status,
-      isSubmitted: Boolean(r.is_submitted),
-      photo_url: r.photo_url || undefined,
-      pcu_file_url: r.pcu_file_url || undefined,
-      pcu_uploaded_by: r.pcu_uploaded_by || undefined,
-      pcu_uploaded_at: r.pcu_uploaded_at || undefined,
-      deleted_at: r.deleted_at || null
-    }));
+    const contacts = (cRows || []).map((r: any) => {
+      const idVal = r.id !== null && r.id !== undefined && !isNaN(Number(r.id)) 
+        ? Number(r.id) 
+        : (r.id !== undefined && r.id !== null ? String(r.id) : Date.now());
+
+      const fullName = (r.full_name || r.name || r.fullname || r.patient_name || '').toString().trim();
+      const barangay = (r.barangay || r.address || r.brgy || '').toString().trim();
+      const purok = (r.purok || r.zone || r.sitio || '').toString().trim();
+      const contactNumber = (r.contact_number || r.phone || r.mobile || r.contact_no || '').toString().trim();
+
+      const rawLat = r.latitude !== null && r.latitude !== undefined && r.latitude !== '' 
+        ? Number(r.latitude) 
+        : (r.lat !== null && r.lat !== undefined ? Number(r.lat) : undefined);
+      const latitude = rawLat !== undefined && !isNaN(rawLat) ? rawLat : undefined;
+
+      const rawLng = r.longitude !== null && r.longitude !== undefined && r.longitude !== '' 
+        ? Number(r.longitude) 
+        : (r.long !== null && r.long !== undefined ? Number(r.long) : (r.lng !== null && r.lng !== undefined ? Number(r.lng) : undefined));
+      const longitude = rawLng !== undefined && !isNaN(rawLng) ? rawLng : undefined;
+
+      const geotagged = Boolean(r.geotagged === 1 || r.geotagged === true || (latitude !== undefined && longitude !== undefined));
+
+      const isSub = Boolean(
+        r.is_submitted === 1 || 
+        r.is_submitted === true || 
+        r.isSubmitted === true || 
+        r.status === 'SUBMITTED' || 
+        r.status === 'LOCKED' || 
+        r.status === 'ALREADY SUBMITTED'
+      );
+
+      const status = r.status || (isSub ? 'SUBMITTED' : 'ACTIVE');
+
+      let createdAt = r.created_at;
+      if (createdAt instanceof Date) {
+        createdAt = createdAt.toISOString();
+      } else if (!createdAt || createdAt === '0000-00-00 00:00:00' || createdAt === '0') {
+        createdAt = new Date().toISOString();
+      } else {
+        createdAt = String(createdAt);
+      }
+
+      let updatedAt = r.updated_at;
+      if (updatedAt instanceof Date) {
+        updatedAt = updatedAt.toISOString();
+      } else if (!updatedAt || updatedAt === '0000-00-00 00:00:00' || updatedAt === '0') {
+        updatedAt = createdAt;
+      } else {
+        updatedAt = String(updatedAt);
+      }
+
+      let deletedAt = r.deleted_at;
+      if (deletedAt instanceof Date) {
+        deletedAt = deletedAt.toISOString();
+      } else if (!deletedAt || deletedAt === '0000-00-00 00:00:00' || deletedAt === '0' || deletedAt === '') {
+        deletedAt = null;
+      } else {
+        deletedAt = String(deletedAt);
+      }
+
+      return {
+        id: idVal,
+        full_name: fullName,
+        barangay,
+        purok,
+        contact_number: contactNumber,
+        created_at: createdAt,
+        updated_at: updatedAt,
+        latitude,
+        longitude,
+        geotagged,
+        status,
+        isSubmitted: isSub,
+        locked: isSub,
+        photo_url: r.photo_url || r.photo || undefined,
+        pcu_file_url: r.pcu_file_url || r.pcu_url || undefined,
+        pcu_uploaded_by: r.pcu_uploaded_by || r.uploaded_by || undefined,
+        pcu_uploaded_at: r.pcu_uploaded_at || r.uploaded_at || undefined,
+        added_from_print_list: r.added_from_print_list !== undefined ? Boolean(r.added_from_print_list) : true,
+        deleted_at: deletedAt
+      };
+    });
 
     const users = (uRows || []).map((r: any) => {
       let permissions = undefined;
@@ -836,19 +988,19 @@ export async function fetchAllFromCPanelDb(): Promise<{
 
     const existingAccounts = (eRows || []).map((r: any) => ({
       id: String(r.id),
-      full_name: r.full_name,
-      barangay: r.barangay,
-      purok: r.purok,
-      contact_number: r.contact_number,
-      created_at: r.created_at,
-      status: r.status,
-      submittedBy: r.submitted_by,
-      folder: r.folder,
-      remarks: r.remarks,
-      deleted_at: r.deleted_at || null
+      full_name: r.full_name || r.name || '',
+      barangay: r.barangay || '',
+      purok: r.purok || '',
+      contact_number: r.contact_number || r.phone || '',
+      created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
+      status: r.status || 'PENDING',
+      submittedBy: r.submitted_by || r.submittedBy || '',
+      folder: r.folder || 'GENERAL',
+      remarks: r.remarks || '',
+      deleted_at: (r.deleted_at && r.deleted_at !== '0000-00-00 00:00:00' && r.deleted_at !== '0') ? String(r.deleted_at) : null
     }));
 
-    const barangays = (bRows || []).map((r: any) => r.name);
+    const barangays = (bRows || []).map((r: any) => r.name).filter(Boolean);
 
     const activities = (aRows || []).map((r: any) => ({
       id: String(r.id),
@@ -866,6 +1018,10 @@ export async function fetchAllFromCPanelDb(): Promise<{
       }
     });
 
+    const maxId = contacts.reduce((max, c) => Math.max(max, Number(c.id) || 0), 0);
+    const maxUpdated = contacts.reduce((max, c) => (c.updated_at > max ? c.updated_at : max), '');
+    updateLastSyncMetadata(contacts.filter(c => !c.deleted_at).length, maxUpdated, maxId);
+
     return {
       contacts,
       users,
@@ -880,9 +1036,13 @@ export async function fetchAllFromCPanelDb(): Promise<{
   }
 }
 
-export async function saveContactToCPanel(c: any): Promise<void> {
-  if (!pool || !currentStatus.connected) return;
+export async function saveContactToCPanel(c: any): Promise<{ success: boolean; error?: string }> {
+  if (!pool || !currentStatus.connected) {
+    return { success: false, error: currentStatus.lastError || 'MySQL database not connected' };
+  }
   try {
+    const isSub = Boolean(c.isSubmitted || c.is_submitted);
+    const idVal = c.id !== undefined && c.id !== null && !isNaN(Number(c.id)) ? Number(c.id) : null;
     await pool.query(
       `INSERT INTO contacts (id, full_name, barangay, purok, contact_number, created_at, updated_at, latitude, longitude, geotagged, status, is_submitted, photo_url, pcu_file_url, pcu_uploaded_by, pcu_uploaded_at, deleted_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -903,18 +1063,18 @@ export async function saveContactToCPanel(c: any): Promise<void> {
          pcu_uploaded_at = VALUES(pcu_uploaded_at),
          deleted_at = VALUES(deleted_at)`,
       [
-        c.id,
+        idVal,
         c.full_name || '',
         c.barangay || '',
         c.purok || '',
         c.contact_number || '',
-        c.created_at || '',
-        c.updated_at || '',
-        c.latitude ?? null,
-        c.longitude ?? null,
+        c.created_at || new Date().toISOString(),
+        c.updated_at || new Date().toISOString(),
+        c.latitude !== undefined && c.latitude !== null ? Number(c.latitude) : null,
+        c.longitude !== undefined && c.longitude !== null ? Number(c.longitude) : null,
         c.geotagged ? 1 : 0,
         c.status || 'ACTIVE',
-        c.isSubmitted ? 1 : 0,
+        isSub ? 1 : 0,
         c.photo_url || null,
         c.pcu_file_url || null,
         c.pcu_uploaded_by || '',
@@ -922,8 +1082,119 @@ export async function saveContactToCPanel(c: any): Promise<void> {
         c.deleted_at || null
       ]
     );
+    return { success: true };
   } catch (err: any) {
-    console.warn('[cPanel DB] Error saving contact to MySQL:', err.message);
+    const msg = err.message || String(err);
+    console.warn('[cPanel DB] Error saving contact to MySQL:', msg);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Bulk save contacts directly into cPanel MySQL database in chunked batches.
+ * Handles multi-row parameterization with ON DUPLICATE KEY UPDATE.
+ */
+export async function saveContactsBulkToCPanel(
+  contacts: any[]
+): Promise<{ success: boolean; saved: number; error?: string }> {
+  if (!pool || !currentStatus.connected) {
+    return {
+      success: false,
+      saved: 0,
+      error: currentStatus.lastError || 'cPanel MySQL Database is not connected. Operating in local storage mode.'
+    };
+  }
+
+  if (!Array.isArray(contacts) || contacts.length === 0) {
+    return { success: true, saved: 0 };
+  }
+
+  let totalSaved = 0;
+  const CHUNK_SIZE = 50;
+
+  try {
+    for (let i = 0; i < contacts.length; i += CHUNK_SIZE) {
+      const chunk = contacts.slice(i, i + CHUNK_SIZE);
+      const values: any[] = [];
+      const placeholders: string[] = [];
+
+      for (const c of chunk) {
+        placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        const idVal = c.id !== undefined && c.id !== null && !isNaN(Number(c.id)) ? Number(c.id) : null;
+        const isSub = Boolean(c.isSubmitted || c.is_submitted);
+
+        values.push(
+          idVal,
+          c.full_name || '',
+          c.barangay || '',
+          c.purok || '',
+          c.contact_number || '',
+          c.created_at || new Date().toISOString(),
+          c.updated_at || new Date().toISOString(),
+          c.latitude !== undefined && c.latitude !== null ? Number(c.latitude) : null,
+          c.longitude !== undefined && c.longitude !== null ? Number(c.longitude) : null,
+          c.geotagged ? 1 : 0,
+          c.status || 'ACTIVE',
+          isSub ? 1 : 0,
+          c.photo_url || null,
+          c.pcu_file_url || null,
+          c.pcu_uploaded_by || '',
+          c.pcu_uploaded_at || '',
+          c.deleted_at || null
+        );
+      }
+
+      const sql = `
+        INSERT INTO contacts (
+          id, full_name, barangay, purok, contact_number, 
+          created_at, updated_at, latitude, longitude, 
+          geotagged, status, is_submitted, photo_url, 
+          pcu_file_url, pcu_uploaded_by, pcu_uploaded_at, deleted_at
+        ) VALUES ${placeholders.join(', ')}
+        ON DUPLICATE KEY UPDATE
+          full_name = VALUES(full_name),
+          barangay = VALUES(barangay),
+          purok = VALUES(purok),
+          contact_number = VALUES(contact_number),
+          updated_at = VALUES(updated_at),
+          latitude = VALUES(latitude),
+          longitude = VALUES(longitude),
+          geotagged = VALUES(geotagged),
+          status = VALUES(status),
+          is_submitted = VALUES(is_submitted),
+          photo_url = VALUES(photo_url),
+          pcu_file_url = VALUES(pcu_file_url),
+          pcu_uploaded_by = VALUES(pcu_uploaded_by),
+          pcu_uploaded_at = VALUES(pcu_uploaded_at),
+          deleted_at = VALUES(deleted_at)
+      `;
+
+      await pool.query(sql, values);
+      totalSaved += chunk.length;
+    }
+
+    // Refresh table statistics
+    try {
+      const [tableRows]: any = await pool.query(
+        `SELECT table_name AS tableName, table_rows AS rowCount 
+         FROM information_schema.tables 
+         WHERE table_schema = ?`,
+        [currentStatus.database]
+      );
+      if (tableRows) {
+        currentStatus.tables = tableRows.map((t: any) => ({
+          name: t.tableName,
+          rowCount: Number(t.rowCount) || 0
+        }));
+      }
+    } catch {}
+
+    console.log(`[cPanel DB] Successfully saved ${totalSaved} bulk contacts to MySQL database "${currentStatus.database}".`);
+    return { success: true, saved: totalSaved };
+  } catch (err: any) {
+    const errorMsg = err.message || String(err);
+    console.error('[cPanel DB] Error executing bulk insert to MySQL:', errorMsg);
+    return { success: false, saved: totalSaved, error: errorMsg };
   }
 }
 
