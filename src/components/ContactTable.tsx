@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, ChevronDown, ChevronUp, Edit2, Trash2, Eye, FileText, ArrowDownToLine, Loader2, Calendar, Phone, User, Clock, ChevronLeft, ChevronRight, Check, Folder, FolderOpen, ArrowLeft, Grid, List, Plus, Layers, Navigation, Upload, Image, UserCheck, ShieldCheck, CheckSquare, Square, BarChart3, AlertTriangle, CheckCircle2, Lock, ShieldAlert, X, SearchX, UserX, UserPlus, RotateCcw, Database } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp, Edit2, Trash2, Eye, FileText, ArrowDownToLine, Loader2, Calendar, Phone, User, Clock, ChevronLeft, ChevronRight, Check, Folder, FolderOpen, ArrowLeft, Grid, List, Plus, Layers, Navigation, Upload, Image, UserCheck, ShieldCheck, CheckSquare, Square, BarChart3, AlertTriangle, CheckCircle2, Lock, ShieldAlert, X, SearchX, UserX, UserPlus, RotateCcw, Database, Save, Pill } from 'lucide-react';
 import { Contact } from '../types.js';
 
 export const isContactLocked = (c: Contact | null | undefined): boolean => {
@@ -233,6 +233,8 @@ export const ContactTable: React.FC<ContactTableProps> = ({
   const [modalEditBarangay, setModalEditBarangay] = useState('');
   const [modalEditPurok, setModalEditPurok] = useState('');
   const [modalEditContactNumber, setModalEditContactNumber] = useState('');
+  const [modalEditMaintenance, setModalEditMaintenance] = useState<'None' | 'Yes'>('None');
+  const [modalEditMaintenanceMedicine, setModalEditMaintenanceMedicine] = useState('');
   const [modalIsSaving, setModalIsSaving] = useState(false);
 
   useEffect(() => {
@@ -246,6 +248,9 @@ export const ContactTable: React.FC<ContactTableProps> = ({
       setModalEditBarangay(viewContact.barangay || '');
       setModalEditPurok(viewContact.purok || '');
       setModalEditContactNumber(viewContact.contact_number || '');
+      const maint = (viewContact.maintenance === 'Yes' || (viewContact.maintenance_medicine && viewContact.maintenance !== 'None')) ? 'Yes' : 'None';
+      setModalEditMaintenance(maint);
+      setModalEditMaintenanceMedicine(viewContact.maintenance_medicine || '');
       setIsEditingContactInModal(false);
     } else {
       setIsEditingContactInModal(false);
@@ -572,10 +577,13 @@ export const ContactTable: React.FC<ContactTableProps> = ({
     setUploadProgressText(stagedPcuFiles.length > 15 ? `Preparing ${stagedPcuFiles.length} files...` : 'Saving to Base44 DB...');
 
     try {
-      // 1. If Barangay or Purok was updated, synchronize contact record first
+      // 1. If Barangay, Purok, Contact Number or Maintenance was updated, synchronize contact record first
       const needsContactUpdate = 
         currentBarangay !== (viewContact.barangay || '') ||
-        currentPurok !== (viewContact.purok || '');
+        currentPurok !== (viewContact.purok || '') ||
+        modalEditContactNumber.trim() !== (viewContact.contact_number || '').trim() ||
+        modalEditMaintenance !== (viewContact.maintenance || 'None') ||
+        modalEditMaintenanceMedicine.trim() !== (viewContact.maintenance_medicine || '').trim();
 
       if (needsContactUpdate) {
         const updateRes = await fetch(`/api/contacts/${viewContact.id}`, {
@@ -588,13 +596,26 @@ export const ContactTable: React.FC<ContactTableProps> = ({
             full_name: modalEditFullName.trim() || viewContact.full_name,
             barangay: currentBarangay,
             purok: currentPurok,
-            contact_number: modalEditContactNumber.trim() || viewContact.contact_number
+            contact_number: modalEditContactNumber.trim() || viewContact.contact_number,
+            maintenance: modalEditMaintenance,
+            maintenance_medicine: modalEditMaintenance === 'Yes' ? modalEditMaintenanceMedicine.trim() : ''
           })
         });
 
         if (!updateRes.ok) {
           const updateErr = await updateRes.json().catch(() => ({}));
           console.warn('Contact info update warning before PCU upload:', updateErr);
+        } else {
+          const updatedContactData = await updateRes.json().catch(() => null);
+          if (updatedContactData) {
+            setViewContact(updatedContactData);
+            setContacts(prev => prev.map(c => {
+              if (String(c.id) === String(updatedContactData.id) || (c.full_name && updatedContactData.full_name && c.full_name.trim().toLowerCase() === updatedContactData.full_name.trim().toLowerCase())) {
+                return { ...c, ...updatedContactData };
+              }
+              return c;
+            }));
+          }
         }
       }
 
@@ -637,7 +658,9 @@ export const ContactTable: React.FC<ContactTableProps> = ({
             contact_number: modalEditContactNumber.trim() || viewContact.contact_number,
             files: convertedFiles,
             isLastBatch,
-            totalFilesCount: stagedPcuFiles.length
+            totalFilesCount: stagedPcuFiles.length,
+            maintenance: modalEditMaintenance,
+            maintenance_medicine: modalEditMaintenance === 'Yes' ? modalEditMaintenanceMedicine.trim() : ''
           })
         });
         
@@ -664,7 +687,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
 
       setViewContact(null);
       setStagedPcuFiles([]);
-      fetchContacts();
+      fetchContacts(false, page, true);
       if (lastResponseData?.sheetsSyncWarning || lastResponseData?.cpanelSyncWarning) {
         showToast(`Submitted "${memberName}" (${filesCount} file(s)) to Base44 database and permanently deleted from PCU Directory. (${lastResponseData.sheetsSyncWarning || lastResponseData.cpanelSyncWarning})`, 'warning');
       } else {
@@ -692,7 +715,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
         throw new Error(data.error || 'Failed to sync with Base44 Database.');
       }
       showToast(data.message || 'Successfully synchronized with Base44 Database!', 'success');
-      fetchContacts();
+      fetchContacts(false, page, true);
     } catch (err: any) {
       showToast(err.message, 'error');
     } finally {
@@ -701,17 +724,11 @@ export const ContactTable: React.FC<ContactTableProps> = ({
   };
 
   // Fetch paginated database contacts list
-  const fetchContacts = async (forceSync: boolean = false, targetPage?: number) => {
+  const fetchContacts = async (forceSync: boolean = false, targetPage?: number, isBackgroundUpdate: boolean = false) => {
     const requestId = ++activeRequestIdRef.current;
     
-    // Only set full loading indicator if we don't have contacts yet or on folder switch, so table doesn't flicker/flash on search typing
-    const isSearchActive = Boolean(
-      (activeFolder || activePurokFolder)
-        ? debouncedSearch.trim()
-        : (folderGrouping === 'barangay' ? debouncedFolderSearch.trim() : debouncedPurokSearch.trim())
-    );
-
-    if (!isSearchActive || contacts.length === 0) {
+    // Only set full loading indicator if we don't have contacts yet and not a silent background update
+    if (!isBackgroundUpdate && contacts.length === 0) {
       setLoading(true);
     }
     try {
@@ -817,7 +834,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
     }
   }, [backNavigateContact, onClearBackNavigateContact]);
 
-  // Reset page to 1 when filters or debounced search change, and fetch page 1
+  // Reset page to 1 ONLY when user-initiated filters, searches, or folder navigation changes
   useEffect(() => {
     setPage(1);
     fetchContacts(false, 1);
@@ -831,15 +848,21 @@ export const ContactTable: React.FC<ContactTableProps> = ({
     sortOrder,
     activeFolder,
     activePurokFolder,
-    associatedBarangayForPuroks,
-    lastSyncTime
+    associatedBarangayForPuroks
   ]);
 
-  // Listen for database restore event to immediately refresh contacts and barangays
+  // When background synchronization or live update occurs, seamlessly update contacts at the current page
+  // without resetting the page or interrupting the user view
+  useEffect(() => {
+    if (lastSyncTime) {
+      fetchContacts(false, page, true);
+    }
+  }, [lastSyncTime]);
+
+  // Listen for database restore event to immediately refresh contacts and barangays seamlessly at current page
   useEffect(() => {
     const handleRestoreEvent = () => {
-      setPage(1);
-      fetchContacts(true, 1);
+      fetchContacts(true, page, true);
       fetch(`/api/public/barangays?_t=${Date.now()}`)
         .then(res => res.json())
         .then(data => {
@@ -855,7 +878,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
     return () => {
       window.removeEventListener('clinic-data-restored', handleRestoreEvent);
     };
-  }, []);
+  }, [page]);
 
   // Handle explicit page changes (e.g. Next / Prev page pagination)
   useEffect(() => {
@@ -903,6 +926,10 @@ export const ContactTable: React.FC<ContactTableProps> = ({
       showToast('Contact Number is required.', 'error');
       return;
     }
+    if (modalEditMaintenance === 'Yes' && !modalEditMaintenanceMedicine.trim()) {
+      showToast('Please specify what medicine they maintained.', 'warning');
+      return;
+    }
 
     setModalIsSaving(true);
 
@@ -917,7 +944,9 @@ export const ContactTable: React.FC<ContactTableProps> = ({
           full_name: modalEditFullName.trim(),
           barangay: modalEditBarangay.trim(),
           purok: modalEditPurok.trim(),
-          contact_number: modalEditContactNumber.trim()
+          contact_number: modalEditContactNumber.trim(),
+          maintenance: modalEditMaintenance,
+          maintenance_medicine: modalEditMaintenance === 'Yes' ? modalEditMaintenanceMedicine.trim() : ''
         })
       });
 
@@ -926,14 +955,38 @@ export const ContactTable: React.FC<ContactTableProps> = ({
         throw new Error(data.error || 'Failed to update member record.');
       }
 
-      showToast(`Member record for "${modalEditFullName}" updated successfully!`, 'success');
+      showToast(`Member record for "${modalEditFullName}" saved successfully!`, 'success');
       
       // Update local view states to reflect updated values
       setViewContact(data);
+      setModalEditFullName(data.full_name || modalEditFullName);
+      setModalEditBarangay(data.barangay || modalEditBarangay);
+      setModalEditPurok(data.purok || modalEditPurok);
+      setModalEditContactNumber(data.contact_number || modalEditContactNumber);
+      setModalEditMaintenance((data.maintenance === 'Yes' || (data.maintenance_medicine && data.maintenance !== 'None')) ? 'Yes' : 'None');
+      setModalEditMaintenanceMedicine(data.maintenance_medicine || '');
       setIsEditingContactInModal(false);
       
+      // Immediately reflect edited data in the contacts list for instant UI feedback
+      setContacts(prev => prev.map(c => {
+        const idMatch = String(c.id) === String(data.id);
+        const nameMatch = Boolean(c.full_name && data.full_name && c.full_name.trim().toLowerCase() === data.full_name.trim().toLowerCase());
+        if (idMatch || nameMatch) {
+          return {
+            ...c,
+            ...data,
+            contact_number: data.contact_number || c.contact_number,
+            barangay: data.barangay || c.barangay,
+            purok: data.purok || c.purok,
+            maintenance: data.maintenance || c.maintenance,
+            maintenance_medicine: data.maintenance_medicine !== undefined ? data.maintenance_medicine : c.maintenance_medicine
+          };
+        }
+        return c;
+      }));
+
       // Refresh list to keep parent sync
-      fetchContacts();
+      fetchContacts(false, page, true);
     } catch (err: any) {
       showToast(err.message, 'error');
     } finally {
@@ -2266,9 +2319,18 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                             {contact.purok || '-'}
                           </td>
                           <td className={`py-3.5 px-5 font-mono text-xs ${isLocked ? 'text-emerald-900 font-semibold' : 'text-slate-600'}`}>
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 flex-wrap">
                               <Phone className={`w-3 h-3 ${isLocked ? 'text-emerald-600' : 'text-slate-400'}`} />
-                              {contact.contact_number}
+                              <span>{contact.contact_number}</span>
+                              {contact.maintenance === 'Yes' && (
+                                <span 
+                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-100 text-teal-800 border border-teal-200" 
+                                  title={contact.maintenance_medicine ? `Maintained: ${contact.maintenance_medicine}` : 'Maintenance: Yes'}
+                                >
+                                  <Pill className="w-2.5 h-2.5" />
+                                  <span className="max-w-[120px] truncate">{contact.maintenance_medicine || 'Med'}</span>
+                                </span>
+                              )}
                             </div>
                           </td>
                           <td className={`py-3.5 px-5 text-xs font-medium ${isLocked ? 'text-emerald-700' : 'text-slate-400'}`}>
@@ -2432,11 +2494,22 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                         )}
                       </div>
 
-                      <div className="flex items-center justify-between gap-2 pt-2.5 border-t border-slate-100">
-                        <span className={`font-mono text-xs flex items-center gap-1.5 ${isLocked ? 'text-emerald-900 font-semibold' : 'text-slate-500'}`}>
-                          <Phone className={`w-3 h-3 ${isLocked ? 'text-emerald-600' : 'text-slate-400'}`} />
-                          {contact.contact_number || 'N/A'}
-                        </span>
+                      <div className="flex items-center justify-between gap-2 pt-2.5 border-t border-slate-100 flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`font-mono text-xs flex items-center gap-1.5 ${isLocked ? 'text-emerald-900 font-semibold' : 'text-slate-500'}`}>
+                            <Phone className={`w-3 h-3 ${isLocked ? 'text-emerald-600' : 'text-slate-400'}`} />
+                            {contact.contact_number || 'N/A'}
+                          </span>
+                          {contact.maintenance === 'Yes' && (
+                            <span 
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-100 text-teal-800 border border-teal-200" 
+                              title={contact.maintenance_medicine ? `Maintained: ${contact.maintenance_medicine}` : 'Maintenance: Yes'}
+                            >
+                              <Pill className="w-2.5 h-2.5" />
+                              <span className="max-w-[100px] truncate">{contact.maintenance_medicine || 'Med'}</span>
+                            </span>
+                          )}
+                        </div>
 
                         <div className="flex items-center gap-1">
                           {isLocked ? (
@@ -2607,7 +2680,9 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Contact Number</label>
+                    <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      Contact Number <span className="text-red-500 font-bold">*</span>
+                    </label>
                     <input
                       type="text"
                       value={modalEditContactNumber}
@@ -2615,6 +2690,56 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl outline-none font-semibold text-slate-700 text-xs transition-all"
                       placeholder="e.g. 09123456789"
                     />
+                  </div>
+
+                  {/* Maintenance Section in Edit Form */}
+                  <div className="space-y-2 p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+                    <div className="flex items-center justify-between gap-2">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                          Maintenance
+                        </label>
+                        <p className="text-[10px] text-slate-400">Takes maintenance medication?</p>
+                      </div>
+                      <div className="flex items-center gap-5">
+                        <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={modalEditMaintenance === 'None'}
+                            onChange={() => {
+                              setModalEditMaintenance('None');
+                              setModalEditMaintenanceMedicine('');
+                            }}
+                            className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-slate-300 cursor-pointer"
+                          />
+                          <span>None</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-slate-700">
+                          <input
+                            type="checkbox"
+                            checked={modalEditMaintenance === 'Yes'}
+                            onChange={() => setModalEditMaintenance('Yes')}
+                            className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-slate-300 cursor-pointer"
+                          />
+                          <span>Yes</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    {modalEditMaintenance === 'Yes' && (
+                      <div className="pt-2 border-t border-slate-200/80 transition-all">
+                        <label className="block text-[11px] font-bold text-teal-700 uppercase tracking-wider mb-1">
+                          Maintained Medicine <span className="text-red-500 font-bold">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={modalEditMaintenanceMedicine}
+                          onChange={(e) => setModalEditMaintenanceMedicine(e.target.value)}
+                          placeholder="e.g. Losartan 50mg, Metformin 500mg, Amlodipine..."
+                          className="w-full px-3 py-2 bg-white border border-teal-300 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 rounded-xl outline-none font-semibold text-slate-800 text-xs transition-all placeholder:text-slate-400"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div className="pt-4 flex gap-3">
@@ -2707,10 +2832,88 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                           />
                         </div>
 
-                        {/* Contact Number */}
-                        <div className="p-3 bg-slate-50 rounded-2xl flex items-center justify-between">
-                          <span className="text-xs font-bold text-slate-400 uppercase">Contact Number</span>
-                          <span className="font-mono font-bold text-slate-800">{viewContact.contact_number}</span>
+                        {/* Contact Number - Editable in Modal */}
+                        <div className="p-3 bg-slate-50 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                          <span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
+                            Contact Number <span className="text-red-500 font-bold">*</span>
+                          </span>
+                          <input
+                            type="text"
+                            value={modalEditContactNumber}
+                            onChange={(e) => setModalEditContactNumber(e.target.value)}
+                            placeholder="e.g. 09123456789"
+                            className="w-full sm:w-64 px-3 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl outline-none text-xs font-bold text-slate-800 placeholder-slate-400 shadow-xs"
+                          />
+                        </div>
+
+                        {/* Maintenance Section with None / Yes Checkboxes */}
+                        <div className="p-3 bg-slate-50 rounded-2xl flex flex-col gap-2">
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                            <div>
+                              <span className="text-xs font-bold text-slate-500 uppercase">
+                                Maintenance
+                              </span>
+                              <p className="text-[10px] text-slate-400">Takes maintenance medication?</p>
+                            </div>
+                            <div className="flex items-center gap-5">
+                              <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={modalEditMaintenance === 'None'}
+                                  onChange={() => {
+                                    setModalEditMaintenance('None');
+                                    setModalEditMaintenanceMedicine('');
+                                  }}
+                                  className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-slate-300 cursor-pointer"
+                                />
+                                <span>None</span>
+                              </label>
+                              <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-slate-700">
+                                <input
+                                  type="checkbox"
+                                  checked={modalEditMaintenance === 'Yes'}
+                                  onChange={() => setModalEditMaintenance('Yes')}
+                                  className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-slate-300 cursor-pointer"
+                                />
+                                <span>Yes</span>
+                              </label>
+                            </div>
+                          </div>
+
+                          {modalEditMaintenance === 'Yes' && (
+                            <div className="pt-2 border-t border-slate-200/80 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                              <span className="text-[11px] font-bold text-teal-700 uppercase flex items-center gap-1">
+                                Maintained Medicine <span className="text-red-500 font-bold">*</span>
+                              </span>
+                              <input
+                                type="text"
+                                value={modalEditMaintenanceMedicine}
+                                onChange={(e) => setModalEditMaintenanceMedicine(e.target.value)}
+                                placeholder="Write maintained medicine (e.g. Losartan, Metformin)..."
+                                className="w-full sm:w-64 px-3 py-2 bg-white border border-teal-300 focus:border-teal-500 focus:ring-1 focus:ring-teal-500 rounded-xl outline-none text-xs font-bold text-slate-800 placeholder-slate-400 shadow-xs"
+                              />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Quick Save Edited Info button */}
+                        <div className="flex justify-end pt-1">
+                          <button
+                            type="button"
+                            onClick={handleSaveContactFromModal}
+                            disabled={modalIsSaving}
+                            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                          >
+                            {modalIsSaving ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Saving...
+                              </>
+                            ) : (
+                              <>
+                                <Save className="w-3.5 h-3.5" /> Save Contact Details
+                              </>
+                            )}
+                          </button>
                         </div>
 
                         {/* Existing PCU File info if present */}
@@ -2961,6 +3164,16 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                   <div className="flex items-center justify-between">
                     <span className="text-slate-400 font-semibold uppercase text-[10px]">Contact Number</span>
                     <span className="font-mono text-slate-800">{alreadySubmittedModalContact.contact_number}</span>
+                  </div>
+                )}
+                {alreadySubmittedModalContact.maintenance && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-semibold uppercase text-[10px]">Maintenance</span>
+                    <span className="font-semibold text-teal-700">
+                      {alreadySubmittedModalContact.maintenance === 'Yes'
+                        ? `Yes${alreadySubmittedModalContact.maintenance_medicine ? ` (${alreadySubmittedModalContact.maintenance_medicine})` : ''}`
+                        : 'None'}
+                    </span>
                   </div>
                 )}
                 <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">

@@ -77,7 +77,8 @@ import {
   getAllExistingAccountsRaw,
   getAllBarangaysRaw,
   getAllActivitiesRaw,
-  syncWithCPanelDb
+  syncWithCPanelDb,
+  syncUsersFromCPanel
 } from './server/db.js';
 import {
   loadCPanelDbConfig,
@@ -218,6 +219,13 @@ export async function getApp(httpServer?: http.Server) {
         user = findUser('admin');
       } else {
         user = findUserByEmail(target) || findUser(target);
+      }
+
+      if (!user && isCPanelDbConnected()) {
+        try {
+          await syncUsersFromCPanel();
+          user = (target === 'admin') ? findUser('admin') : (findUserByEmail(target) || findUser(target));
+        } catch (_) {}
       }
 
       if (!user) {
@@ -734,7 +742,7 @@ export async function getApp(httpServer?: http.Server) {
   // Add single contact
   app.post('/api/contacts', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { full_name, barangay, purok, address, contact_number, latitude, longitude, geotagged } = req.body;
+      const { full_name, barangay, purok, address, contact_number, latitude, longitude, geotagged, maintenance, maintenance_medicine } = req.body;
       const username = req.user?.username || 'Admin';
 
       const contact = await addContact({
@@ -744,7 +752,9 @@ export async function getApp(httpServer?: http.Server) {
         contact_number,
         latitude: latitude !== undefined && latitude !== null ? parseFloat(latitude) : undefined,
         longitude: longitude !== undefined && longitude !== null ? parseFloat(longitude) : undefined,
-        geotagged: geotagged !== undefined ? Boolean(geotagged) : undefined
+        geotagged: geotagged !== undefined ? Boolean(geotagged) : undefined,
+        maintenance: maintenance !== undefined ? maintenance : 'None',
+        maintenance_medicine: maintenance_medicine !== undefined ? maintenance_medicine : ''
       }, username);
       res.status(201).json(contact);
     } catch (err: any) {
@@ -755,8 +765,10 @@ export async function getApp(httpServer?: http.Server) {
   // Edit contact
   app.put('/api/contacts/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const id = parseInt(req.params.id, 10);
-      const { full_name, barangay, purok, address, contact_number, latitude, longitude, geotagged } = req.body;
+      const idRaw = req.params.id;
+      const idNum = parseInt(idRaw, 10);
+      const id = !isNaN(idNum) && String(idNum) === idRaw ? idNum : idRaw;
+      const { full_name, barangay, purok, address, contact_number, latitude, longitude, geotagged, maintenance, maintenance_medicine } = req.body;
       const username = req.user?.username || 'Admin';
 
       const contact = await editContact(id, {
@@ -766,7 +778,9 @@ export async function getApp(httpServer?: http.Server) {
         contact_number,
         latitude: latitude !== undefined ? (latitude === null ? null : parseFloat(latitude)) : undefined,
         longitude: longitude !== undefined ? (longitude === null ? null : parseFloat(longitude)) : undefined,
-        geotagged: geotagged !== undefined ? !!geotagged : undefined
+        geotagged: geotagged !== undefined ? !!geotagged : undefined,
+        maintenance: maintenance !== undefined ? maintenance : undefined,
+        maintenance_medicine: maintenance_medicine !== undefined ? maintenance_medicine : undefined
       }, username);
       res.json(contact);
     } catch (err: any) {
@@ -777,7 +791,9 @@ export async function getApp(httpServer?: http.Server) {
   // Soft delete contact
   app.delete('/api/contacts/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const idRaw = req.params.id;
+      const idNum = parseInt(idRaw, 10);
+      const id = !isNaN(idNum) && String(idNum) === idRaw ? idNum : idRaw;
       const username = req.user?.username || 'Admin';
 
       await deleteContact(id, username);
@@ -812,7 +828,9 @@ export async function getApp(httpServer?: http.Server) {
   // Upload photo for contact
   app.post('/api/contacts/:id/photo', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const id = parseInt(req.params.id, 10);
+      const idRaw = req.params.id;
+      const idNum = parseInt(idRaw, 10);
+      const id = !isNaN(idNum) && String(idNum) === idRaw ? idNum : idRaw;
       const { photoDataUrl } = req.body;
       const username = req.user?.username || 'Admin';
 
@@ -830,8 +848,10 @@ export async function getApp(httpServer?: http.Server) {
   // Upload PCU File for contact (supports single or multiple files)
   app.post('/api/contacts/:id/pcu', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const id = parseInt(req.params.id, 10);
-      const { fullName, fileName, fileData, files, barangay, purok, contact_number, latitude, longitude, geotagged, isLastBatch, totalFilesCount } = req.body;
+      const idRaw = req.params.id;
+      const idNum = parseInt(idRaw, 10);
+      const id = !isNaN(idNum) && String(idNum) === idRaw ? idNum : idRaw;
+      const { fullName, fileName, fileData, files, barangay, purok, contact_number, latitude, longitude, geotagged, isLastBatch, totalFilesCount, maintenance, maintenance_medicine } = req.body;
       const username = req.user?.username || 'Admin';
 
       const commonOptions = {
@@ -842,7 +862,9 @@ export async function getApp(httpServer?: http.Server) {
         longitude: longitude !== undefined && longitude !== null ? parseFloat(longitude) : undefined,
         geotagged: geotagged !== undefined ? Boolean(geotagged) : undefined,
         isLastBatch: isLastBatch !== undefined ? Boolean(isLastBatch) : true,
-        totalFilesCount: typeof totalFilesCount === 'number' ? totalFilesCount : undefined
+        totalFilesCount: typeof totalFilesCount === 'number' ? totalFilesCount : undefined,
+        maintenance: typeof maintenance === 'string' ? maintenance : undefined,
+        maintenance_medicine: typeof maintenance_medicine === 'string' ? maintenance_medicine : undefined
       };
 
       if (files && Array.isArray(files) && files.length > 0) {
@@ -900,12 +922,13 @@ export async function getApp(httpServer?: http.Server) {
       const idStr = req.params.id;
       const username = req.user?.username || 'Admin';
       
-      const isExt = idStr.startsWith('ext_') || isNaN(Number(idStr));
+      const isExt = idStr.startsWith('ext_');
       if (isExt) {
         const updated = await restoreExistingAccountFiles(idStr, username);
         res.json(updated);
       } else {
-        const id = parseInt(idStr, 10);
+        const idNum = parseInt(idStr, 10);
+        const id = !isNaN(idNum) && String(idNum) === idStr ? idNum : idStr;
         const updatedContact = await removePCUFileFromContact(id, username);
         res.json(updatedContact);
       }
@@ -1284,6 +1307,13 @@ export async function getApp(httpServer?: http.Server) {
   // Get all registered user accounts
   app.get('/api/users', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
+      if (isCPanelDbConnected()) {
+        try {
+          await syncUsersFromCPanel();
+        } catch (err: any) {
+          console.warn('Could not sync users from cPanel on getUsers request:', err.message);
+        }
+      }
       const sheetsConfig = getSheetsConfig();
       if (sheetsConfig.syncEnabled) {
         try {
@@ -1371,6 +1401,13 @@ export async function getApp(httpServer?: http.Server) {
   // List all registered admins
   app.get('/api/admins', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
+      if (isCPanelDbConnected()) {
+        try {
+          await syncUsersFromCPanel();
+        } catch (err: any) {
+          console.warn('Could not sync users from cPanel on getAdmins request:', err.message);
+        }
+      }
       const sheetsConfig = getSheetsConfig();
       if (sheetsConfig.syncEnabled) {
         try {

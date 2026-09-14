@@ -1,5 +1,59 @@
 [
   {
+    "id": "b9a03e72-d535-498c-8f3e-3c87ffc89863",
+    "timestamp": "2026-09-13T09:41:41.887Z",
+    "username": "admin",
+    "action": "Edited contact: \"Crisostomo Ibarra\" -> \"Crisostomo Ibarra\""
+  },
+  {
+    "id": "bcc33576-5de1-4ca5-aa3c-79f58aeda949",
+    "timestamp": "2026-09-13T09:41:31.242Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "5be3e37f-e990-4873-b611-25c5c0a1fda1",
+    "timestamp": "2026-09-13T09:32:47.519Z",
+    "username": "admin",
+    "action": "Edited contact: \"Garado, Godfrey Banson\" -> \"Garado, Godfrey Banson\""
+  },
+  {
+    "id": "28b7430b-4100-4fbc-b89a-a69facd1948b",
+    "timestamp": "2026-09-13T08:54:20.513Z",
+    "username": "admin",
+    "action": "Exported cPanel MySQL database full backup (8 tables, 2317 total records)"
+  },
+  {
+    "id": "e69965ee-1390-4a64-85a9-4f351b29d8d9",
+    "timestamp": "2026-09-13T08:41:12.651Z",
+    "username": "admin",
+    "action": "Exported cPanel MySQL database full backup (8 tables, 2316 total records)"
+  },
+  {
+    "id": "e5f78f42-b354-443b-846a-06217ef74758",
+    "timestamp": "2026-09-13T03:42:56.240Z",
+    "username": "admin",
+    "action": "Exported cPanel MySQL database full backup (8 tables, 2315 total records)"
+  },
+  {
+    "id": "07678f8d-419d-49f4-96e9-a25bce98096e",
+    "timestamp": "2026-09-13T03:42:35.950Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "d0a96ca8-5a2d-498b-8c14-96c0bf30db2a",
+    "timestamp": "2026-09-11T02:32:12.138Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "b3c0a21f-8aac-43a0-8cce-d7c3fb830e22",
+    "timestamp": "2026-09-11T02:30:44.673Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
     "id": "f91a457b-9f0a-423f-8061-58d02437d849",
     "timestamp": "2026-09-11T00:11:51.452Z",
     "username": "admin",

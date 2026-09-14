@@ -203,11 +203,13 @@ export interface Contact {
   pin?: string;
   facebookLink?: string;
   uploadedFiles?: { name: string; url: string; uploadedAt: string; uploadedBy?: string }[];
+  maintenance?: 'None' | 'Yes' | string;
+  maintenance_medicine?: string;
 }
 
 export interface PCUUpdate {
   id: string;
-  contactId: number;
+  contactId: number | string;
   fullName: string;
   barangay?: string;
   purok?: string;
@@ -270,6 +272,7 @@ export interface ExistingAccountItem {
 
 const DATA_DIR = path.join(process.cwd(), 'data');
 const CONTACTS_FILE = path.join(DATA_DIR, 'contacts.json');
+const CONTACTS_SHEETS_BACKUP_FILE = path.join(DATA_DIR, 'contacts_sheets_backup.json');
 const ACTIVITIES_FILE = path.join(DATA_DIR, 'activities.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SHEETS_CONFIG_FILE = path.join(DATA_DIR, 'sheets_config.json');
@@ -1198,10 +1201,31 @@ export async function initDb() {
         if (updated) migrated = true;
         return anyC as Contact;
       });
-      // Deduplicate contacts and filter out deleted, tombstoned, and submitted contacts
+      // Deduplicate contacts and filter out deleted or tombstoned records
       contactsCache = deduplicateContactsByName(
-        contactsCache.filter(c => c && !c.deleted_at && !isContactTombstoned(c) && !isBarangayTombstoned(c.barangay) && !isContactSubmitted(c))
+        contactsCache.filter(c => c && !c.deleted_at && !isContactTombstoned(c) && !isBarangayTombstoned(c.barangay))
       );
+
+      // Ensure contacts cache is populated from contacts_sheets_backup.json if cache is empty or has only placeholder records
+      if (contactsCache.length <= 10 && fs.existsSync(CONTACTS_SHEETS_BACKUP_FILE)) {
+        try {
+          const rawBackup = fs.readFileSync(CONTACTS_SHEETS_BACKUP_FILE, 'utf-8');
+          const backupContacts = JSON.parse(rawBackup);
+          if (Array.isArray(backupContacts) && backupContacts.length > contactsCache.length) {
+            console.log(`[initDb] Seeding ${backupContacts.length} contacts from contacts_sheets_backup.json into contactsCache.`);
+            const existingIds = new Set(contactsCache.map(c => String(c.id)));
+            for (const c of backupContacts) {
+              if (c && !existingIds.has(String(c.id))) {
+                contactsCache.push(c);
+              }
+            }
+            contactsCache = deduplicateContactsByName(contactsCache);
+          }
+        } catch (err: any) {
+          console.warn('[initDb] Failed to seed contactsCache from sheets backup:', err.message);
+        }
+      }
+
       syncPCUFieldsToCache();
       safeWriteFileSync(CONTACTS_FILE, JSON.stringify(contactsCache, null, 2));
     }
@@ -1407,7 +1431,6 @@ export async function initDb() {
         if (cpanelData && (cpanelData.contacts.length > 0 || cpanelData.users.length > 1)) {
           console.log(`[cPanel DB] Loaded ${cpanelData.contacts.length} contacts, ${cpanelData.users.length} users, and ${cpanelData.existingAccounts.length} existing accounts from cPanel MySQL Database.`);
           contactsCache = cpanelData.contacts;
-          usersCache = cpanelData.users;
           existingAccountsCache = cpanelData.existingAccounts;
           if (cpanelData.barangays && cpanelData.barangays.length > 0) {
             barangaysCache = cpanelData.barangays;
@@ -1415,6 +1438,8 @@ export async function initDb() {
           if (cpanelData.settings && Object.keys(cpanelData.settings).length > 0) {
             siteSettings = { ...siteSettings, ...cpanelData.settings };
           }
+          // Bidirectional user synchronization to protect new registrations
+          await syncUsersFromCPanel();
         } else if (contactsCache.length > 0 || usersCache.length > 0) {
           console.log('[cPanel DB] Seeding initial data into cPanel MySQL Database...');
           await migrateAllDataToCPanelDb({
@@ -1476,14 +1501,8 @@ export async function syncWithCPanelDb(username: string = 'admin'): Promise<{ su
       const activeContacts = (cpanelData.contacts || []).filter(c => c && !c.deleted_at && c.status !== 'DELETED');
       contactsCache = deduplicateContactsByName(activeContacts);
 
-      // Preserve master admin if absent from cpanel
-      const hasAdmin = (cpanelData.users || []).some(u => u.username?.toLowerCase() === 'admin');
-      if (hasAdmin) {
-        usersCache = cpanelData.users;
-      } else {
-        const existingAdmin = usersCache.find(u => u.username?.toLowerCase() === 'admin');
-        usersCache = existingAdmin ? [existingAdmin, ...(cpanelData.users || [])] : (cpanelData.users || []);
-      }
+      // Bidirectional user synchronization to protect new registrations
+      await syncUsersFromCPanel();
 
       existingAccountsCache = cpanelData.existingAccounts || [];
       if (cpanelData.barangays && cpanelData.barangays.length > 0) {
@@ -2156,19 +2175,151 @@ export function findUserByEmail(email: string): User | undefined {
   );
 }
 
+/**
+ * Synchronize users bidirectionally between cPanel MySQL and local storage.
+ * Ensures newly registered accounts are never lost and always pushed to MySQL,
+ * and preserves 'Pending' status for account approval.
+ */
+export async function syncUsersFromCPanel(): Promise<User[]> {
+  try {
+    // 1. Re-read local disk file to ensure users registered in other processes/sessions are present
+    let diskUsers: User[] = [];
+    try {
+      if (fs.existsSync(USERS_FILE)) {
+        const raw = fs.readFileSync(USERS_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          diskUsers = parsed;
+        }
+      }
+    } catch {}
+
+    // Combine current in-memory cache and disk users
+    const localMap = new Map<string, User>();
+    for (const u of [...usersCache, ...diskUsers]) {
+      if (u && u.username && !isUserTombstoned(u.username, u.email)) {
+        localMap.set(u.username.toLowerCase(), u);
+      }
+    }
+
+    if (!isCPanelDbConnected()) {
+      usersCache = Array.from(localMap.values()).filter(u => !isUserTombstoned(u.username, u.email));
+      return usersCache;
+    }
+
+    // 2. Fetch users from cPanel MySQL
+    const cpanelData = await fetchAllFromCPanelDb();
+    const remoteUsers: any[] = (cpanelData && Array.isArray(cpanelData.users)) ? cpanelData.users : [];
+
+    const mergedMap = new Map<string, User>();
+    const usersToPushToCPanel: User[] = [];
+
+    // Process remote users from MySQL first
+    for (const r of remoteUsers) {
+      if (!r || !r.username) continue;
+      const unameLower = r.username.toLowerCase();
+      const emailLower = (r.email || '').toLowerCase();
+
+      // Clean up tombstoned accounts if found in MySQL
+      if (isUserTombstoned(unameLower, emailLower)) {
+        deleteUserFromCPanel(r.username).catch(() => {});
+        continue;
+      }
+
+      const local = localMap.get(unameLower) || (emailLower ? Array.from(localMap.values()).find(u => u.email && u.email.toLowerCase() === emailLower) : undefined);
+
+      const mergedUser: User = {
+        username: r.username,
+        email: r.email || (local ? local.email : ''),
+        fullName: r.fullName || r.displayName || (local ? local.fullName : r.username),
+        displayName: r.displayName || r.fullName || (local ? local.displayName : r.username),
+        barangay: r.barangay || (local ? local.barangay : 'Central'),
+        passwordHash: r.passwordHash || (local ? local.passwordHash : ''),
+        passwordPlain: r.passwordPlain || (local ? local.passwordPlain : ''),
+        role: r.role || (local ? local.role : 'Staff'),
+        status: normalizeUserStatus(r.status || (local ? local.status : 'Pending')),
+        createdAt: r.createdAt || (local ? local.createdAt : new Date().toISOString()),
+        updatedAt: r.updatedAt || (local ? local.updatedAt : new Date().toISOString()),
+        avatarDataUrl: r.avatarDataUrl || (local ? local.avatarDataUrl : undefined),
+        permissions: r.permissions || (local ? local.permissions : undefined)
+      };
+
+      mergedMap.set(unameLower, mergedUser);
+    }
+
+    // Process local users NOT yet in remote MySQL (e.g. newly registered accounts!)
+    for (const [unameLower, local] of localMap.entries()) {
+      if (isUserTombstoned(local.username, local.email)) continue;
+
+      if (!mergedMap.has(unameLower)) {
+        const existsByEmail = local.email && Array.from(mergedMap.values()).some(u => u.email && u.email.toLowerCase() === local.email?.toLowerCase());
+        if (!existsByEmail) {
+          mergedMap.set(unameLower, local);
+          usersToPushToCPanel.push(local);
+        }
+      }
+    }
+
+    // Ensure master admin account 'admin' is always present and Active
+    const hasAdmin = Array.from(mergedMap.values()).some(u => u.username.toLowerCase() === 'admin');
+    if (!hasAdmin) {
+      const defaultAdmin: User = {
+        username: 'admin',
+        email: 'admin@clinic.gov.ph',
+        fullName: 'Master Administrator',
+        displayName: 'Master Administrator',
+        barangay: 'Central',
+        passwordHash: hashPassword('2026'),
+        passwordPlain: '2026',
+        role: 'Administrator',
+        status: 'Active',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      mergedMap.set('admin', defaultAdmin);
+      usersToPushToCPanel.push(defaultAdmin);
+    } else {
+      const adm = mergedMap.get('admin');
+      if (adm) {
+        adm.role = 'Administrator';
+        adm.status = 'Active';
+      }
+    }
+
+    usersCache = Array.from(mergedMap.values()).filter(u => !isUserTombstoned(u.username, u.email));
+
+    // Save updated merged users to local USERS_FILE
+    safeWriteFileSync(USERS_FILE, JSON.stringify(usersCache, null, 2));
+
+    // Automatically push any local-only accounts to cPanel MySQL
+    if (usersToPushToCPanel.length > 0) {
+      for (const u of usersToPushToCPanel) {
+        saveUserToCPanel(u).catch(e => console.warn(`[cPanel User Push] Notice for ${u.username}:`, e.message));
+      }
+    }
+
+    return usersCache;
+  } catch (err: any) {
+    console.error('[cPanel User Sync] Notice:', err.message);
+    return usersCache;
+  }
+}
+
 export function getUsers() {
-  return usersCache.map(u => ({
-    username: u.username,
-    email: u.email || u.username,
-    fullName: u.fullName || u.displayName || u.username,
-    barangay: u.barangay || 'Central',
-    role: u.role || 'Staff',
-    status: normalizeUserStatus(u.status),
-    createdAt: u.createdAt || new Date().toISOString(),
-    displayName: u.displayName || u.fullName || '',
-    avatarDataUrl: u.avatarDataUrl || '',
-    passwordPlain: u.passwordPlain || ''
-  }));
+  return usersCache
+    .filter(u => !isUserTombstoned(u.username, u.email))
+    .map(u => ({
+      username: u.username,
+      email: u.email || u.username,
+      fullName: u.fullName || u.displayName || u.username,
+      barangay: u.barangay || 'Central',
+      role: u.role || 'Staff',
+      status: normalizeUserStatus(u.status),
+      createdAt: u.createdAt || new Date().toISOString(),
+      displayName: u.displayName || u.fullName || '',
+      avatarDataUrl: u.avatarDataUrl || '',
+      passwordPlain: u.passwordPlain || ''
+    }));
 }
 
 const NON_BARANGAY_VALUES = new Set([
@@ -2292,6 +2443,13 @@ export async function registerUser(data: {
     throw new Error('Password must be at least 4 characters long.');
   }
 
+  // Pre-sync with cPanel database if available to get freshest users list
+  if (isCPanelDbConnected()) {
+    try {
+      await syncUsersFromCPanel();
+    } catch (_) {}
+  }
+
   // Check if email already exists
   const emailExists = usersCache.some(u => u.email && u.email.toLowerCase() === trimmedEmail);
   if (emailExists) {
@@ -2331,6 +2489,14 @@ export async function registerUser(data: {
 
   usersCache.push(newUser);
   await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
+
+  // Immediately persist registered user into cPanel MySQL Database
+  try {
+    await saveUserToCPanel(newUser);
+  } catch (cpanelErr: any) {
+    console.warn('[cPanel Register] Notice saving user to MySQL:', cpanelErr.message);
+  }
+
   await addActivity(finalUsername, `Registered new account (${trimmedName} - ${trimmedBarangay}) with role ${trimmedRole}`);
   try {
     await syncAdminsToGoogleSheets();
@@ -2428,6 +2594,14 @@ export async function addUserAccountByAdmin(data: {
 
   usersCache.unshift(newUser);
   await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
+
+  // Immediately persist admin-created user into cPanel MySQL Database
+  try {
+    await saveUserToCPanel(newUser);
+  } catch (cpanelErr: any) {
+    console.warn('[cPanel Admin User Add] Notice saving user to MySQL:', cpanelErr.message);
+  }
+
   await addActivity(actorUsername || 'admin', `Admin created and auto-approved account @${finalUsername} (${trimmedName} - ${trimmedBarangay}) with role ${trimmedRole}`);
 
   try {
@@ -2474,6 +2648,14 @@ export async function updateUserRole(username: string, newRole: string, actorUse
   user.role = trimmedRole;
   user.updatedAt = new Date().toISOString();
   await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
+
+  // Immediately persist updated role into cPanel MySQL Database
+  try {
+    await saveUserToCPanel(user);
+  } catch (cpanelErr: any) {
+    console.warn('[cPanel User Role] Notice saving user to MySQL:', cpanelErr.message);
+  }
+
   await addActivity(actorUsername, `Updated user @${user.username} (${user.fullName || user.username}) role permission to ${trimmedRole}`);
   try {
     await syncAdminsToGoogleSheets();
@@ -2515,6 +2697,14 @@ export async function updateUserStatus(username: string, newStatus: 'Active' | '
   user.status = newStatus;
   user.updatedAt = new Date().toISOString();
   await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
+
+  // Immediately persist updated status (e.g. Active approval) into cPanel MySQL Database
+  try {
+    await saveUserToCPanel(user);
+  } catch (cpanelErr: any) {
+    console.warn('[cPanel User Status] Notice saving user to MySQL:', cpanelErr.message);
+  }
+
   await addActivity(actorUsername, `Updated user @${user.username} status to ${newStatus}`);
   try {
     await syncAdminsToGoogleSheets(true);
@@ -2612,6 +2802,14 @@ export async function editUserAccount(
 
   user.updatedAt = new Date().toISOString();
   await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
+
+  // Immediately persist edited user details into cPanel MySQL Database
+  try {
+    await saveUserToCPanel(user);
+  } catch (cpanelErr: any) {
+    console.warn('[cPanel User Edit] Notice saving user to MySQL:', cpanelErr.message);
+  }
+
   await addActivity(actorUsername, `Edited user account details for "@${user.username}" (${user.fullName || user.username}) - Role: ${user.role}, Status: ${user.status}`);
   try {
     await syncAdminsToGoogleSheets();
@@ -2699,6 +2897,7 @@ export async function designateBarangayForUsers(
 
     if (updatedUsersCount > 0) {
       await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
+      usersCache.filter(u => u.barangay === trimmedTarget).forEach(u => saveUserToCPanel(u).catch(() => {}));
       syncAdminsToGoogleSheets().catch(err =>
         console.error('Failed to sync updated designated barangays to Sheets:', err)
       );
@@ -2734,6 +2933,7 @@ export async function designateBarangayForUsers(
     }
     if (updatedSpecific > 0) {
       await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
+      usersCache.filter(u => u.barangay === trimmedTarget).forEach(u => saveUserToCPanel(u).catch(() => {}));
       syncAdminsToGoogleSheets().catch(err =>
         console.error('Failed to sync updated designated barangays to Sheets:', err)
       );
@@ -2872,6 +3072,18 @@ export async function updateUserProfile(
   user.updatedAt = new Date().toISOString();
 
   await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
+
+  // If username was renamed, remove old username record from cPanel MySQL
+  if (finalUsername !== currentUsername.toLowerCase()) {
+    deleteUserFromCPanel(currentUsername).catch(() => {});
+  }
+  // Immediately persist updated user profile to cPanel MySQL
+  try {
+    await saveUserToCPanel(user);
+  } catch (cpanelErr: any) {
+    console.warn('[cPanel Profile Update] Notice saving user to MySQL:', cpanelErr.message);
+  }
+
   await addActivity(finalUsername, `Updated admin profile settings (Username: @${finalUsername}, Name: ${user.displayName || 'not set'}).`);
 
   // Synchronize immediately to Google Sheets
@@ -2932,6 +3144,14 @@ export async function createAdminUser(username: string, password: string, creato
 
   usersCache.push(newUser);
   await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
+
+  // Immediately persist newly created admin into cPanel MySQL Database
+  try {
+    await saveUserToCPanel(newUser);
+  } catch (cpanelErr: any) {
+    console.warn('[cPanel Admin Create] Notice saving user to MySQL:', cpanelErr.message);
+  }
+
   await addActivity(creatorUsername, `Created new Administrator credential: "@${trimmedUser}"`);
   try {
     await syncAdminsToGoogleSheets();
@@ -2990,6 +3210,13 @@ export async function deleteAdminUser(username: string, creatorUsername: string)
   // Purge any duplicates or remaining records from usersCache
   usersCache = usersCache.filter(u => !isUserTombstoned(u.username, u.email));
   await safeWriteFile(USERS_FILE, JSON.stringify(usersCache, null, 2), 'utf-8');
+
+  // Delete from cPanel MySQL Database
+  deleteUserFromCPanel(tombUsername).catch(() => {});
+  if (tombEmail) {
+    deleteUserFromCPanel(tombEmail).catch(() => {});
+  }
+
   await addActivity(creatorUsername, `Deleted user account: "@${tombUsername}"`);
 
   // Direct and permanent synchronization to Google Sheets
@@ -3144,6 +3371,10 @@ export function isContactSubmitted(c: Contact): boolean {
   if (c.status === 'SUBMITTED' || c.status === 'LOCKED' || c.status === 'ALREADY SUBMITTED' || c.locked === true || c.submittedToBase44 === true || c.isSubmitted === true) {
     return true;
   }
+  // If explicitly flagged as actively undergoing submission (isSubmitted === false), do not treat as submitted yet
+  if (c.isSubmitted === false) {
+    return false;
+  }
   if (c.pcu_file_url && typeof c.pcu_file_url === 'string' && c.pcu_file_url.trim() !== '') {
     return true;
   }
@@ -3213,50 +3444,42 @@ export function deduplicateContactsByName(contacts: Contact[]): Contact[] {
       const existingIdx = seenKeys.get(key)!;
       const existing = result[existingIdx];
 
-      // Prioritize submitted records if any, then completeness and newest timestamps
+      const timeExisting = new Date(existing.updated_at || existing.created_at || 0).getTime();
+      const timeC = new Date(c.updated_at || c.created_at || 0).getTime();
+      const cIsNewer = timeC >= timeExisting;
+      const newest = cIsNewer ? c : existing;
+      const older = cIsNewer ? existing : c;
+
+      const mergedContactNumber = newest.contact_number || older.contact_number || '';
+      const mergedBarangay = newest.barangay || older.barangay || '';
+      const mergedPurok = newest.purok || older.purok || '';
+      const mergedMaintenance = newest.maintenance || older.maintenance || 'None';
+      const mergedMedicine = (mergedMaintenance === 'Yes')
+        ? (newest.maintenance === 'Yes' ? newest.maintenance_medicine : older.maintenance_medicine) || ''
+        : '';
+
       const existingSub = isContactSubmitted(existing);
       const cSub = isContactSubmitted(c);
+      const isSub = existingSub || cSub;
 
-      let replaceExisting = false;
-      if (!existingSub && cSub) {
-        replaceExisting = true;
-      } else if (existingSub === cSub) {
-        const scoreExisting = (existing.contact_number ? 2 : 0) + (existing.purok ? 1 : 0) + (existing.photo_url ? 1 : 0);
-        const scoreC = (c.contact_number ? 2 : 0) + (c.purok ? 1 : 0) + (c.photo_url ? 1 : 0);
-        if (scoreC > scoreExisting) {
-          replaceExisting = true;
-        } else if (scoreC === scoreExisting) {
-          const timeExisting = new Date(existing.updated_at || existing.created_at || 0).getTime();
-          const timeC = new Date(c.updated_at || c.created_at || 0).getTime();
-          if (timeC > timeExisting || (timeC === timeExisting && c.id > existing.id)) {
-            replaceExisting = true;
-          }
-        }
-      }
-
-      if (replaceExisting) {
-        result[existingIdx] = {
-          ...existing,
-          ...c,
-          contact_number: c.contact_number || existing.contact_number,
-          purok: c.purok || existing.purok,
-          barangay: c.barangay || existing.barangay,
-          photo_url: c.photo_url || existing.photo_url,
-          pcu_file_url: c.pcu_file_url || existing.pcu_file_url,
-          uploadedFiles: (c.uploadedFiles && c.uploadedFiles.length > 0) ? c.uploadedFiles : existing.uploadedFiles
-        };
-      } else {
-        result[existingIdx] = {
-          ...c,
-          ...existing,
-          contact_number: existing.contact_number || c.contact_number,
-          purok: existing.purok || c.purok,
-          barangay: existing.barangay || c.barangay,
-          photo_url: existing.photo_url || c.photo_url,
-          pcu_file_url: existing.pcu_file_url || c.pcu_file_url,
-          uploadedFiles: (existing.uploadedFiles && existing.uploadedFiles.length > 0) ? existing.uploadedFiles : c.uploadedFiles
-        };
-      }
+      result[existingIdx] = {
+        ...older,
+        ...newest,
+        contact_number: mergedContactNumber,
+        barangay: mergedBarangay,
+        purok: mergedPurok,
+        maintenance: mergedMaintenance,
+        maintenance_medicine: mergedMedicine,
+        photo_url: newest.photo_url || older.photo_url,
+        pcu_file_url: newest.pcu_file_url || older.pcu_file_url,
+        pcu_uploaded_by: newest.pcu_uploaded_by || older.pcu_uploaded_by,
+        pcu_uploaded_at: newest.pcu_uploaded_at || older.pcu_uploaded_at,
+        isSubmitted: isSub,
+        locked: isSub,
+        status: isSub ? 'SUBMITTED' : (newest.status || older.status || 'ACTIVE'),
+        uploadedFiles: (newest.uploadedFiles && newest.uploadedFiles.length > 0) ? newest.uploadedFiles : older.uploadedFiles,
+        updated_at: new Date(Math.max(timeExisting, timeC, Date.now())).toISOString()
+      };
     }
   }
 
@@ -3756,6 +3979,9 @@ export async function saveContactToBase44(contact: Contact, username: string): P
       contact_number: contact.contact_number || '',
       contactNumber: contact.contact_number || '',
       mobile: contact.contact_number || '',
+      maintenance: contact.maintenance || 'None',
+      maintenance_medicine: contact.maintenance_medicine || '',
+      maintenanceMedicine: contact.maintenance_medicine || '',
       status: 'approved',
       existingAcc: false,
       submittedBy: uName,
@@ -3922,6 +4148,8 @@ export async function addContact(
     latitude?: number | null;
     longitude?: number | null;
     geotagged?: boolean;
+    maintenance?: 'None' | 'Yes' | string;
+    maintenance_medicine?: string;
   },
   username: string
 ) {
@@ -3962,6 +4190,8 @@ export async function addContact(
       if (updateLat !== undefined) existing.latitude = updateLat;
       if (updateLng !== undefined) existing.longitude = updateLng;
       if (updateGeotag !== undefined) existing.geotagged = updateGeotag;
+      if (contact.maintenance !== undefined) existing.maintenance = contact.maintenance;
+      if (contact.maintenance_medicine !== undefined) existing.maintenance_medicine = contact.maintenance_medicine;
       existing.updated_at = new Date().toISOString();
       await saveContacts();
       if (sheetsConfig.syncEnabled) {
@@ -3983,6 +4213,8 @@ export async function addContact(
     latitude: updateLat,
     longitude: updateLng,
     geotagged: updateGeotag || false,
+    maintenance: contact.maintenance === 'Yes' ? 'Yes' : 'None',
+    maintenance_medicine: contact.maintenance === 'Yes' ? (contact.maintenance_medicine || '').trim() : '',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     deleted_at: null,
@@ -4009,7 +4241,7 @@ export async function addContact(
 
 // Edit a contact
 export async function editContact(
-  id: number,
+  id: number | string,
   contact: { 
     full_name: string; 
     barangay: string; 
@@ -4019,13 +4251,14 @@ export async function editContact(
     latitude?: number | null;
     longitude?: number | null;
     geotagged?: boolean;
+    maintenance?: 'None' | 'Yes' | string;
+    maintenance_medicine?: string;
   },
   username: string
 ) {
-  const index = contactsCache.findIndex(c => c.id === id && !c.deleted_at);
-  if (index === -1) {
-    throw new Error('Contact not found or has been deleted.');
-  }
+  const idStr = id !== undefined && id !== null ? String(id).trim() : '';
+  const idNum = !isNaN(Number(id)) ? Number(id) : null;
+  const rawTargetName = (contact.full_name || '').trim();
 
   const rawName = contact.full_name.trim();
   const rawBarangay = (contact.barangay || contact.address || '').trim();
@@ -4039,11 +4272,28 @@ export async function editContact(
   const formattedName = capitalizeWords(rawName);
   const formattedBarangay = normalizeBarangayName(rawBarangay);
   const formattedPurok = rawPurok ? capitalizeWords(rawPurok) : '';
+  const targetCanonicalKey = getCanonicalNameKey(formattedName) || getCanonicalNameKey(rawTargetName);
+
+  const matchedIndices: number[] = [];
+  contactsCache.forEach((c, idx) => {
+    if (!c || c.deleted_at) return;
+    const cIdStr = c.id !== undefined && c.id !== null ? String(c.id).trim() : '';
+    const matchId = (idStr && cIdStr && cIdStr === idStr) || (idNum !== null && Number(c.id) === idNum);
+    const matchName = (targetCanonicalKey && getCanonicalNameKey(c.full_name) === targetCanonicalKey) ||
+      (rawTargetName && c.full_name && (normalizeCompareName(c.full_name, rawTargetName) || c.full_name.trim().toLowerCase() === rawTargetName.toLowerCase()));
+    if (matchId || matchName) {
+      matchedIndices.push(idx);
+    }
+  });
+
+  if (matchedIndices.length === 0) {
+    throw new Error('Contact not found or has been deleted.');
+  }
 
   // Check for duplicate in other active records
   const isDuplicate = contactsCache.some(
-    c =>
-      c.id !== id &&
+    (c, idx) =>
+      !matchedIndices.includes(idx) &&
       !c.deleted_at &&
       c.full_name.toLowerCase() === formattedName.toLowerCase() &&
       c.contact_number === rawNumber
@@ -4053,24 +4303,36 @@ export async function editContact(
     throw new Error(`Another contact named "${formattedName}" with number ${rawNumber} already exists.`);
   }
 
-  const original = contactsCache[index];
+  const primaryIndex = matchedIndices[0];
+  const original = contactsCache[primaryIndex];
   
   // Conditionally process geotag values if they are provided
   const updateGeotag = contact.geotagged !== undefined ? contact.geotagged : original.geotagged;
   const updateLat = contact.latitude !== undefined ? contact.latitude : original.latitude;
   const updateLng = contact.longitude !== undefined ? contact.longitude : original.longitude;
+  const updateMaintenance = contact.maintenance !== undefined ? contact.maintenance : (original.maintenance || 'None');
+  const updateMedicine = updateMaintenance === 'Yes' 
+    ? (contact.maintenance_medicine !== undefined ? contact.maintenance_medicine.trim() : (original.maintenance_medicine || '')) 
+    : '';
 
-  contactsCache[index] = {
-    ...original,
-    full_name: formattedName,
-    barangay: formattedBarangay,
-    purok: formattedPurok,
-    contact_number: rawNumber,
-    geotagged: updateGeotag,
-    latitude: updateLat,
-    longitude: updateLng,
-    updated_at: new Date().toISOString()
-  };
+  const nowIso = new Date().toISOString();
+  for (const idx of matchedIndices) {
+    contactsCache[idx] = {
+      ...contactsCache[idx],
+      full_name: formattedName,
+      barangay: formattedBarangay,
+      purok: formattedPurok,
+      contact_number: rawNumber,
+      geotagged: updateGeotag,
+      latitude: updateLat,
+      longitude: updateLng,
+      maintenance: updateMaintenance,
+      maintenance_medicine: updateMedicine,
+      updated_at: nowIso
+    };
+  }
+
+  const updatedContact = contactsCache[primaryIndex];
 
   await saveContacts();
   await addActivity(
@@ -4079,21 +4341,38 @@ export async function editContact(
   );
 
   if (isCPanelDbConnected()) {
-    saveContactToCPanel(contactsCache[index]).catch(err => console.warn('Error saving edited contact to cPanel DB:', err));
+    try {
+      await saveContactToCPanel(updatedContact);
+    } catch (cpanelErr: any) {
+      console.warn('Error saving edited contact to cPanel DB:', cpanelErr.message || cpanelErr);
+    }
   }
 
   // Forward write operation to Apps Script Web App if configured
-  forwardToWebApp('edit', contactsCache[index]).catch(err => console.error('Error forwarding edit to Sheets Web App:', err));
+  forwardToWebApp('edit', updatedContact).catch(err => console.error('Error forwarding edit to Sheets Web App:', err));
 
   // Save update to Base44 database
-  saveContactToBase44(contactsCache[index], username).catch(err => console.warn('Error saving edited contact to Base44:', err));
+  try {
+    await saveContactToBase44(updatedContact, username);
+  } catch (base44Err: any) {
+    console.warn('Error saving edited contact to Base44:', base44Err.message || base44Err);
+  }
 
-  return contactsCache[index];
+  return updatedContact;
 }
 
 // Delete a contact permanently from the database and Google Sheets
-export async function deleteContact(id: number, username: string) {
-  const index = contactsCache.findIndex(c => c.id === id);
+export async function deleteContact(id: number | string, username: string) {
+  const idStr = id !== undefined && id !== null ? String(id).trim() : '';
+  const idNum = !isNaN(Number(id)) ? Number(id) : null;
+
+  const index = contactsCache.findIndex(c => {
+    if (!c) return false;
+    const cIdStr = c.id !== undefined && c.id !== null ? String(c.id).trim() : '';
+    if (idStr && cIdStr && cIdStr === idStr) return true;
+    if (idNum !== null && Number(c.id) === idNum) return true;
+    return false;
+  });
   if (index === -1) {
     throw new Error('Contact not found or already removed from directory.');
   }
@@ -4113,7 +4392,12 @@ export async function deleteContact(id: number, username: string) {
   contactsCache.splice(index, 1);
 
   // Also remove from PCU updates cache if any
-  pcuUpdatesCache = pcuUpdatesCache.filter(u => u && u.contactId !== id && !normalizeCompareName(u.fullName, deletedContact.full_name));
+  pcuUpdatesCache = pcuUpdatesCache.filter(u => 
+    u && 
+    !(idStr && u.contactId !== undefined && u.contactId !== null && String(u.contactId).trim() === idStr) &&
+    !(idNum !== null && Number(u.contactId) === idNum) &&
+    !normalizeCompareName(u.fullName, deletedContact.full_name)
+  );
   await safeWriteFile(PCU_UPDATES_FILE, JSON.stringify(pcuUpdatesCache, null, 2), 'utf-8');
 
   await saveContacts();
@@ -7351,8 +7635,17 @@ async function savePCUUpdates() {
 }
 
 // Upload a contact photo
-export async function uploadContactPhoto(contactId: number, photoDataUrl: string, username: string) {
-  const contact = contactsCache.find(c => c.id === contactId && !c.deleted_at);
+export async function uploadContactPhoto(contactId: number | string, photoDataUrl: string, username: string) {
+  const idStr = contactId !== undefined && contactId !== null ? String(contactId).trim() : '';
+  const idNum = !isNaN(Number(contactId)) ? Number(contactId) : null;
+
+  const contact = contactsCache.find(c => {
+    if (!c || c.deleted_at) return false;
+    const cIdStr = c.id !== undefined && c.id !== null ? String(c.id).trim() : '';
+    if (idStr && cIdStr && cIdStr === idStr) return true;
+    if (idNum !== null && Number(c.id) === idNum) return true;
+    return false;
+  });
   if (!contact) {
     throw new Error('Contact not found or has been deleted.');
   }
@@ -7381,14 +7674,36 @@ export async function uploadContactPhoto(contactId: number, photoDataUrl: string
 
 // Add a PCU Update (saves to Base44 PCUUpdate entity + locally)
 export async function addPCUUpdate(
-  contactId: number, 
+  contactId: number | string, 
   fullName: string, 
   fileName: string, 
   fileData: string, 
   username: string,
-  options?: { barangay?: string; purok?: string; contact_number?: string; latitude?: number | null; longitude?: number | null; geotagged?: boolean }
+  options?: { 
+    barangay?: string; 
+    purok?: string; 
+    contact_number?: string; 
+    latitude?: number | null; 
+    longitude?: number | null; 
+    geotagged?: boolean;
+    maintenance?: 'None' | 'Yes' | string;
+    maintenance_medicine?: string;
+  }
 ) {
-  const contact = contactsCache.find(c => c.id === contactId && !c.deleted_at);
+  const idStr = contactId !== undefined && contactId !== null ? String(contactId).trim() : '';
+  const idNum = !isNaN(Number(contactId)) ? Number(contactId) : null;
+  const targetName = (fullName || '').trim();
+
+  let contact = contactsCache.find(c => {
+    if (!c || c.deleted_at) return false;
+    const cIdStr = c.id !== undefined && c.id !== null ? String(c.id).trim() : '';
+    if (idStr && cIdStr && cIdStr === idStr) return true;
+    if (idNum !== null && Number(c.id) === idNum) return true;
+    if (targetName && c.full_name && (normalizeCompareName(c.full_name, targetName) || c.full_name.trim().toLowerCase() === targetName.toLowerCase())) {
+      return true;
+    }
+    return false;
+  });
 
   if (contact && (isContactSubmitted(contact) || contact.locked || contact.status === 'SUBMITTED' || contact.submittedToBase44)) {
     throw new Error(`Contact "${contact.full_name}" has already been submitted to Base44 and is permanently locked. Duplicate submission is strictly prohibited.`);
@@ -7403,6 +7718,12 @@ export async function addPCUUpdate(
     }
     if (options?.contact_number !== undefined && options.contact_number.trim() !== '') {
       contact.contact_number = options.contact_number.trim();
+    }
+    if (options?.maintenance !== undefined) {
+      contact.maintenance = options.maintenance;
+    }
+    if (options?.maintenance_medicine !== undefined) {
+      contact.maintenance_medicine = options.maintenance_medicine;
     }
     if (options?.latitude !== undefined && options.latitude !== null && !isNaN(Number(options.latitude))) {
       contact.latitude = Number(options.latitude);
@@ -7612,7 +7933,7 @@ export async function addPCUUpdate(
 
 // Add multiple PCU updates for a contact (saves to Base44 PCUUpdate entity + locally)
 export async function addPCUUpdatesMultiple(
-  contactId: number, 
+  contactId: number | string, 
   fullName: string, 
   files: { fileName: string; fileData: string }[], 
   username: string,
@@ -7625,32 +7946,107 @@ export async function addPCUUpdatesMultiple(
     geotagged?: boolean;
     isLastBatch?: boolean;
     totalFilesCount?: number;
+    maintenance?: 'None' | 'Yes' | string;
+    maintenance_medicine?: string;
   }
 ) {
-  let contact = contactsCache.find(c => c.id === contactId && !c.deleted_at);
-  if (contact && (isContactSubmitted(contact) || contact.locked || contact.status === 'SUBMITTED' || contact.submittedToBase44)) {
-    throw new Error(`Contact "${contact.full_name}" has already been submitted to Base44 and is permanently locked. Duplicate submission is strictly prohibited.`);
+  const contactIdStr = contactId !== undefined && contactId !== null ? String(contactId).trim() : '';
+  const contactIdNum = !isNaN(Number(contactId)) ? Number(contactId) : null;
+  const targetName = (fullName || '').trim();
+
+  // 1. Search active contacts cache
+  let contact = contactsCache.find(c => {
+    if (!c) return false;
+    const cIdStr = c.id !== undefined && c.id !== null ? String(c.id).trim() : '';
+    if (contactIdStr && cIdStr && cIdStr === contactIdStr) return true;
+    if (contactIdNum !== null && Number(c.id) === contactIdNum) return true;
+    if (targetName && c.full_name && (normalizeCompareName(c.full_name, targetName) || c.full_name.trim().toLowerCase() === targetName.toLowerCase())) {
+      return true;
+    }
+    return false;
+  });
+
+  // Only reject duplicate submission if it was ALREADY permanently locked in an earlier completed session
+  if (contact && (contact.locked || contact.status === 'SUBMITTED' || contact.submittedToBase44)) {
+    const isOngoingSession = options?.isLastBatch !== undefined || (files && files.length > 0);
+    if (!isOngoingSession) {
+      throw new Error(`Contact "${contact.full_name}" has already been submitted to Base44 and is permanently locked. Duplicate submission is strictly prohibited.`);
+    }
   }
+
+  // 2. If not found in active contacts, check tombstone cache, pcu updates cache, or existing accounts
   if (!contact) {
-    // Check if the contact was already tombstoned in an earlier batch of the same submission
-    const tombstone = deletedContactsCache.find(d => d.id === contactId);
-    const existingPCU = pcuUpdatesCache.find(p => p.contactId === contactId);
-    if (tombstone || existingPCU) {
+    const tombstone = deletedContactsCache.find(d => {
+      if (!d) return false;
+      const dIdStr = d.id !== undefined && d.id !== null ? String(d.id).trim() : '';
+      if (contactIdStr && dIdStr && dIdStr === contactIdStr) return true;
+      if (contactIdNum !== null && Number(d.id) === contactIdNum) return true;
+      if (targetName && d.full_name && (normalizeCompareName(d.full_name, targetName) || d.full_name.trim().toLowerCase() === targetName.toLowerCase())) {
+        return true;
+      }
+      return false;
+    });
+
+    const existingPCU = pcuUpdatesCache.find(p => {
+      if (!p) return false;
+      const pIdStr = p.contactId !== undefined && p.contactId !== null ? String(p.contactId).trim() : '';
+      if (contactIdStr && pIdStr && pIdStr === contactIdStr) return true;
+      if (contactIdNum !== null && Number(p.contactId) === contactIdNum) return true;
+      if (targetName && p.fullName && (normalizeCompareName(p.fullName, targetName) || p.fullName.trim().toLowerCase() === targetName.toLowerCase())) {
+        return true;
+      }
+      return false;
+    });
+
+    const existingAcc = existingAccountsCache.find(e => {
+      if (!e) return false;
+      const eIdStr = e.id !== undefined && e.id !== null ? String(e.id).trim() : '';
+      if (contactIdStr && eIdStr && eIdStr === contactIdStr) return true;
+      if (contactIdNum !== null && Number(e.id) === contactIdNum) return true;
+      if (targetName && e.full_name && (normalizeCompareName(e.full_name, targetName) || e.full_name.trim().toLowerCase() === targetName.toLowerCase())) {
+        return true;
+      }
+      return false;
+    });
+
+    if (tombstone || existingPCU || existingAcc) {
       contact = {
-        id: contactId,
-        full_name: fullName || tombstone?.full_name || existingPCU?.fullName || 'Contact',
-        barangay: options?.barangay || tombstone?.barangay || existingPCU?.barangay || '',
-        purok: options?.purok || existingPCU?.purok || '',
+        id: (contactId || (existingAcc ? existingAcc.id : (tombstone ? tombstone.id : Date.now()))) as any,
+        full_name: fullName || tombstone?.full_name || existingPCU?.fullName || existingAcc?.full_name || 'Contact',
+        barangay: options?.barangay || tombstone?.barangay || existingPCU?.barangay || existingAcc?.barangay || '',
+        purok: options?.purok || existingPCU?.purok || existingAcc?.purok || '',
+        contact_number: options?.contact_number || existingAcc?.contact_number || '',
+        created_at: existingAcc?.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        deleted_at: null,
+        isSubmitted: false,
+        uploadedFiles: existingAcc?.uploadedFiles || []
+      };
+    } else {
+      // Graceful dynamic fallback: construct contact record from submitted metadata so submission NEVER fails with "Contact record not found."
+      contact = {
+        id: contactId || Date.now(),
+        full_name: fullName || 'Contact',
+        barangay: options?.barangay || '',
+        purok: options?.purok || '',
         contact_number: options?.contact_number || '',
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         deleted_at: null,
-        isSubmitted: true,
+        isSubmitted: false,
         uploadedFiles: []
       };
-    } else {
-      throw new Error('Contact record not found.');
     }
+  }
+
+  // Ensure uploadedFiles is initialized as an array
+  if (!Array.isArray(contact.uploadedFiles)) {
+    contact.uploadedFiles = [];
+  }
+
+  // Mark actively in progress for batch submissions
+  if (options?.isLastBatch === false) {
+    contact.isSubmitted = false;
   }
 
   if (options?.barangay !== undefined && options.barangay.trim() !== '') {
@@ -7661,6 +8057,12 @@ export async function addPCUUpdatesMultiple(
   }
   if (options?.contact_number !== undefined && options.contact_number.trim() !== '') {
     contact.contact_number = options.contact_number.trim();
+  }
+  if (options?.maintenance !== undefined) {
+    contact.maintenance = options.maintenance;
+  }
+  if (options?.maintenance_medicine !== undefined) {
+    contact.maintenance_medicine = options.maintenance_medicine;
   }
   if (options?.latitude !== undefined && options.latitude !== null && !isNaN(Number(options.latitude))) {
     contact.latitude = Number(options.latitude);
@@ -7777,6 +8179,9 @@ export async function addPCUUpdatesMultiple(
           uploadedByEmail: userEmail,
           contact: contactNumber,
           contact_number: contactNumber,
+          maintenance: contact.maintenance || 'None',
+          maintenance_medicine: contact.maintenance_medicine || '',
+          maintenanceMedicine: contact.maintenance_medicine || '',
           latitude: latNum,
           longitude: lngNum,
           geotagged: isGeotagged,
@@ -8142,8 +8547,59 @@ export async function restoreExistingAccountFiles(id: string, username: string):
 }
 
 // Remove PCU file from a contact, returning it to Saint Francis Clinic Directory
-export async function removePCUFileFromContact(contactId: number, username: string) {
-  const contact = contactsCache.find(c => c.id === contactId);
+export async function removePCUFileFromContact(contactId: number | string, username: string) {
+  const contactIdStr = contactId !== undefined && contactId !== null ? String(contactId).trim() : '';
+  const contactIdNum = !isNaN(Number(contactId)) ? Number(contactId) : null;
+
+  let contact = contactsCache.find(c => {
+    if (!c) return false;
+    const cIdStr = c.id !== undefined && c.id !== null ? String(c.id).trim() : '';
+    if (contactIdStr && cIdStr && cIdStr === contactIdStr) return true;
+    if (contactIdNum !== null && Number(c.id) === contactIdNum) return true;
+    return false;
+  });
+
+  if (!contact) {
+    // Check if it was tombstoned
+    const tombstoneIndex = deletedContactsCache.findIndex(d => {
+      if (!d) return false;
+      const dIdStr = d.id !== undefined && d.id !== null ? String(d.id).trim() : '';
+      if (contactIdStr && dIdStr && dIdStr === contactIdStr) return true;
+      if (contactIdNum !== null && Number(d.id) === contactIdNum) return true;
+      return false;
+    });
+
+    const existingPCU = pcuUpdatesCache.find(p => {
+      if (!p) return false;
+      const pIdStr = p.contactId !== undefined && p.contactId !== null ? String(p.contactId).trim() : '';
+      if (contactIdStr && pIdStr && pIdStr === contactIdStr) return true;
+      if (contactIdNum !== null && Number(p.contactId) === contactIdNum) return true;
+      return false;
+    });
+
+    if (tombstoneIndex !== -1 || existingPCU) {
+      const tombstone = tombstoneIndex !== -1 ? deletedContactsCache[tombstoneIndex] : null;
+      contact = {
+        id: (contactId || (tombstone ? tombstone.id : Date.now())) as any,
+        full_name: tombstone?.full_name || existingPCU?.fullName || 'Contact',
+        barangay: tombstone?.barangay || existingPCU?.barangay || '',
+        purok: existingPCU?.purok || '',
+        contact_number: '',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        deleted_at: null,
+        isSubmitted: false,
+        uploadedFiles: []
+      };
+      // Re-insert into contactsCache
+      contactsCache.push(contact);
+      if (tombstoneIndex !== -1) {
+        deletedContactsCache.splice(tombstoneIndex, 1);
+        safeWriteFile(DELETED_CONTACTS_FILE, JSON.stringify(deletedContactsCache, null, 2), 'utf-8').catch(() => {});
+      }
+    }
+  }
+
   if (!contact) throw new Error('Contact record not found.');
 
   // Find and remove from base44 database

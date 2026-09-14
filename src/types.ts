@@ -25,11 +25,13 @@ export interface Contact {
   pin?: string;
   facebookLink?: string;
   uploadedFiles?: { name: string; url: string; uploadedAt: string; uploadedBy?: string }[];
+  maintenance?: 'None' | 'Yes' | string;
+  maintenance_medicine?: string;
 }
 
 export interface PCUUpdate {
   id: string;
-  contactId: number;
+  contactId: number | string;
   fullName: string;
   barangay?: string;
   purok?: string;

@@ -12,6 +12,8 @@ interface ContactFormProps {
     latitude?: number | null;
     longitude?: number | null;
     geotagged?: boolean;
+    maintenance?: 'None' | 'Yes' | string;
+    maintenance_medicine?: string;
   }) => Promise<boolean>;
   onCancel: () => void;
   showToast: (message: string, type: 'success' | 'warning' | 'error') => void;
@@ -22,6 +24,8 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
   const [barangay, setBarangay] = useState('');
   const [purok, setPurok] = useState('');
   const [contactNumber, setContactNumber] = useState('');
+  const [maintenance, setMaintenance] = useState<'None' | 'Yes'>('None');
+  const [maintenanceMedicine, setMaintenanceMedicine] = useState('');
   const [saving, setSaving] = useState(false);
 
   const isEditingExisting = Boolean(editTarget && editTarget.id);
@@ -32,6 +36,9 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
       setBarangay(editTarget.barangay || '');
       setPurok(editTarget.purok || '');
       setContactNumber(editTarget.contact_number || '');
+      const maint = (editTarget.maintenance === 'Yes' || (editTarget.maintenance_medicine && editTarget.maintenance !== 'None')) ? 'Yes' : 'None';
+      setMaintenance(maint);
+      setMaintenanceMedicine(editTarget.maintenance_medicine || '');
     } else {
       clearForm();
     }
@@ -42,6 +49,8 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
     setBarangay('');
     setPurok('');
     setContactNumber('');
+    setMaintenance('None');
+    setMaintenanceMedicine('');
   };
 
   const handleCapitalization = (str: string): string => {
@@ -62,6 +71,7 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
     const trimmedBarangay = barangay.trim();
     const trimmedPurok = purok.trim();
     const trimmedNumber = contactNumber.trim();
+    const trimmedMedicine = maintenanceMedicine.trim();
 
     // Validation checks
     if (!trimmedName) {
@@ -76,6 +86,10 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
       showToast('Contact Number is required.', 'warning');
       return;
     }
+    if (maintenance === 'Yes' && !trimmedMedicine) {
+      showToast('Please specify what medicine they maintained.', 'warning');
+      return;
+    }
 
     // Capitalization format
     const formattedName = handleCapitalization(trimmedName);
@@ -88,7 +102,9 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
         full_name: formattedName,
         barangay: formattedBarangay,
         purok: formattedPurok,
-        contact_number: trimmedNumber
+        contact_number: trimmedNumber,
+        maintenance,
+        maintenance_medicine: maintenance === 'Yes' ? trimmedMedicine : ''
       });
       if (success && !editTarget) {
         clearForm();
@@ -191,6 +207,59 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
             placeholder="e.g. 09171234567"
             disabled={saving}
           />
+        </div>
+
+        {/* Maintenance */}
+        <div className="space-y-2 p-4 bg-slate-50/80 border border-slate-200 rounded-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                Maintenance
+              </label>
+              <p className="text-[11px] text-slate-400">Does this patient take ongoing maintenance medication?</p>
+            </div>
+            <div className="flex items-center gap-6">
+              <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={maintenance === 'None'}
+                  onChange={() => {
+                    setMaintenance('None');
+                    setMaintenanceMedicine('');
+                  }}
+                  disabled={saving}
+                  className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-slate-300 cursor-pointer"
+                />
+                <span>None</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer select-none text-xs font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={maintenance === 'Yes'}
+                  onChange={() => setMaintenance('Yes')}
+                  disabled={saving}
+                  className="w-4 h-4 rounded text-teal-600 focus:ring-teal-500 border-slate-300 cursor-pointer"
+                />
+                <span>Yes</span>
+              </label>
+            </div>
+          </div>
+
+          {maintenance === 'Yes' && (
+            <div className="pt-2 border-t border-slate-200/80 transition-all">
+              <label className="block text-xs font-semibold text-teal-700 uppercase tracking-wider mb-1.5">
+                Maintained Medicine <span className="text-red-500 font-bold">*</span>
+              </label>
+              <input
+                type="text"
+                value={maintenanceMedicine}
+                onChange={(e) => setMaintenanceMedicine(e.target.value)}
+                placeholder="e.g. Losartan 50mg, Metformin 500mg, Amlodipine 10mg..."
+                disabled={saving}
+                className="w-full px-4 py-2.5 bg-white border border-teal-300 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 rounded-xl transition-all text-slate-800 text-xs font-medium outline-none placeholder:text-slate-400 shadow-xs"
+              />
+            </div>
+          )}
         </div>
 
         {/* Actions Buttons */}

@@ -52,7 +52,20 @@ export default function App() {
   });
 
   // Navigation Panel Routing
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'map' | 'directory' | 'recent-upload' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'map' | 'directory' | 'recent-upload' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings'>(() => {
+    try {
+      const saved = sessionStorage.getItem('clinic_active_tab') || localStorage.getItem('clinic_active_tab');
+      if (saved) return saved as any;
+    } catch {}
+    return 'dashboard';
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('clinic_active_tab', activeTab);
+      localStorage.setItem('clinic_active_tab', activeTab);
+    } catch {}
+  }, [activeTab]);
   
   // Mobile Navigation Drawer Open State
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -538,6 +551,8 @@ export default function App() {
     latitude?: number | null;
     longitude?: number | null;
     geotagged?: boolean;
+    maintenance?: 'None' | 'Yes' | string;
+    maintenance_medicine?: string;
   }): Promise<boolean> => {
     if (!authToken) return false;
 
@@ -567,9 +582,10 @@ export default function App() {
         'success'
       );
 
-      // Reset and trigger stats reload
+      // Reset, trigger stats reload and signal ContactTable to refresh
       setIsFormOpen(false);
       setEditTarget(null);
+      setLastSyncTime(new Date().toISOString());
       fetchStats();
       return true;
     } catch (err: any) {

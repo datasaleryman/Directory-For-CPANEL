@@ -117,6 +117,8 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       pcu_uploaded_by VARCHAR(255) DEFAULT '',
       pcu_uploaded_at VARCHAR(100) DEFAULT '',
       deleted_at VARCHAR(100) NULL,
+      maintenance VARCHAR(50) DEFAULT 'None',
+      maintenance_medicine TEXT NULL,
       INDEX idx_barangay (barangay),
       INDEX idx_status (status),
       INDEX idx_full_name (full_name)
@@ -134,8 +136,12 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       created_at VARCHAR(100) DEFAULT '',
       avatar_data_url LONGTEXT,
       permissions TEXT,
+      password_plain VARCHAR(255) DEFAULT '',
+      display_name VARCHAR(255) DEFAULT '',
+      updated_at VARCHAR(100) DEFAULT '',
       INDEX idx_role (role),
-      INDEX idx_email (email)
+      INDEX idx_email (email),
+      INDEX idx_status (status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
 
     // 3. Existing Accounts Table
@@ -226,7 +232,9 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
         { name: 'pcu_file_url', type: 'LONGTEXT' },
         { name: 'pcu_uploaded_by', type: "VARCHAR(255) DEFAULT ''" },
         { name: 'pcu_uploaded_at', type: "VARCHAR(100) DEFAULT ''" },
-        { name: 'deleted_at', type: 'VARCHAR(100) NULL' }
+        { name: 'deleted_at', type: 'VARCHAR(100) NULL' },
+        { name: 'maintenance', type: "VARCHAR(50) DEFAULT 'None'" },
+        { name: 'maintenance_medicine', type: 'TEXT NULL' }
       ];
       for (const col of missingCols) {
         if (!existingCols.has(col.name.toLowerCase())) {
@@ -235,6 +243,29 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
             console.log(`[cPanel DB] Added missing column '${col.name}' to contacts table.`);
           } catch (e: any) {
             console.warn(`[cPanel DB] Column migration notice for ${col.name}:`, e.message);
+          }
+        }
+      }
+    }
+
+    // Inspect and migrate missing columns in 'users' table
+    const [userColRows]: any = await connectionPool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users'`
+    );
+    const existingUserCols = new Set((userColRows || []).map((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase()));
+    if (existingUserCols.size > 0) {
+      const missingUserCols = [
+        { name: 'password_plain', type: "VARCHAR(255) DEFAULT ''" },
+        { name: 'display_name', type: "VARCHAR(255) DEFAULT ''" },
+        { name: 'updated_at', type: "VARCHAR(100) DEFAULT ''" }
+      ];
+      for (const col of missingUserCols) {
+        if (!existingUserCols.has(col.name.toLowerCase())) {
+          try {
+            await connectionPool.query(`ALTER TABLE users ADD COLUMN \`${col.name}\` ${col.type}`);
+            console.log(`[cPanel DB] Added missing column '${col.name}' to users table.`);
+          } catch (e: any) {
+            console.warn(`[cPanel DB] Column migration notice for users.${col.name}:`, e.message);
           }
         }
       }
@@ -822,7 +853,145 @@ export function updateLastSyncMetadata(count: number, maxUpdated: string, maxId:
 }
 
 /**
- * Lightweight check to see if cPanel MySQL contacts table has changed since last sync
+ * Flexible mapper that transforms a raw database row from either `contacts` or a spreadsheet-imported
+ * table (like `sheet1` or `Sheet1` with varying column headers) into a standard Contact record.
+ */
+export function mapFlexibleRowToContact(r: any, defaultIndex: number = 1): any {
+  if (!r || typeof r !== 'object') return null;
+
+  // Build normalized key map for case-insensitive and punctuation-free lookup
+  const normalizedKeyMap: Record<string, string> = {};
+  for (const k of Object.keys(r)) {
+    normalizedKeyMap[k.toLowerCase().replace(/[^a-z0-9]/g, '')] = k;
+  }
+
+  const getVal = (...possibleNames: string[]): any => {
+    for (const name of possibleNames) {
+      const clean = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (normalizedKeyMap[clean] !== undefined) {
+        const val = r[normalizedKeyMap[clean]];
+        if (val !== undefined && val !== null) return val;
+      }
+    }
+    return undefined;
+  };
+
+  // 1. ID
+  const rawId = getVal('id', 'contactid', 'patientid', 'no', 'number', 'rowid', 'itemid', 'clientid');
+  const idVal = rawId !== null && rawId !== undefined && !isNaN(Number(rawId))
+    ? Number(rawId)
+    : (rawId !== undefined && rawId !== null && String(rawId).trim() ? String(rawId).trim() : (1784789000000 + defaultIndex));
+
+  // 2. Full Name
+  let fullName = (getVal('fullname', 'name', 'patientname', 'patient', 'familymember', 'membername', 'clientname', 'head') || '').toString().trim();
+  if (!fullName) {
+    const fn = (getVal('firstname', 'first', 'givenname') || '').toString().trim();
+    const mn = (getVal('middlename', 'middle') || '').toString().trim();
+    const ln = (getVal('lastname', 'last', 'surname') || '').toString().trim();
+    if (ln && fn) {
+      fullName = `${ln}, ${fn}${mn ? ' ' + mn : ''}`.trim();
+    } else if (fn || ln) {
+      fullName = `${fn} ${ln}`.trim();
+    }
+  }
+
+  // Skip completely blank rows without names
+  if (!fullName) {
+    return null;
+  }
+
+  // 3. Barangay
+  const barangay = (getVal('barangay', 'brgy', 'address', 'location', 'baranggay', 'bgy') || '').toString().trim();
+
+  // 4. Purok
+  const purok = (getVal('purok', 'zone', 'sitio', 'street', 'purokzone', 'sitiozone') || '').toString().trim();
+
+  // 5. Contact Number
+  const contactNumber = (getVal('contactnumber', 'contactno', 'phonenumber', 'phone', 'mobile', 'mobilenumber', 'cellphone', 'contact', 'tel', 'cellno') || '').toString().trim();
+
+  // 6. Coordinates
+  const rawLat = getVal('latitude', 'lat');
+  const latitude = (rawLat !== null && rawLat !== undefined && rawLat !== '' && !isNaN(Number(rawLat))) ? Number(rawLat) : undefined;
+
+  const rawLng = getVal('longitude', 'long', 'lng');
+  const longitude = (rawLng !== null && rawLng !== undefined && rawLng !== '' && !isNaN(Number(rawLng))) ? Number(rawLng) : undefined;
+
+  const rawGeotagged = getVal('geotagged', 'geo');
+  const geotagged = Boolean(rawGeotagged === 1 || rawGeotagged === true || rawGeotagged === '1' || (latitude !== undefined && longitude !== undefined));
+
+  // 7. Status & Submission
+  const rawStatus = (getVal('status') || '').toString().trim();
+  const rawSubmitted = getVal('issubmitted', 'submitted', 'islock', 'islocked', 'locked');
+  const isSub = Boolean(
+    rawSubmitted === 1 || rawSubmitted === true || rawSubmitted === '1' || rawSubmitted === 'true' ||
+    rawStatus.toUpperCase() === 'SUBMITTED' || rawStatus.toUpperCase() === 'LOCKED' || rawStatus.toUpperCase() === 'ALREADY SUBMITTED'
+  );
+  const status = rawStatus || (isSub ? 'SUBMITTED' : 'ACTIVE');
+
+  // 8. Timestamps
+  let createdAt = getVal('createdat', 'created', 'date', 'timestamp');
+  if (createdAt instanceof Date) {
+    createdAt = createdAt.toISOString();
+  } else if (!createdAt || createdAt === '0000-00-00 00:00:00' || createdAt === '0') {
+    createdAt = new Date().toISOString();
+  } else {
+    createdAt = String(createdAt);
+  }
+
+  let updatedAt = getVal('updatedat', 'updated');
+  if (updatedAt instanceof Date) {
+    updatedAt = updatedAt.toISOString();
+  } else if (!updatedAt || updatedAt === '0000-00-00 00:00:00' || updatedAt === '0') {
+    updatedAt = createdAt;
+  } else {
+    updatedAt = String(updatedAt);
+  }
+
+  let deletedAt = getVal('deletedat', 'deleted');
+  if (deletedAt instanceof Date) {
+    deletedAt = deletedAt.toISOString();
+  } else if (!deletedAt || deletedAt === '0000-00-00 00:00:00' || deletedAt === '0' || deletedAt === '') {
+    deletedAt = null;
+  } else {
+    deletedAt = String(deletedAt);
+  }
+
+  return {
+    id: idVal,
+    full_name: fullName,
+    barangay,
+    purok,
+    contact_number: contactNumber,
+    created_at: createdAt,
+    updated_at: updatedAt,
+    latitude,
+    longitude,
+    geotagged,
+    status,
+    isSubmitted: isSub,
+    locked: isSub,
+    photo_url: getVal('photourl', 'photo') || undefined,
+    pcu_file_url: getVal('pcufileurl', 'pcuurl', 'pcufile', 'fileurl') || undefined,
+    pcu_uploaded_by: getVal('pcuuploadedby', 'uploadedby') || undefined,
+    pcu_uploaded_at: getVal('pcuuploadedat', 'uploadedat') || undefined,
+    maintenance: (() => {
+      const rm = (getVal('maintenance', 'hasmaintenance', 'ismaintenance') || '').toString().trim();
+      const rmed = (getVal('maintenancemedicine', 'medicine', 'medicines', 'maintainedmedicine') || '').toString().trim();
+      return (rm.toLowerCase() === 'yes' || (rmed && rm.toLowerCase() !== 'none')) ? 'Yes' : 'None';
+    })(),
+    maintenance_medicine: (() => {
+      const rm = (getVal('maintenance', 'hasmaintenance', 'ismaintenance') || '').toString().trim();
+      const rmed = (getVal('maintenancemedicine', 'medicine', 'medicines', 'maintainedmedicine') || '').toString().trim();
+      const isYes = rm.toLowerCase() === 'yes' || (rmed && rm.toLowerCase() !== 'none');
+      return isYes ? (rmed || (rm.toLowerCase() !== 'yes' && rm.toLowerCase() !== 'none' ? rm : '')) : undefined;
+    })(),
+    added_from_print_list: true,
+    deleted_at: deletedAt
+  };
+}
+
+/**
+ * Lightweight check to see if cPanel MySQL contacts or sheet1 table has changed since last sync
  */
 export async function checkCPanelDbNeedsSync(): Promise<boolean> {
   if (!pool || !currentStatus.connected) return false;
@@ -833,28 +1002,45 @@ export async function checkCPanelDbNeedsSync(): Promise<boolean> {
   lastSyncCheck.lastCheckedTime = now;
 
   try {
-    const [rows]: any = await pool.query(
-      `SELECT COUNT(*) AS cnt, COALESCE(MAX(updated_at), '') AS max_updated, COALESCE(MAX(id), 0) AS max_id 
-       FROM contacts WHERE deleted_at IS NULL AND status != 'DELETED'`
-    );
-    if (rows && rows.length > 0) {
-      const cnt = Number(rows[0].cnt) || 0;
-      const maxUpdated = String(rows[0].max_updated || '');
-      const maxId = Number(rows[0].max_id) || 0;
+    let cnt = 0;
+    let maxUpdated = '';
+    let maxId = 0;
 
-      if (lastSyncCheck.count === -1) {
-        lastSyncCheck.count = cnt;
-        lastSyncCheck.maxUpdated = maxUpdated;
-        lastSyncCheck.maxId = maxId;
-        return true;
+    // 1. Check contacts table
+    try {
+      const [rows]: any = await pool.query(
+        `SELECT COUNT(*) AS cnt, COALESCE(MAX(updated_at), '') AS max_updated, COALESCE(MAX(id), 0) AS max_id 
+         FROM contacts WHERE deleted_at IS NULL AND status != 'DELETED'`
+      );
+      if (rows && rows.length > 0) {
+        cnt += Number(rows[0].cnt) || 0;
+        maxUpdated = String(rows[0].max_updated || '');
+        maxId = Number(rows[0].max_id) || 0;
       }
+    } catch {}
 
-      if (cnt !== lastSyncCheck.count || maxUpdated !== lastSyncCheck.maxUpdated || maxId !== lastSyncCheck.maxId) {
-        lastSyncCheck.count = cnt;
-        lastSyncCheck.maxUpdated = maxUpdated;
-        lastSyncCheck.maxId = maxId;
-        return true;
+    // 2. Check sheet1 or Sheet1 table if present
+    try {
+      const [sRows]: any = await pool.query(
+        `SELECT COUNT(*) AS cnt FROM sheet1`
+      );
+      if (sRows && sRows.length > 0) {
+        cnt += Number(sRows[0].cnt) || 0;
       }
+    } catch {}
+
+    if (lastSyncCheck.count === -1) {
+      lastSyncCheck.count = cnt;
+      lastSyncCheck.maxUpdated = maxUpdated;
+      lastSyncCheck.maxId = maxId;
+      return true;
+    }
+
+    if (cnt !== lastSyncCheck.count || maxUpdated !== lastSyncCheck.maxUpdated || maxId !== lastSyncCheck.maxId) {
+      lastSyncCheck.count = cnt;
+      lastSyncCheck.maxUpdated = maxUpdated;
+      lastSyncCheck.maxId = maxId;
+      return true;
     }
     return false;
   } catch {
@@ -863,7 +1049,8 @@ export async function checkCPanelDbNeedsSync(): Promise<boolean> {
 }
 
 /**
- * Fetch all records from cPanel MySQL database
+ * Fetch all records from cPanel MySQL database, automatically detecting and merging
+ * both standard tables and any `sheet1` table (1,700+ contact records).
  */
 export async function fetchAllFromCPanelDb(): Promise<{
   contacts: any[];
@@ -876,113 +1063,154 @@ export async function fetchAllFromCPanelDb(): Promise<{
   if (!pool || !currentStatus.connected) return null;
 
   try {
-    const [cRows]: any = await pool.query('SELECT * FROM contacts ORDER BY id ASC');
-    const [uRows]: any = await pool.query('SELECT * FROM users ORDER BY username ASC');
-    const [eRows]: any = await pool.query('SELECT * FROM existing_accounts ORDER BY id ASC');
-    const [bRows]: any = await pool.query('SELECT name FROM barangays ORDER BY name ASC');
-    const [aRows]: any = await pool.query('SELECT * FROM activities ORDER BY timestamp DESC LIMIT 200');
-    const [sRows]: any = await pool.query('SELECT setting_key, setting_value FROM site_settings');
+    // 1. Fetch from contacts table
+    let cRows: any[] = [];
+    try {
+      const [rows]: any = await pool.query('SELECT * FROM contacts ORDER BY id ASC');
+      cRows = rows || [];
+    } catch (err: any) {
+      console.warn('[cPanel DB] Notice reading contacts table:', err.message);
+    }
 
-    const contacts = (cRows || []).map((r: any) => {
-      const idVal = r.id !== null && r.id !== undefined && !isNaN(Number(r.id)) 
-        ? Number(r.id) 
-        : (r.id !== undefined && r.id !== null ? String(r.id) : Date.now());
-
-      const fullName = (r.full_name || r.name || r.fullname || r.patient_name || '').toString().trim();
-      const barangay = (r.barangay || r.address || r.brgy || '').toString().trim();
-      const purok = (r.purok || r.zone || r.sitio || '').toString().trim();
-      const contactNumber = (r.contact_number || r.phone || r.mobile || r.contact_no || '').toString().trim();
-
-      const rawLat = r.latitude !== null && r.latitude !== undefined && r.latitude !== '' 
-        ? Number(r.latitude) 
-        : (r.lat !== null && r.lat !== undefined ? Number(r.lat) : undefined);
-      const latitude = rawLat !== undefined && !isNaN(rawLat) ? rawLat : undefined;
-
-      const rawLng = r.longitude !== null && r.longitude !== undefined && r.longitude !== '' 
-        ? Number(r.longitude) 
-        : (r.long !== null && r.long !== undefined ? Number(r.long) : (r.lng !== null && r.lng !== undefined ? Number(r.lng) : undefined));
-      const longitude = rawLng !== undefined && !isNaN(rawLng) ? rawLng : undefined;
-
-      const geotagged = Boolean(r.geotagged === 1 || r.geotagged === true || (latitude !== undefined && longitude !== undefined));
-
-      const isSub = Boolean(
-        r.is_submitted === 1 || 
-        r.is_submitted === true || 
-        r.isSubmitted === true || 
-        r.status === 'SUBMITTED' || 
-        r.status === 'LOCKED' || 
-        r.status === 'ALREADY SUBMITTED'
+    // 2. Check information_schema for any table named `sheet1` (or variants)
+    let sheetRows: any[] = [];
+    let detectedSheetTable: string | null = null;
+    try {
+      const [tableList]: any = await pool.query(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()`
       );
+      const allTableNames: string[] = (tableList || []).map((t: any) => String(t.table_name || t.TABLE_NAME || ''));
+      
+      const foundSheetTable = allTableNames.find(name => {
+        const lower = name.toLowerCase();
+        return lower === 'sheet1' || lower === 'sheet_1' || lower === 'contacts_sheet1' || lower === 'sheet' || lower.includes('sheet1');
+      });
 
-      const status = r.status || (isSub ? 'SUBMITTED' : 'ACTIVE');
-
-      let createdAt = r.created_at;
-      if (createdAt instanceof Date) {
-        createdAt = createdAt.toISOString();
-      } else if (!createdAt || createdAt === '0000-00-00 00:00:00' || createdAt === '0') {
-        createdAt = new Date().toISOString();
-      } else {
-        createdAt = String(createdAt);
+      if (foundSheetTable) {
+        detectedSheetTable = foundSheetTable;
+        const [sRows]: any = await pool.query(`SELECT * FROM \`${foundSheetTable}\``);
+        sheetRows = sRows || [];
+        console.log(`[cPanel DB] Found sheet table "${foundSheetTable}" containing ${sheetRows.length} total records.`);
       }
+    } catch (err: any) {
+      console.warn('[cPanel DB] Notice checking for sheet1 table:', err.message);
+    }
 
-      let updatedAt = r.updated_at;
-      if (updatedAt instanceof Date) {
-        updatedAt = updatedAt.toISOString();
-      } else if (!updatedAt || updatedAt === '0000-00-00 00:00:00' || updatedAt === '0') {
-        updatedAt = createdAt;
+    // 3. Map contacts table records
+    const mappedContactsFromTable: any[] = [];
+    for (let i = 0; i < cRows.length; i++) {
+      const mapped = mapFlexibleRowToContact(cRows[i], i + 1);
+      if (mapped) mappedContactsFromTable.push(mapped);
+    }
+
+    // 4. Map sheet1 table records
+    const mappedContactsFromSheet: any[] = [];
+    for (let i = 0; i < sheetRows.length; i++) {
+      const mapped = mapFlexibleRowToContact(sheetRows[i], i + 1);
+      if (mapped) mappedContactsFromSheet.push(mapped);
+    }
+
+    // 5. Intelligently merge sheet1 records and contacts table records
+    const contactsMapByName = new Map<string, any>();
+    const contactsMapById = new Map<string, any>();
+
+    // Seed with sheet1 contacts first (the comprehensive 1703+ records)
+    for (const c of mappedContactsFromSheet) {
+      const nameKey = c.full_name.trim().toLowerCase();
+      contactsMapByName.set(nameKey, c);
+      contactsMapById.set(String(c.id), c);
+    }
+
+    // Merge with contacts table (preserving any updated photos, PCU files, contact numbers, maintenance, or newer edits)
+    for (const c of mappedContactsFromTable) {
+      const nameKey = c.full_name.trim().toLowerCase();
+      const existing = contactsMapByName.get(nameKey) || contactsMapById.get(String(c.id));
+      if (existing) {
+        // Explicitly prioritize edited contact details from the contacts table
+        if (c.contact_number && c.contact_number !== '0') {
+          existing.contact_number = c.contact_number;
+        }
+        if (c.barangay) existing.barangay = c.barangay;
+        if (c.purok) existing.purok = c.purok;
+        if (c.maintenance) existing.maintenance = c.maintenance;
+        if (c.maintenance_medicine !== undefined) existing.maintenance_medicine = c.maintenance_medicine;
+        if (c.full_name) existing.full_name = c.full_name;
+
+        existing.photo_url = c.photo_url || existing.photo_url;
+        existing.pcu_file_url = c.pcu_file_url || existing.pcu_file_url;
+        existing.pcu_uploaded_by = c.pcu_uploaded_by || existing.pcu_uploaded_by;
+        existing.pcu_uploaded_at = c.pcu_uploaded_at || existing.pcu_uploaded_at;
+        if (c.isSubmitted) {
+          existing.isSubmitted = true;
+          existing.locked = true;
+          existing.status = 'SUBMITTED';
+        }
+        if (c.geotagged) {
+          existing.geotagged = true;
+          existing.latitude = c.latitude !== undefined ? c.latitude : existing.latitude;
+          existing.longitude = c.longitude !== undefined ? c.longitude : existing.longitude;
+        }
+        if (c.deleted_at) {
+          existing.deleted_at = c.deleted_at;
+        }
+        if (c.updated_at && (!existing.updated_at || c.updated_at > existing.updated_at)) {
+          existing.updated_at = c.updated_at;
+        }
       } else {
-        updatedAt = String(updatedAt);
+        contactsMapByName.set(nameKey, c);
+        contactsMapById.set(String(c.id), c);
       }
+    }
 
-      let deletedAt = r.deleted_at;
-      if (deletedAt instanceof Date) {
-        deletedAt = deletedAt.toISOString();
-      } else if (!deletedAt || deletedAt === '0000-00-00 00:00:00' || deletedAt === '0' || deletedAt === '') {
-        deletedAt = null;
-      } else {
-        deletedAt = String(deletedAt);
+    const contacts = Array.from(new Set([...contactsMapByName.values(), ...contactsMapById.values()]));
+
+    // If sheet1 had records and contacts table has fewer, synchronize in background to keep contacts table full
+    if (sheetRows.length > 0 && cRows.length < sheetRows.length) {
+      saveContactsBulkToCPanel(contacts).catch(err => {
+        console.warn('[cPanel DB] Background sync of sheet1 records into contacts table notice:', err.message);
+      });
+    }
+
+    const [uRows]: any = await pool.query('SELECT * FROM users ORDER BY username ASC').catch(() => [[]]);
+    const [eRows]: any = await pool.query('SELECT * FROM existing_accounts ORDER BY id ASC').catch(() => [[]]);
+    const [bRows]: any = await pool.query('SELECT name FROM barangays ORDER BY name ASC').catch(() => [[]]);
+    const [aRows]: any = await pool.query('SELECT * FROM activities ORDER BY timestamp DESC LIMIT 200').catch(() => [[]]);
+    const [sRows]: any = await pool.query('SELECT setting_key, setting_value FROM site_settings').catch(() => [[]]);
+
+    const extractedBarangays = new Set<string>((bRows || []).map((r: any) => r.name).filter(Boolean));
+    contacts.forEach(c => {
+      if (c.barangay && c.barangay.trim()) {
+        extractedBarangays.add(c.barangay.trim());
       }
-
-      return {
-        id: idVal,
-        full_name: fullName,
-        barangay,
-        purok,
-        contact_number: contactNumber,
-        created_at: createdAt,
-        updated_at: updatedAt,
-        latitude,
-        longitude,
-        geotagged,
-        status,
-        isSubmitted: isSub,
-        locked: isSub,
-        photo_url: r.photo_url || r.photo || undefined,
-        pcu_file_url: r.pcu_file_url || r.pcu_url || undefined,
-        pcu_uploaded_by: r.pcu_uploaded_by || r.uploaded_by || undefined,
-        pcu_uploaded_at: r.pcu_uploaded_at || r.uploaded_at || undefined,
-        added_from_print_list: r.added_from_print_list !== undefined ? Boolean(r.added_from_print_list) : true,
-        deleted_at: deletedAt
-      };
     });
+    const barangays = Array.from(extractedBarangays).sort();
 
     const users = (uRows || []).map((r: any) => {
       let permissions = undefined;
       try {
         if (r.permissions) permissions = JSON.parse(r.permissions);
       } catch {}
+      const rawStatus = (r.status !== undefined && r.status !== null) ? String(r.status).trim() : '';
+      let normStatus: 'Active' | 'Pending' | 'Suspended' = 'Active';
+      if (rawStatus.toLowerCase().startsWith('pend')) {
+        normStatus = 'Pending';
+      } else if (rawStatus.toLowerCase().startsWith('susp') || rawStatus.toLowerCase().startsWith('inact') || rawStatus.toLowerCase() === 'disabled') {
+        normStatus = 'Suspended';
+      }
+
       return {
         username: r.username,
         passwordHash: r.password_hash,
-        role: r.role,
-        fullName: r.full_name,
-        displayName: r.full_name,
-        email: r.email,
-        status: r.status,
-        barangay: r.barangay,
-        createdAt: r.created_at,
+        role: r.role || 'Staff',
+        fullName: r.full_name || r.display_name || r.username,
+        displayName: r.display_name || r.full_name || r.username,
+        email: r.email || '',
+        status: normStatus,
+        barangay: r.barangay || 'Central',
+        createdAt: r.created_at || '',
         avatarDataUrl: r.avatar_data_url || undefined,
-        permissions
+        permissions,
+        passwordPlain: r.password_plain || undefined
       };
     });
 
@@ -999,8 +1227,6 @@ export async function fetchAllFromCPanelDb(): Promise<{
       remarks: r.remarks || '',
       deleted_at: (r.deleted_at && r.deleted_at !== '0000-00-00 00:00:00' && r.deleted_at !== '0') ? String(r.deleted_at) : null
     }));
-
-    const barangays = (bRows || []).map((r: any) => r.name).filter(Boolean);
 
     const activities = (aRows || []).map((r: any) => ({
       id: String(r.id),
@@ -1043,45 +1269,157 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
   try {
     const isSub = Boolean(c.isSubmitted || c.is_submitted);
     const idVal = c.id !== undefined && c.id !== null && !isNaN(Number(c.id)) ? Number(c.id) : null;
-    await pool.query(
-      `INSERT INTO contacts (id, full_name, barangay, purok, contact_number, created_at, updated_at, latitude, longitude, geotagged, status, is_submitted, photo_url, pcu_file_url, pcu_uploaded_by, pcu_uploaded_at, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         full_name = VALUES(full_name),
-         barangay = VALUES(barangay),
-         purok = VALUES(purok),
-         contact_number = VALUES(contact_number),
-         updated_at = VALUES(updated_at),
-         latitude = VALUES(latitude),
-         longitude = VALUES(longitude),
-         geotagged = VALUES(geotagged),
-         status = VALUES(status),
-         is_submitted = VALUES(is_submitted),
-         photo_url = VALUES(photo_url),
-         pcu_file_url = VALUES(pcu_file_url),
-         pcu_uploaded_by = VALUES(pcu_uploaded_by),
-         pcu_uploaded_at = VALUES(pcu_uploaded_at),
-         deleted_at = VALUES(deleted_at)`,
-      [
-        idVal,
-        c.full_name || '',
-        c.barangay || '',
-        c.purok || '',
-        c.contact_number || '',
-        c.created_at || new Date().toISOString(),
-        c.updated_at || new Date().toISOString(),
-        c.latitude !== undefined && c.latitude !== null ? Number(c.latitude) : null,
-        c.longitude !== undefined && c.longitude !== null ? Number(c.longitude) : null,
-        c.geotagged ? 1 : 0,
-        c.status || 'ACTIVE',
-        isSub ? 1 : 0,
-        c.photo_url || null,
-        c.pcu_file_url || null,
-        c.pcu_uploaded_by || '',
-        c.pcu_uploaded_at || '',
-        c.deleted_at || null
-      ]
-    );
+    const maintenanceVal = c.maintenance === 'Yes' ? 'Yes' : 'None';
+    const medicineVal = maintenanceVal === 'Yes' ? (c.maintenance_medicine || '') : null;
+
+    let targetId = idVal;
+    if (!targetId && c.full_name) {
+      try {
+        const [existingRows]: any = await pool!.query(
+          'SELECT id FROM contacts WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?)) LIMIT 1',
+          [c.full_name.trim()]
+        );
+        if (existingRows && existingRows.length > 0) {
+          targetId = Number(existingRows[0].id);
+        }
+      } catch {}
+    }
+
+    const executeSave = async () => {
+      await pool!.query(
+        `INSERT INTO contacts (
+          id, full_name, barangay, purok, contact_number, 
+          created_at, updated_at, latitude, longitude, geotagged, 
+          status, is_submitted, photo_url, pcu_file_url, pcu_uploaded_by, 
+          pcu_uploaded_at, deleted_at, maintenance, maintenance_medicine
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          full_name = VALUES(full_name),
+          barangay = VALUES(barangay),
+          purok = VALUES(purok),
+          contact_number = VALUES(contact_number),
+          updated_at = VALUES(updated_at),
+          latitude = VALUES(latitude),
+          longitude = VALUES(longitude),
+          geotagged = VALUES(geotagged),
+          status = VALUES(status),
+          is_submitted = VALUES(is_submitted),
+          photo_url = VALUES(photo_url),
+          pcu_file_url = VALUES(pcu_file_url),
+          pcu_uploaded_by = VALUES(pcu_uploaded_by),
+          pcu_uploaded_at = VALUES(pcu_uploaded_at),
+          deleted_at = VALUES(deleted_at),
+          maintenance = VALUES(maintenance),
+          maintenance_medicine = VALUES(maintenance_medicine)`,
+        [
+          targetId,
+          c.full_name || '',
+          c.barangay || '',
+          c.purok || '',
+          c.contact_number || '',
+          c.created_at || new Date().toISOString(),
+          c.updated_at || new Date().toISOString(),
+          c.latitude !== undefined && c.latitude !== null ? Number(c.latitude) : null,
+          c.longitude !== undefined && c.longitude !== null ? Number(c.longitude) : null,
+          c.geotagged ? 1 : 0,
+          c.status || 'ACTIVE',
+          isSub ? 1 : 0,
+          c.photo_url || null,
+          c.pcu_file_url || null,
+          c.pcu_uploaded_by || '',
+          c.pcu_uploaded_at || '',
+          c.deleted_at || null,
+          maintenanceVal,
+          medicineVal
+        ]
+      );
+
+      // Perform explicit UPDATE by full_name or targetId to ensure the row is updated even if auto-increment IDs differ
+      if (c.full_name) {
+        try {
+          await pool!.query(
+            `UPDATE contacts SET 
+              contact_number = ?, 
+              barangay = ?, 
+              purok = ?, 
+              maintenance = ?, 
+              maintenance_medicine = ?, 
+              updated_at = ? 
+            WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))`,
+            [
+              c.contact_number || '',
+              c.barangay || '',
+              c.purok || '',
+              maintenanceVal,
+              medicineVal,
+              c.updated_at || new Date().toISOString(),
+              c.full_name.trim()
+            ]
+          );
+        } catch {}
+      }
+
+      // Also update any sheet table (like sheet1) if present in MySQL
+      try {
+        const [tableList]: any = await pool!.query(
+          `SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND LOWER(table_name) LIKE '%sheet%'`
+        );
+        for (const t of (tableList || [])) {
+          const sheetTbl = t.table_name || t.TABLE_NAME;
+          if (!sheetTbl) continue;
+          const [colList]: any = await pool!.query(`SHOW COLUMNS FROM \`${sheetTbl}\``);
+          const colNames = (colList || []).map((col: any) => String(col.Field || '').toLowerCase());
+          
+          const phoneCol = colNames.find((cn: string) => cn.includes('contact') || cn.includes('phone') || cn.includes('mobile') || cn.includes('number'));
+          const nameCol = colNames.find((cn: string) => cn.includes('name'));
+          const bgCol = colNames.find((cn: string) => cn.includes('barangay') || cn.includes('address'));
+          const pkCol = colNames.find((cn: string) => cn.includes('purok'));
+          const maintCol = colNames.find((cn: string) => cn.includes('maintenance'));
+          const medCol = colNames.find((cn: string) => cn.includes('medicine'));
+
+          if (phoneCol && nameCol) {
+            const sets: string[] = [`\`${phoneCol}\` = ?`];
+            const vals: any[] = [c.contact_number || ''];
+            if (bgCol && c.barangay) {
+              sets.push(`\`${bgCol}\` = ?`);
+              vals.push(c.barangay);
+            }
+            if (pkCol && c.purok) {
+              sets.push(`\`${pkCol}\` = ?`);
+              vals.push(c.purok);
+            }
+            if (maintCol) {
+              sets.push(`\`${maintCol}\` = ?`);
+              vals.push(maintenanceVal);
+            }
+            if (medCol) {
+              sets.push(`\`${medCol}\` = ?`);
+              vals.push(medicineVal);
+            }
+            vals.push(c.full_name.trim());
+            await pool!.query(
+              `UPDATE \`${sheetTbl}\` SET ${sets.join(', ')} WHERE LOWER(TRIM(\`${nameCol}\`)) = LOWER(TRIM(?))`,
+              vals
+            );
+          }
+        }
+      } catch {}
+    };
+
+    try {
+      await executeSave();
+    } catch (colErr: any) {
+      if (colErr.message && (colErr.message.includes('maintenance') || colErr.message.includes('Unknown column'))) {
+        try {
+          await pool.query("ALTER TABLE contacts ADD COLUMN `maintenance` VARCHAR(50) DEFAULT 'None'");
+          await pool.query("ALTER TABLE contacts ADD COLUMN `maintenance_medicine` TEXT NULL");
+        } catch (_) {}
+        await executeSave();
+      } else {
+        throw colErr;
+      }
+    }
+
     return { success: true };
   } catch (err: any) {
     const msg = err.message || String(err);
@@ -1119,9 +1457,11 @@ export async function saveContactsBulkToCPanel(
       const placeholders: string[] = [];
 
       for (const c of chunk) {
-        placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         const idVal = c.id !== undefined && c.id !== null && !isNaN(Number(c.id)) ? Number(c.id) : null;
         const isSub = Boolean(c.isSubmitted || c.is_submitted);
+        const maintenanceVal = c.maintenance === 'Yes' ? 'Yes' : 'None';
+        const medicineVal = maintenanceVal === 'Yes' ? (c.maintenance_medicine || '') : null;
 
         values.push(
           idVal,
@@ -1140,7 +1480,9 @@ export async function saveContactsBulkToCPanel(
           c.pcu_file_url || null,
           c.pcu_uploaded_by || '',
           c.pcu_uploaded_at || '',
-          c.deleted_at || null
+          c.deleted_at || null,
+          maintenanceVal,
+          medicineVal
         );
       }
 
@@ -1149,7 +1491,8 @@ export async function saveContactsBulkToCPanel(
           id, full_name, barangay, purok, contact_number, 
           created_at, updated_at, latitude, longitude, 
           geotagged, status, is_submitted, photo_url, 
-          pcu_file_url, pcu_uploaded_by, pcu_uploaded_at, deleted_at
+          pcu_file_url, pcu_uploaded_by, pcu_uploaded_at, deleted_at,
+          maintenance, maintenance_medicine
         ) VALUES ${placeholders.join(', ')}
         ON DUPLICATE KEY UPDATE
           full_name = VALUES(full_name),
@@ -1166,7 +1509,9 @@ export async function saveContactsBulkToCPanel(
           pcu_file_url = VALUES(pcu_file_url),
           pcu_uploaded_by = VALUES(pcu_uploaded_by),
           pcu_uploaded_at = VALUES(pcu_uploaded_at),
-          deleted_at = VALUES(deleted_at)
+          deleted_at = VALUES(deleted_at),
+          maintenance = VALUES(maintenance),
+          maintenance_medicine = VALUES(maintenance_medicine)
       `;
 
       await pool.query(sql, values);
@@ -1210,40 +1555,107 @@ export async function deleteContactFromCPanel(id: number | string, deletedAt: st
 export async function saveUserToCPanel(u: any): Promise<void> {
   if (!pool || !currentStatus.connected) return;
   try {
-    await pool.query(
-      `INSERT INTO users (username, password_hash, role, full_name, email, status, barangay, created_at, avatar_data_url, permissions)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-         password_hash = VALUES(password_hash),
-         role = VALUES(role),
-         full_name = VALUES(full_name),
-         email = VALUES(email),
-         status = VALUES(status),
-         barangay = VALUES(barangay),
-         avatar_data_url = VALUES(avatar_data_url),
-         permissions = VALUES(permissions)`,
-      [
-        u.username,
-        u.passwordHash || '',
-        u.role || 'STAFF',
-        u.fullName || u.displayName || '',
-        u.email || '',
-        u.status || 'Active',
-        u.barangay || '',
-        u.createdAt || '',
-        u.avatarDataUrl || null,
-        u.permissions ? JSON.stringify(u.permissions) : null
-      ]
-    );
+    const rawStatus = (u.status !== undefined && u.status !== null) ? String(u.status).trim() : '';
+    let normStatus: 'Active' | 'Pending' | 'Suspended' = 'Pending';
+    if (rawStatus.toLowerCase().startsWith('act')) {
+      normStatus = 'Active';
+    } else if (rawStatus.toLowerCase().startsWith('susp') || rawStatus.toLowerCase().startsWith('inact') || rawStatus.toLowerCase() === 'disabled') {
+      normStatus = 'Suspended';
+    } else if (rawStatus.toLowerCase().startsWith('pend')) {
+      normStatus = 'Pending';
+    } else if (u.username && u.username.toLowerCase() === 'admin') {
+      normStatus = 'Active';
+    }
+
+    const role = u.role || (u.username && u.username.toLowerCase() === 'admin' ? 'Administrator' : 'Staff');
+    const fullName = u.fullName || u.displayName || u.username || '';
+    const displayName = u.displayName || u.fullName || u.username || '';
+    const email = u.email || '';
+    const barangay = u.barangay || 'Central';
+    const createdAt = u.createdAt || new Date().toISOString();
+    const updatedAt = u.updatedAt || new Date().toISOString();
+    const avatar = u.avatarDataUrl || null;
+    const permissions = u.permissions ? (typeof u.permissions === 'string' ? u.permissions : JSON.stringify(u.permissions)) : null;
+    const plainPass = u.passwordPlain || '';
+
+    try {
+      await pool.query(
+        `INSERT INTO users (username, password_hash, role, full_name, email, status, barangay, created_at, avatar_data_url, permissions, password_plain, display_name, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           password_hash = VALUES(password_hash),
+           role = VALUES(role),
+           full_name = VALUES(full_name),
+           email = VALUES(email),
+           status = VALUES(status),
+           barangay = VALUES(barangay),
+           avatar_data_url = VALUES(avatar_data_url),
+           permissions = VALUES(permissions),
+           password_plain = VALUES(password_plain),
+           display_name = VALUES(display_name),
+           updated_at = VALUES(updated_at)`,
+        [
+          u.username,
+          u.passwordHash || '',
+          role,
+          fullName,
+          email,
+          normStatus,
+          barangay,
+          createdAt,
+          avatar,
+          permissions,
+          plainPass,
+          displayName,
+          updatedAt
+        ]
+      );
+    } catch (colErr: any) {
+      if (colErr.message && (colErr.message.includes('password_plain') || colErr.message.includes('display_name') || colErr.message.includes('Unknown column'))) {
+        try {
+          await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS `password_plain` VARCHAR(255) DEFAULT ''");
+          await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS `display_name` VARCHAR(255) DEFAULT ''");
+          await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS `updated_at` VARCHAR(100) DEFAULT ''");
+        } catch (_) {}
+        await pool.query(
+          `INSERT INTO users (username, password_hash, role, full_name, email, status, barangay, created_at, avatar_data_url, permissions)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             password_hash = VALUES(password_hash),
+             role = VALUES(role),
+             full_name = VALUES(full_name),
+             email = VALUES(email),
+             status = VALUES(status),
+             barangay = VALUES(barangay),
+             avatar_data_url = VALUES(avatar_data_url),
+             permissions = VALUES(permissions)`,
+          [
+            u.username,
+            u.passwordHash || '',
+            role,
+            fullName,
+            email,
+            normStatus,
+            barangay,
+            createdAt,
+            avatar,
+            permissions
+          ]
+        );
+      } else {
+        throw colErr;
+      }
+    }
   } catch (err: any) {
     console.warn('[cPanel DB] Error saving user to MySQL:', err.message);
   }
 }
 
-export async function deleteUserFromCPanel(username: string): Promise<void> {
-  if (!pool || !currentStatus.connected) return;
+export async function deleteUserFromCPanel(usernameOrEmail: string): Promise<void> {
+  if (!pool || !currentStatus.connected || !usernameOrEmail) return;
   try {
-    await pool.query('DELETE FROM users WHERE username = ?', [username]);
+    const target = usernameOrEmail.trim();
+    await pool.query('DELETE FROM users WHERE username = ? OR email = ?', [target, target]);
   } catch (err: any) {
     console.warn('[cPanel DB] Error deleting user from MySQL:', err.message);
   }

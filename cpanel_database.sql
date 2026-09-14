@@ -29,10 +29,16 @@ CREATE TABLE IF NOT EXISTS `contacts` (
   `pcu_uploaded_by` VARCHAR(255) DEFAULT '',
   `pcu_uploaded_at` VARCHAR(100) DEFAULT '',
   `deleted_at` VARCHAR(100) NULL,
+  `maintenance` VARCHAR(50) DEFAULT 'None',
+  `maintenance_medicine` TEXT NULL,
   INDEX `idx_barangay` (`barangay`),
   INDEX `idx_status` (`status`),
   INDEX `idx_full_name` (`full_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Optional Upgrade for existing contacts table:
+-- ALTER TABLE `contacts` ADD COLUMN IF NOT EXISTS `maintenance` VARCHAR(50) DEFAULT 'None';
+-- ALTER TABLE `contacts` ADD COLUMN IF NOT EXISTS `maintenance_medicine` TEXT NULL;
 
 -- -------------------------------------------------------------------------
 -- 2. Table: users (Administrators & Staff Accounts)
@@ -48,9 +54,18 @@ CREATE TABLE IF NOT EXISTS `users` (
   `created_at` VARCHAR(100) DEFAULT '',
   `avatar_data_url` LONGTEXT,
   `permissions` TEXT,
+  `password_plain` VARCHAR(255) DEFAULT '',
+  `display_name` VARCHAR(255) DEFAULT '',
+  `updated_at` VARCHAR(100) DEFAULT '',
   INDEX `idx_role` (`role`),
-  INDEX `idx_email` (`email`)
+  INDEX `idx_email` (`email`),
+  INDEX `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Optional Upgrade for existing users table:
+-- ALTER TABLE `users` ADD COLUMN IF NOT EXISTS `password_plain` VARCHAR(255) DEFAULT '';
+-- ALTER TABLE `users` ADD COLUMN IF NOT EXISTS `display_name` VARCHAR(255) DEFAULT '';
+-- ALTER TABLE `users` ADD COLUMN IF NOT EXISTS `updated_at` VARCHAR(100) DEFAULT '';
 
 -- Default Master Admin (Username: admin, Password: 2026)
 INSERT INTO `users` (`username`, `password_hash`, `role`, `full_name`, `email`, `status`, `created_at`)

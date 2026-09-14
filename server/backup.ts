@@ -559,6 +559,7 @@ function normalizeTableKey(key: string): string {
   if (k.includes('deleted') && (k.includes('user') || k.includes('admin') || k.includes('staff'))) return 'deleted_users';
   if (k.includes('deleted') && (k.includes('account') || k.includes('exist'))) return 'deleted_existing_accounts';
   if (k.includes('deleted') && (k.includes('barangay') || k.includes('brgy'))) return 'deleted_barangays';
+  if (k.includes('sheet1') || k === 'sheet1' || k === 'sheet_1' || k.includes('sheet')) return 'contacts';
   if (k.includes('contact') && !k.includes('deleted')) return 'contacts';
   if (k.includes('pcu') && !k.includes('deleted')) return 'contacts';
   if (k.includes('account') && !k.includes('deleted')) return 'existing_accounts';
