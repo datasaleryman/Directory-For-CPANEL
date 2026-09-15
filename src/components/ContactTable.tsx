@@ -108,7 +108,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
   // Role permissions check for LEADER and CO-LEADER
   const userRoleNormalized = (currentUser?.role || '').toUpperCase();
   const isLeaderOrCoLeader = userRoleNormalized === 'LEADER' || userRoleNormalized === 'CO-LEADER' || userRoleNormalized.includes('LEADER');
-  const isAdmin = userRoleNormalized === 'ADMINISTRATOR';
+  const isAdmin = userRoleNormalized === 'ADMINISTRATOR' || userRoleNormalized === 'ADMIN' || userRoleNormalized === 'MASTER ADMIN' || userRoleNormalized === 'IT';
   const userBarangay = currentUser?.barangay || '';
 
   // Folder View state vs Table View

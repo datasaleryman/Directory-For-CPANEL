@@ -93,6 +93,17 @@ export function requireAuth(req: AuthenticatedRequest, res: Response, next: Next
   // Force Administrator role for aprilkrishag@gmail.com to guarantee full privileges
   if (payload.username && (payload.username.toLowerCase() === 'aprilkrishag' || payload.username.toLowerCase() === 'aprilkrishag@gmail.com')) {
     payload.role = 'Administrator';
+  } else {
+    // Dynamically retrieve live user role and verify account status from database
+    const liveUser = findUser(payload.username);
+    if (liveUser) {
+      if (liveUser.status === 'Suspended') {
+        return res.status(403).json({ error: 'Your account has been suspended. Please contact the administrator.' });
+      }
+      if (liveUser.role) {
+        payload.role = liveUser.role;
+      }
+    }
   }
 
   req.user = payload;

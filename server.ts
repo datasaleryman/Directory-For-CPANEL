@@ -285,11 +285,13 @@ export async function getApp(httpServer?: http.Server) {
       const userObj = findUser(req.user.username);
       res.json({
         user: {
-          username: req.user.username,
-          role: req.user.role,
-          displayName: userObj?.displayName || '',
+          username: userObj?.username || req.user.username,
+          role: userObj?.role || req.user.role,
+          displayName: userObj?.displayName || userObj?.fullName || '',
           avatarDataUrl: userObj?.avatarDataUrl || '',
-          barangay: userObj?.barangay || ''
+          barangay: userObj?.barangay || '',
+          email: userObj?.email || req.user.username,
+          status: userObj?.status || 'Active'
         }
       });
     } else {
@@ -1307,12 +1309,10 @@ export async function getApp(httpServer?: http.Server) {
   // Get all registered user accounts
   app.get('/api/users', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      if (isCPanelDbConnected()) {
-        try {
-          await syncUsersFromCPanel();
-        } catch (err: any) {
-          console.warn('Could not sync users from cPanel on getUsers request:', err.message);
-        }
+      try {
+        await syncUsersFromCPanel();
+      } catch (err: any) {
+        console.warn('Could not sync users on getUsers request:', err.message);
       }
       const sheetsConfig = getSheetsConfig();
       if (sheetsConfig.syncEnabled) {
@@ -1401,12 +1401,10 @@ export async function getApp(httpServer?: http.Server) {
   // List all registered admins
   app.get('/api/admins', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      if (isCPanelDbConnected()) {
-        try {
-          await syncUsersFromCPanel();
-        } catch (err: any) {
-          console.warn('Could not sync users from cPanel on getAdmins request:', err.message);
-        }
+      try {
+        await syncUsersFromCPanel();
+      } catch (err: any) {
+        console.warn('Could not sync users on getAdmins request:', err.message);
       }
       const sheetsConfig = getSheetsConfig();
       if (sheetsConfig.syncEnabled) {

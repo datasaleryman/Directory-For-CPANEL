@@ -1,5 +1,47 @@
 [
   {
+    "id": "81552859-8b88-4b9d-abd0-3151c49c4748",
+    "timestamp": "2026-09-14T02:06:35.507Z",
+    "username": "admin",
+    "action": "Deleted user account: \"@mariadoctor\""
+  },
+  {
+    "id": "91197fd1-8072-4087-b023-225cfd2287ef",
+    "timestamp": "2026-09-14T02:06:29.303Z",
+    "username": "admin",
+    "action": "Updated user @mariadoctor (Test Doctor Maria) role permission to Administrator"
+  },
+  {
+    "id": "aff66f27-b89e-42d5-b7c0-af1c74ba554a",
+    "timestamp": "2026-09-14T02:06:23.602Z",
+    "username": "mariadoctor",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "e23912b3-bb8e-4459-a92d-eaefa204c3c0",
+    "timestamp": "2026-09-14T02:06:16.599Z",
+    "username": "admin",
+    "action": "Updated user @mariadoctor (Test Doctor Maria) role permission to Clinic Doctor"
+  },
+  {
+    "id": "6774bb64-becf-4a3e-8c12-2fb79e6ef537",
+    "timestamp": "2026-09-14T02:06:13.693Z",
+    "username": "admin",
+    "action": "Updated user @mariadoctor status to Active"
+  },
+  {
+    "id": "8504d56e-8f9b-4d65-baae-f1b5df397a92",
+    "timestamp": "2026-09-14T02:06:09.243Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "e32ec19c-3236-46de-85b4-2fb0758d69f7",
+    "timestamp": "2026-09-14T02:06:04.013Z",
+    "username": "mariadoctor",
+    "action": "Registered new account (Test Doctor Maria - Poblacion) with role Staff"
+  },
+  {
     "id": "b9a03e72-d535-498c-8f3e-3c87ffc89863",
     "timestamp": "2026-09-13T09:41:41.887Z",
     "username": "admin",
