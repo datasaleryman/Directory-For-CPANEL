@@ -119,6 +119,7 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       deleted_at VARCHAR(100) NULL,
       maintenance VARCHAR(50) DEFAULT 'None',
       maintenance_medicine TEXT NULL,
+      added_from_print_list TINYINT(1) DEFAULT 1,
       INDEX idx_barangay (barangay),
       INDEX idx_status (status),
       INDEX idx_full_name (full_name)
@@ -244,7 +245,8 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
         { name: 'pcu_uploaded_at', type: "VARCHAR(100) DEFAULT ''" },
         { name: 'deleted_at', type: 'VARCHAR(100) NULL' },
         { name: 'maintenance', type: "VARCHAR(50) DEFAULT 'None'" },
-        { name: 'maintenance_medicine', type: 'TEXT NULL' }
+        { name: 'maintenance_medicine', type: 'TEXT NULL' },
+        { name: 'added_from_print_list', type: 'TINYINT(1) DEFAULT 1' }
       ];
       for (const col of missingCols) {
         if (!existingCols.has(col.name.toLowerCase())) {
@@ -1046,7 +1048,13 @@ export function mapFlexibleRowToContact(r: any, defaultIndex: number = 1): any {
       const isYes = rm.toLowerCase() === 'yes' || (rmed && rm.toLowerCase() !== 'none');
       return isYes ? (rmed || (rm.toLowerCase() !== 'yes' && rm.toLowerCase() !== 'none' ? rm : '')) : undefined;
     })(),
-    added_from_print_list: true,
+    added_from_print_list: (() => {
+      const rawAdded = getVal('added_from_print_list', 'addedfromprintlist', 'directory', 'printlist', 'added');
+      if (rawAdded === undefined || rawAdded === null || rawAdded === '') {
+        return true; // default to true for existing/legacy database records
+      }
+      return Boolean(Number(rawAdded) === 1 || String(rawAdded).toLowerCase() === 'true' || String(rawAdded) === '1');
+    })(),
     deleted_at: deletedAt
   };
 }
@@ -1352,6 +1360,7 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
     const idVal = c.id !== undefined && c.id !== null && !isNaN(Number(c.id)) ? Number(c.id) : null;
     const maintenanceVal = c.maintenance === 'Yes' ? 'Yes' : 'None';
     const medicineVal = maintenanceVal === 'Yes' ? (c.maintenance_medicine || '') : null;
+    const addedFromPrintListVal = c.added_from_print_list !== false && c.added_from_print_list !== 0 ? 1 : 0;
 
     let targetId = idVal;
     if (!targetId && c.full_name) {
@@ -1372,8 +1381,9 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
           id, full_name, barangay, purok, contact_number, 
           created_at, updated_at, latitude, longitude, geotagged, 
           status, is_submitted, photo_url, pcu_file_url, pcu_uploaded_by, 
-          pcu_uploaded_at, deleted_at, maintenance, maintenance_medicine
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          pcu_uploaded_at, deleted_at, maintenance, maintenance_medicine,
+          added_from_print_list
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           full_name = VALUES(full_name),
           barangay = VALUES(barangay),
@@ -1391,7 +1401,8 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
           pcu_uploaded_at = VALUES(pcu_uploaded_at),
           deleted_at = VALUES(deleted_at),
           maintenance = VALUES(maintenance),
-          maintenance_medicine = VALUES(maintenance_medicine)`,
+          maintenance_medicine = VALUES(maintenance_medicine),
+          added_from_print_list = VALUES(added_from_print_list)`,
         [
           targetId,
           c.full_name || '',
@@ -1411,7 +1422,8 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
           c.pcu_uploaded_at || '',
           c.deleted_at || null,
           maintenanceVal,
-          medicineVal
+          medicineVal,
+          addedFromPrintListVal
         ]
       );
 
@@ -1425,6 +1437,7 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
               purok = ?, 
               maintenance = ?, 
               maintenance_medicine = ?, 
+              added_from_print_list = ?,
               updated_at = ? 
             WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))`,
             [
@@ -1433,6 +1446,7 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
               c.purok || '',
               maintenanceVal,
               medicineVal,
+              addedFromPrintListVal,
               c.updated_at || new Date().toISOString(),
               c.full_name.trim()
             ]
@@ -1538,11 +1552,12 @@ export async function saveContactsBulkToCPanel(
       const placeholders: string[] = [];
 
       for (const c of chunk) {
-        placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         const idVal = c.id !== undefined && c.id !== null && !isNaN(Number(c.id)) ? Number(c.id) : null;
         const isSub = Boolean(c.isSubmitted || c.is_submitted);
         const maintenanceVal = c.maintenance === 'Yes' ? 'Yes' : 'None';
         const medicineVal = maintenanceVal === 'Yes' ? (c.maintenance_medicine || '') : null;
+        const addedFromPrintListVal = c.added_from_print_list !== false && c.added_from_print_list !== 0 ? 1 : 0;
 
         values.push(
           idVal,
@@ -1563,7 +1578,8 @@ export async function saveContactsBulkToCPanel(
           c.pcu_uploaded_at || '',
           c.deleted_at || null,
           maintenanceVal,
-          medicineVal
+          medicineVal,
+          addedFromPrintListVal
         );
       }
 
@@ -1573,7 +1589,7 @@ export async function saveContactsBulkToCPanel(
           created_at, updated_at, latitude, longitude, 
           geotagged, status, is_submitted, photo_url, 
           pcu_file_url, pcu_uploaded_by, pcu_uploaded_at, deleted_at,
-          maintenance, maintenance_medicine
+          maintenance, maintenance_medicine, added_from_print_list
         ) VALUES ${placeholders.join(', ')}
         ON DUPLICATE KEY UPDATE
           full_name = VALUES(full_name),
@@ -1592,7 +1608,8 @@ export async function saveContactsBulkToCPanel(
           pcu_uploaded_at = VALUES(pcu_uploaded_at),
           deleted_at = VALUES(deleted_at),
           maintenance = VALUES(maintenance),
-          maintenance_medicine = VALUES(maintenance_medicine)
+          maintenance_medicine = VALUES(maintenance_medicine),
+          added_from_print_list = VALUES(added_from_print_list)
       `;
 
       await pool.query(sql, values);

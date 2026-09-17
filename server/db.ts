@@ -202,7 +202,16 @@ export interface Contact {
   category?: 'pcu' | 'existing_account';
   pin?: string;
   facebookLink?: string;
-  uploadedFiles?: { name: string; url: string; uploadedAt: string; uploadedBy?: string }[];
+  uploadedFiles?: { 
+    name: string; 
+    fileName?: string;
+    url: string; 
+    fileUrl?: string;
+    fileType?: string;
+    size?: number;
+    uploadedAt: string; 
+    uploadedBy?: string;
+  }[];
   maintenance?: 'None' | 'Yes' | string;
   maintenance_medicine?: string;
 }
@@ -261,7 +270,16 @@ export interface ExistingAccountItem {
   submittedBy: string;
   pin?: string;
   addedToFiles?: boolean;
-  uploadedFiles?: { name: string; url: string; uploadedAt: string; uploadedBy?: string }[];
+  uploadedFiles?: { 
+    name: string; 
+    fileName?: string;
+    url: string; 
+    fileUrl?: string;
+    fileType?: string;
+    size?: number;
+    uploadedAt: string; 
+    uploadedBy?: string;
+  }[];
   facebookLink?: string;
   added_from_website?: boolean;
   isBulkEntry?: boolean;
@@ -1887,31 +1905,59 @@ export async function createSubmissionMessage(sender: string, message: string, r
   return newRecord;
 }
 
-// Safely parse uploaded files which can be stringified JSON in the Base44 database
-function safeParseUploadedFiles(files: any, fallbackFilesJson?: any): any[] {
+// Safely parse uploaded files which can be stringified JSON or attachments in the Base44 database
+function safeParseUploadedFiles(files: any, fallbackFilesJson?: any, attachments?: any): any[] {
+  let list: any[] = [];
   if (files) {
-    if (Array.isArray(files)) return files;
-    if (typeof files === 'string' && files.trim() !== '') {
+    if (Array.isArray(files)) list = files;
+    else if (typeof files === 'string' && files.trim() !== '') {
       try {
         const parsed = JSON.parse(files);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) list = parsed;
       } catch (e) {
         console.warn('[Base44 Sync] Failed to parse sub.uploadedFiles string:', files);
       }
     }
   }
-  if (fallbackFilesJson) {
-    if (Array.isArray(fallbackFilesJson)) return fallbackFilesJson;
-    if (typeof fallbackFilesJson === 'string' && fallbackFilesJson.trim() !== '') {
+  if (list.length === 0 && fallbackFilesJson) {
+    if (Array.isArray(fallbackFilesJson)) list = fallbackFilesJson;
+    else if (typeof fallbackFilesJson === 'string' && fallbackFilesJson.trim() !== '') {
       try {
         const parsed = JSON.parse(fallbackFilesJson);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) list = parsed;
       } catch (e) {
         console.warn('[Base44 Sync] Failed to parse sub.uploadedFilesJson string:', fallbackFilesJson);
       }
     }
   }
-  return [];
+  if (list.length === 0 && attachments) {
+    if (Array.isArray(attachments)) list = attachments;
+    else if (typeof attachments === 'string' && attachments.trim() !== '') {
+      try {
+        const parsed = JSON.parse(attachments);
+        if (Array.isArray(parsed)) list = parsed;
+      } catch (e) {
+        console.warn('[Base44 Sync] Failed to parse sub.attachments string:', attachments);
+      }
+    }
+  }
+
+  // Normalize each file object so it has name, fileName, url, fileUrl, fileType, size
+  return list.map((item: any) => {
+    if (!item || typeof item !== 'object') return null;
+    const url = item.fileUrl || item.url || '';
+    const name = item.fileName || item.name || 'document';
+    return {
+      name: item.name || name,
+      fileName: item.fileName || item.name || name,
+      url: url,
+      fileUrl: url,
+      fileType: item.fileType || getMimeType(name),
+      size: item.size || 0,
+      uploadedAt: item.uploadedAt || new Date().toISOString(),
+      uploadedBy: item.uploadedBy || 'System'
+    };
+  }).filter(Boolean);
 }
 
 // Sync from Base44 HouseholdSubmission entity
@@ -1935,7 +1981,7 @@ async function saveContacts() {
   await safeWriteFile(CONTACTS_FILE, JSON.stringify(contactsCache, null, 2), 'utf-8');
 }
 
-// Fetch Directory contacts for Print List page (we strictly do NOT display contacts from Base44)
+// Fetch Directory contacts for Print List page (Patient Data List)
 export async function fetchHouseholdSubmissionsFromBase44() {
   await ensureContactsSynced();
   const seenNameKeys = new Set<string>();
@@ -1943,8 +1989,7 @@ export async function fetchHouseholdSubmissionsFromBase44() {
   const activeContacts = contactsCache.filter(c => 
     !c.deleted_at && 
     !isContactTombstoned(c) && 
-    !isContactSubmitted(c) && 
-    c.added_from_print_list !== false
+    !isContactSubmitted(c)
   );
   const directoryHouseholds: any[] = [];
 
@@ -1954,6 +1999,7 @@ export async function fetchHouseholdSubmissionsFromBase44() {
       seenNameKeys.add(nameKey);
       directoryHouseholds.push({
         id: `dir_${c.id}`,
+        contactId: c.id,
         full_name: c.full_name,
         barangay: c.barangay,
         purok: c.purok || '',
@@ -1962,7 +2008,7 @@ export async function fetchHouseholdSubmissionsFromBase44() {
         geotagged: Boolean(c.geotagged),
         latitude: c.latitude,
         longitude: c.longitude,
-        addedToDirectory: true
+        addedToDirectory: c.added_from_print_list === true
       });
     }
   }
@@ -2022,7 +2068,7 @@ export async function fetchExistingAccountsFromBase44() {
           submittedBy: sub.submittedBy || 'Unknown',
           pin: sub.fpe?.pin || sub.pcsf?.pin || '',
           facebookLink: sub.facebookLink || '',
-          uploadedFiles: safeParseUploadedFiles(sub.uploadedFiles, sub.uploadedFilesJson)
+          uploadedFiles: safeParseUploadedFiles(sub.uploadedFiles, sub.uploadedFilesJson, sub.attachments)
         });
       });
     }
@@ -2032,8 +2078,10 @@ export async function fetchExistingAccountsFromBase44() {
   return existingAccounts;
 }
 
-// Add a specific Household Submission to the Saint Francis Clinic Directory
+// Add a specific Household Submission / Patient to the Saint Francis Clinic Directory
 export async function addHouseholdToDirectory(household: {
+  id?: string | number;
+  contactId?: string | number;
   full_name: string;
   barangay: string;
   purok?: string;
@@ -2048,23 +2096,50 @@ export async function addHouseholdToDirectory(household: {
   const trimmedContact = household.contact_number ? household.contact_number.trim() : '';
 
   if (!formattedName) {
-    throw new Error('Household full name is required.');
+    throw new Error('Patient full name is required.');
   }
 
-  // Check if contact already exists in directory (even if soft-deleted or inactive)
-  const existing = contactsCache.find(
-    c => normalizeCompareName(c.full_name, formattedName) && 
-         normalizeBarangayName(c.barangay).toLowerCase() === normalizeBarangayName(trimmedBarangay).toLowerCase()
-  );
+  // Check if contact already exists by ID or by Full Name & Barangay
+  let existing: Contact | undefined;
+  const rawId = household.contactId || household.id;
+  if (rawId !== undefined && rawId !== null) {
+    const rawIdStr = String(rawId).replace(/^dir_/, '');
+    const numId = Number(rawIdStr);
+    if (!isNaN(numId)) {
+      existing = contactsCache.find(c => Number(c.id) === numId);
+    }
+  }
+  if (!existing) {
+    existing = contactsCache.find(
+      c => normalizeCompareName(c.full_name, formattedName) && 
+           normalizeBarangayName(c.barangay).toLowerCase() === normalizeBarangayName(trimmedBarangay).toLowerCase()
+    );
+  }
+  if (!existing) {
+    existing = contactsCache.find(
+      c => normalizeCompareName(c.full_name, formattedName)
+    );
+  }
 
   if (existing) {
     existing.added_from_print_list = true;
     existing.deleted_at = null; // restore in case it was previously soft-deleted
     existing.updated_at = new Date().toISOString();
     await saveContacts();
+
+    // Permanently sync to cPanel MySQL database
+    if (isCPanelDbConnected()) {
+      try {
+        await saveContactToCPanel(existing);
+      } catch (err: any) {
+        console.warn('[cPanel DB] Notice: could not sync promoted contact to cPanel MySQL:', err.message);
+      }
+    }
+
     if (sheetsConfig.syncEnabled) {
       forwardToWebApp('edit', existing).catch(err => console.error('Failed to sync re-added contact to Sheets:', err));
     }
+    await addActivity(actorUsername, `Added patient "${formattedName}" from Patient Data List to PCU / Barangay Directory`);
     return existing;
   }
 
@@ -2087,12 +2162,52 @@ export async function addHouseholdToDirectory(household: {
 
   contactsCache.unshift(newContact);
   await saveContacts();
-  await addActivity(actorUsername, `Added household "${formattedName}" to Clinic Directory under Barangay ${trimmedBarangay}`);
+
+  // Permanently sync to cPanel MySQL database
+  if (isCPanelDbConnected()) {
+    try {
+      await saveContactToCPanel(newContact);
+    } catch (err: any) {
+      console.warn('[cPanel DB] Notice: could not sync new contact to cPanel MySQL:', err.message);
+    }
+  }
+
+  await addActivity(actorUsername, `Added patient "${formattedName}" to PCU / Barangay Directory under Barangay ${trimmedBarangay}`);
 
   // Async sync to Google Sheets if configured
   forwardToWebApp('add', newContact).catch(err => console.error('Failed to sync contact to Sheets:', err));
 
   return newContact;
+}
+
+// Add all pending Patient Data List contacts to the Saint Francis Clinic Directory
+export async function addAllHouseholdsToDirectory(actorUsername: string) {
+  let count = 0;
+  const updatedContacts: Contact[] = [];
+
+  for (let i = 0; i < contactsCache.length; i++) {
+    const c = contactsCache[i];
+    if (!c.deleted_at && !isContactTombstoned(c) && !isContactSubmitted(c) && c.added_from_print_list !== true) {
+      c.added_from_print_list = true;
+      c.updated_at = new Date().toISOString();
+      count++;
+      updatedContacts.push(c);
+    }
+  }
+
+  if (count > 0) {
+    await saveContacts();
+    if (isCPanelDbConnected() && updatedContacts.length > 0) {
+      try {
+        await saveContactsBulkToCPanel(updatedContacts);
+      } catch (err: any) {
+        console.warn('[cPanel DB] Notice: could not bulk sync promoted contacts to cPanel MySQL:', err.message);
+      }
+    }
+    await addActivity(actorUsername, `Promoted ${count} patient records from Patient Data List to PCU / Barangay Directory`);
+  }
+
+  return { addedCount: count };
 }
 
 // Clear all contacts from the directory (Mark inactive instead of deleting)
@@ -5099,7 +5214,7 @@ export async function saveBulkImport(
         updated_at: new Date().toISOString(),
         deleted_at: null,
         added_locally: true,
-        added_from_print_list: true
+        added_from_print_list: false
       };
       contactsCache.push(newContact);
       appended.push(newContact);
@@ -7599,27 +7714,58 @@ export async function appendActivityToGoogleSheets(activity: Activity) {
   }
 }
 
+// Helper to derive MIME type from file extension
+function getMimeType(fileName: string, fallbackMime?: string): string {
+  if (fallbackMime && fallbackMime !== 'application/octet-stream') return fallbackMime;
+  const ext = (fileName || '').split('.').pop()?.toLowerCase();
+  switch (ext) {
+    case 'pdf': return 'application/pdf';
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg';
+    case 'png': return 'image/png';
+    case 'webp': return 'image/webp';
+    case 'gif': return 'image/gif';
+    case 'bmp': return 'image/bmp';
+    case 'svg': return 'image/svg+xml';
+    case 'csv': return 'text/csv';
+    case 'txt': return 'text/plain';
+    case 'doc': return 'application/msword';
+    case 'docx': return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    case 'xls': return 'application/vnd.ms-excel';
+    case 'xlsx': return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    default: return fallbackMime || 'application/octet-stream';
+  }
+}
+
 // Helper to parse base64 Data URLs without regex backtracking
-function parseDataUrl(dataUrl: string): { mimeType: string, buffer: Buffer } {
+function parseDataUrl(dataUrl: string, fileName?: string): { mimeType: string, buffer: Buffer } {
   if (dataUrl && dataUrl.startsWith('data:')) {
     const commaIdx = dataUrl.indexOf(',');
     if (commaIdx !== -1) {
       const meta = dataUrl.substring(5, commaIdx);
-      const mimeType = meta.split(';')[0] || 'application/octet-stream';
-      const base64Data = dataUrl.substring(commaIdx + 1);
-      return { mimeType, buffer: Buffer.from(base64Data, 'base64') };
+      let mimeType = meta.split(';')[0] || 'application/octet-stream';
+      if (fileName) {
+        mimeType = getMimeType(fileName, mimeType);
+      }
+      const rawBase64 = dataUrl.substring(commaIdx + 1).replace(/\s/g, '');
+      return { mimeType, buffer: Buffer.from(rawBase64, 'base64') };
     }
   }
-  return { mimeType: 'application/octet-stream', buffer: Buffer.from(dataUrl || '', 'base64') };
+  const fallbackMime = fileName ? getMimeType(fileName, 'application/octet-stream') : 'application/octet-stream';
+  const rawBase64 = (dataUrl || '').replace(/\s/g, '');
+  return { mimeType: fallbackMime, buffer: Buffer.from(rawBase64, 'base64') };
 }
 
 // Upload file to Base44 public CDN storage
-async function uploadFileToBase44(dataUrl: string, fileName: string): Promise<string> {
+async function uploadFileToBase44(dataUrl: string, fileName: string, explicitMime?: string): Promise<string> {
   if (dataUrl && (dataUrl.startsWith('http://') || dataUrl.startsWith('https://'))) {
     return dataUrl;
   }
   try {
-    const { mimeType, buffer } = parseDataUrl(dataUrl);
+    const { mimeType: parsedMime, buffer } = parseDataUrl(dataUrl, fileName);
+    const mimeType = explicitMime && explicitMime !== 'application/octet-stream' 
+      ? explicitMime 
+      : (parsedMime && parsedMime !== 'application/octet-stream' ? parsedMime : getMimeType(fileName));
     // Create a standard File object supported natively in Node.js 18+
     const file = new File([buffer], fileName, { type: mimeType });
     
@@ -8889,11 +9035,50 @@ export async function syncToBase44MemberVerifiedSubmission(existingAccount: Exis
 
     const filesToSync = existingAccount.uploadedFiles && existingAccount.uploadedFiles.length > 0
       ? existingAccount.uploadedFiles
-      : [{ url: '', name: '' }];
+      : [];
 
-    for (const currentFile of filesToSync) {
-      const fileUrl = currentFile.url || '';
-      const fileName = currentFile.name || '';
+    // Ensure any data URLs in uploadedFiles are uploaded to Base44 CDN
+    for (const file of filesToSync) {
+      if (file.url && file.url.startsWith('data:')) {
+        try {
+          const fName = file.fileName || file.name || 'document';
+          const cdnUrl = await uploadFileToBase44(file.url, fName, file.fileType);
+          file.url = cdnUrl;
+          file.fileUrl = cdnUrl;
+        } catch (err: any) {
+          console.warn(`[Base44 MemberVerifiedSubmission Warning] Failed to upload "${file.name}" to CDN:`, err.message);
+        }
+      }
+    }
+
+    const formattedAllFiles = (existingAccount.uploadedFiles || []).map(f => ({
+      name: `${unescapeHtml(existingAccount.full_name)} (Member)`,
+      fileName: f.fileName || f.name || 'document',
+      fileUrl: f.fileUrl || f.url,
+      url: f.fileUrl || f.url,
+      fileType: f.fileType || getMimeType(f.fileName || f.name),
+      size: f.size || 0,
+      uploadedAt: f.uploadedAt || new Date().toISOString(),
+      uploadedBy: f.uploadedBy || uName
+    })).filter(f => f.fileUrl && !f.fileUrl.startsWith('data:'));
+
+    const itemsToIterate = filesToSync.length > 0 ? filesToSync : [{ url: '', name: '' }];
+
+    for (const currentFile of itemsToIterate) {
+      const rawUrl = currentFile.fileUrl || currentFile.url || '';
+      // Ensure we NEVER send raw data URLs to Base44 string fields
+      const fileUrl = (rawUrl && !rawUrl.startsWith('data:')) ? rawUrl : '';
+      const fileName = currentFile.fileName || currentFile.name || '';
+      const mimeType = currentFile.fileType || getMimeType(fileName);
+
+      const singleAtt = fileUrl ? [{
+        name: `${unescapeHtml(existingAccount.full_name)} (Member)`,
+        fileName: fileName,
+        fileUrl: fileUrl,
+        url: fileUrl,
+        fileType: mimeType,
+        size: currentFile.size || 0
+      }] : [];
 
       const payload = {
         existingAccountId: existingAccount.id,
@@ -8920,8 +9105,9 @@ export async function syncToBase44MemberVerifiedSubmission(existingAccount: Exis
         validationNotes: unescapeHtml(existingAccount.pin || ''),
         validation_notes: unescapeHtml(existingAccount.pin || ''),
         facebookLink: existingAccount.facebookLink || '',
-        uploadedFiles: existingAccount.uploadedFiles || [],
-        uploadedFilesJson: JSON.stringify(existingAccount.uploadedFiles || []),
+        uploadedFiles: formattedAllFiles.length > 0 ? formattedAllFiles : singleAtt,
+        uploadedFilesJson: JSON.stringify(formattedAllFiles.length > 0 ? formattedAllFiles : singleAtt),
+        attachments: formattedAllFiles.length > 0 ? formattedAllFiles : singleAtt,
         
         // Strict exact mappings requested by user:
         // "Submitted by (Full Name of an account who submitted the data)"
@@ -8935,14 +9121,14 @@ export async function syncToBase44MemberVerifiedSubmission(existingAccount: Exis
         "Barangay": existingAccount.barangay || '',
         
         // "Attachment data (The File image must saved accurately on base44 database)"
-        "Attachment data": fileUrl,
-        "Attachment Data": fileUrl,
-        "attachment_data": fileUrl,
-        "attachmentData": fileUrl,
+        "Attachment data": fileUrl || (formattedAllFiles[0]?.fileUrl || ''),
+        "Attachment Data": fileUrl || (formattedAllFiles[0]?.fileUrl || ''),
+        "attachment_data": fileUrl || (formattedAllFiles[0]?.fileUrl || ''),
+        "attachmentData": fileUrl || (formattedAllFiles[0]?.fileUrl || ''),
 
         // User requested exact field names:
-        attachmentUrl: fileUrl || null,
-        attachmentName: fileName || null,
+        attachmentUrl: fileUrl || (formattedAllFiles[0]?.fileUrl || null),
+        attachmentName: fileName || (formattedAllFiles[0]?.fileName || null),
         memberName: unescapeHtml(existingAccount.full_name),
         verifiedByEmail: uEmail,
         verifiedDate: new Date().toISOString(),
@@ -9062,22 +9248,40 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
   const id = existingAccount.id;
   let isNewOrRecreated = false;
 
-  // Make sure all uploaded files have real CDN URLs
-  const processedFiles: { name: string; url: string; uploadedAt: string; uploadedBy?: string }[] = [];
+  // Make sure all uploaded files have real CDN URLs and full dictionary structures
+  const processedFiles: { 
+    name: string; 
+    fileName: string; 
+    url: string; 
+    fileUrl: string; 
+    fileType: string; 
+    size: number; 
+    uploadedAt: string; 
+    uploadedBy?: string 
+  }[] = [];
+
+  const fullName = (existingAccount.full_name || '').trim().toUpperCase();
+
   if (Array.isArray(existingAccount.uploadedFiles)) {
     for (const file of existingAccount.uploadedFiles) {
-      let finalUrl = file.url || '';
+      let finalUrl = file.fileUrl || file.url || '';
+      const fName = file.fileName || file.name || 'document';
+      const mType = file.fileType || getMimeType(fName);
       if (finalUrl && finalUrl.startsWith('data:')) {
         try {
-          console.log(`[Base44 SDK] Uploading staged file "${file.name}" to Base44 public CDN...`);
-          finalUrl = await uploadFileToBase44(finalUrl, file.name);
+          console.log(`[Base44 SDK] Uploading staged file "${fName}" to Base44 public CDN...`);
+          finalUrl = await uploadFileToBase44(finalUrl, fName, mType);
         } catch (err: any) {
-          console.warn(`[Base44 SDK Warning] Upload file failed for "${file.name}":`, err.message);
+          console.warn(`[Base44 SDK Warning] Upload file failed for "${fName}":`, err.message);
         }
       }
       processedFiles.push({
-        name: file.name,
+        name: `${fullName} (Member)`,
+        fileName: fName,
         url: finalUrl,
+        fileUrl: finalUrl,
+        fileType: mType,
+        size: file.size || 0,
         uploadedAt: file.uploadedAt || new Date().toISOString(),
         uploadedBy: file.uploadedBy || uName
       });
@@ -9085,7 +9289,38 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
   }
   existingAccount.uploadedFiles = processedFiles;
 
-  const fullName = (existingAccount.full_name || '').trim().toUpperCase();
+  let mergedAttachments = [...processedFiles];
+  try {
+    const subs = await getCachedHouseholdSubmissions(false);
+    const existingSub = subs.find((s: any) => s.id === id || (s.memberName && s.memberName.trim().toUpperCase() === fullName));
+    if (existingSub && Array.isArray(existingSub.attachments)) {
+      for (const oldAtt of existingSub.attachments) {
+        const oldUrl = oldAtt.fileUrl || oldAtt.url;
+        const oldName = oldAtt.fileName || oldAtt.name;
+        const isDuplicate = mergedAttachments.some(a => (oldUrl && a.fileUrl === oldUrl) || (oldName && a.fileName === oldName));
+        if (!isDuplicate && oldUrl) {
+          mergedAttachments.push({
+            name: oldAtt.name || `${fullName} (Member)`,
+            fileName: oldAtt.fileName || oldName || 'attachment',
+            fileUrl: oldUrl,
+            url: oldUrl,
+            fileType: oldAtt.fileType || getMimeType(oldName),
+            size: oldAtt.size || 0,
+            uploadedAt: oldAtt.uploadedAt || new Date().toISOString(),
+            uploadedBy: oldAtt.uploadedBy || uName
+          });
+        }
+      }
+    }
+  } catch (mergeErr: any) {
+    console.warn('[Base44 SDK] Failed to check existing attachments for merge:', mergeErr.message);
+  }
+
+  // Filter out any invalid items where fileUrl is still a data URL or empty
+  const validAttachments = mergedAttachments.filter(a => a.fileUrl && !a.fileUrl.startsWith('data:'));
+  const primaryAttachmentUrl = validAttachments[0]?.fileUrl || null;
+  const primaryAttachmentName = validAttachments[0]?.fileName || null;
+
   const nameParts = fullName.split(' ');
   const firstName = nameParts[0] || fullName;
   const lastName = nameParts.slice(1).join(' ') || '';
@@ -9100,9 +9335,6 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
     ? Number(existingAccount.longitude)
     : null;
   const isGeotagged = !!(existingAccount.geotagged && latNum !== null && lngNum !== null);
-
-  const primaryAttachmentUrl = processedFiles[0]?.url || null;
-  const primaryAttachmentName = processedFiles[0]?.name || null;
 
   const fullPayload: any = {
     memberName: fullName,
@@ -9144,9 +9376,9 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
 
     facebookLink: existingAccount.facebookLink || '',
 
-    uploadedFiles: processedFiles,
-    uploadedFilesJson: JSON.stringify(processedFiles),
-    attachments: processedFiles,
+    uploadedFiles: validAttachments,
+    uploadedFilesJson: JSON.stringify(validAttachments),
+    attachments: validAttachments,
 
     attachmentUrl: primaryAttachmentUrl,
     attachmentName: primaryAttachmentName,
@@ -9287,21 +9519,27 @@ export async function updateLocalExistingAccount(
   if (Array.isArray(updates.files) && updates.files.length > 0) {
     for (const f of updates.files) {
       let fileUrl = f.fileData || '';
+      const fName = f.fileName || 'document';
+      const mType = (f as any).fileType || getMimeType(fName);
       if (shouldSyncToBase44) {
         try {
-          console.log(`[Base44 Upload] Processing staged file "${f.fileName}" for "${existingAccount.full_name}"...`);
-          fileUrl = await uploadFileToBase44(f.fileData, f.fileName);
+          console.log(`[Base44 Upload] Processing staged file "${fName}" for "${existingAccount.full_name}"...`);
+          fileUrl = await uploadFileToBase44(f.fileData, fName, mType);
         } catch (err: any) {
-          console.warn(`[Base44 Upload Warning] Failed to upload "${f.fileName}" to Base44 storage, using data URL fallback:`, err.message);
-          fileUrl = f.fileData.startsWith('data:') ? f.fileData : `data:application/octet-stream;base64,${f.fileData}`;
+          console.warn(`[Base44 Upload Warning] Failed to upload "${fName}" to Base44 storage, using data URL fallback:`, err.message);
+          fileUrl = f.fileData.startsWith('data:') ? f.fileData : `data:${mType};base64,${f.fileData}`;
         }
       } else {
-        fileUrl = f.fileData.startsWith('data:') ? f.fileData : `data:application/octet-stream;base64,${f.fileData}`;
+        fileUrl = f.fileData.startsWith('data:') ? f.fileData : `data:${mType};base64,${f.fileData}`;
       }
 
       updatedFiles.push({
-        name: f.fileName,
+        name: fName,
+        fileName: fName,
         url: fileUrl,
+        fileUrl: fileUrl,
+        fileType: mType,
+        size: (f as any).size || 0,
         uploadedAt: new Date().toISOString(),
         uploadedBy: uName
       });
@@ -9311,13 +9549,18 @@ export async function updateLocalExistingAccount(
   // If submitting to Base44, ensure any previous data URLs are also uploaded to Base44 CDN
   if (shouldSyncToBase44) {
     for (let i = 0; i < updatedFiles.length; i++) {
-      if (updatedFiles[i].url && updatedFiles[i].url.startsWith('data:')) {
+      const uFile = updatedFiles[i];
+      const curUrl = uFile.fileUrl || uFile.url || '';
+      if (curUrl && curUrl.startsWith('data:')) {
         try {
-          console.log(`[Base44 Upload] Converting cached data URL for "${updatedFiles[i].name}" to Base44 CDN storage...`);
-          const cdnUrl = await uploadFileToBase44(updatedFiles[i].url, updatedFiles[i].name);
-          updatedFiles[i].url = cdnUrl;
+          const fName = uFile.fileName || uFile.name || 'document';
+          const mType = uFile.fileType || getMimeType(fName);
+          console.log(`[Base44 Upload] Converting cached data URL for "${fName}" to Base44 CDN storage...`);
+          const cdnUrl = await uploadFileToBase44(curUrl, fName, mType);
+          uFile.url = cdnUrl;
+          uFile.fileUrl = cdnUrl;
         } catch (err: any) {
-          console.warn(`[Base44 Upload Warning] Failed to convert data URL for "${updatedFiles[i].name}":`, err.message);
+          console.warn(`[Base44 Upload Warning] Failed to convert data URL for "${uFile.name}":`, err.message);
         }
       }
     }
@@ -9375,6 +9618,21 @@ export async function updateLocalExistingAccount(
           }
         };
 
+        const base44FormattedFiles = (updatedAccount.uploadedFiles || []).map(f => {
+          const fName = f.fileName || f.name || 'document';
+          const url = f.fileUrl || f.url || '';
+          return {
+            name: `${unescapeHtml(updatedAccount.full_name)} (Member)`,
+            fileName: fName,
+            fileUrl: url,
+            url: url,
+            fileType: f.fileType || getMimeType(fName),
+            size: f.size || 0,
+            uploadedAt: f.uploadedAt || new Date().toISOString(),
+            uploadedBy: f.uploadedBy || uName
+          };
+        }).filter(f => f.fileUrl && !f.fileUrl.startsWith('data:'));
+
         await updateEntity.create({
           householdSubmissionId: updatedAccount.id,
           fullName: updatedAccount.full_name,
@@ -9384,8 +9642,13 @@ export async function updateLocalExistingAccount(
           contact: updatedAccount.contact_number || '',
           pin: updatedAccount.pin || '',
           facebookLink: updatedAccount.facebookLink || '',
-          files: JSON.stringify(updatedAccount.uploadedFiles || []),
-          uploadedFiles: JSON.stringify(updatedAccount.uploadedFiles || []),
+          files: base44FormattedFiles,
+          uploadedFiles: base44FormattedFiles,
+          attachments: base44FormattedFiles,
+          fileUrl: base44FormattedFiles[0]?.fileUrl || null,
+          fileName: base44FormattedFiles[0]?.fileName || null,
+          attachmentUrl: base44FormattedFiles[0]?.fileUrl || null,
+          attachmentName: base44FormattedFiles[0]?.fileName || null,
           createdBy: uName,
           updatedBy: uName,
           updatedAt: new Date().toISOString()
@@ -9433,16 +9696,22 @@ export async function uploadFilesForExistingAccount(
     for (const file of files) {
       try {
         let fileUrl: string;
+        const fName = file.fileName || 'document';
+        const mType = (file as any).fileType || getMimeType(fName);
         if (submitToBase44) {
-          console.log(`[Existing Account Upload] Processing file "${file.fileName}" for account: "${existingAccount.full_name}" to Base44`);
-          fileUrl = await uploadFileToBase44(file.fileData, file.fileName);
+          console.log(`[Existing Account Upload] Processing file "${fName}" for account: "${existingAccount.full_name}" to Base44`);
+          fileUrl = await uploadFileToBase44(file.fileData, fName, mType);
         } else {
-          fileUrl = file.fileData.startsWith('data:') ? file.fileData : `data:application/octet-stream;base64,${file.fileData}`;
+          fileUrl = file.fileData.startsWith('data:') ? file.fileData : `data:${mType};base64,${file.fileData}`;
         }
         
         const fileObj = {
-          name: file.fileName,
+          name: fName,
+          fileName: fName,
           url: fileUrl,
+          fileUrl: fileUrl,
+          fileType: mType,
+          size: (file as any).size || 0,
           uploadedAt: new Date().toISOString(),
           uploadedBy: uName
         };
@@ -9459,13 +9728,18 @@ export async function uploadFilesForExistingAccount(
     // Convert any pre-existing data URLs to Base44 CDN URLs
     if (existingAccount.uploadedFiles) {
       for (let i = 0; i < existingAccount.uploadedFiles.length; i++) {
-        if (existingAccount.uploadedFiles[i].url && existingAccount.uploadedFiles[i].url.startsWith('data:')) {
+        const uFile = existingAccount.uploadedFiles[i];
+        const curUrl = uFile.fileUrl || uFile.url || '';
+        if (curUrl && curUrl.startsWith('data:')) {
           try {
-            console.log(`[Base44 Upload] Converting cached data URL for "${existingAccount.uploadedFiles[i].name}" to Base44 CDN storage...`);
-            const cdnUrl = await uploadFileToBase44(existingAccount.uploadedFiles[i].url, existingAccount.uploadedFiles[i].name);
-            existingAccount.uploadedFiles[i].url = cdnUrl;
+            const fName = uFile.fileName || uFile.name || 'document';
+            const mType = uFile.fileType || getMimeType(fName);
+            console.log(`[Base44 Upload] Converting cached data URL for "${fName}" to Base44 CDN storage...`);
+            const cdnUrl = await uploadFileToBase44(curUrl, fName, mType);
+            uFile.url = cdnUrl;
+            uFile.fileUrl = cdnUrl;
           } catch (err: any) {
-            console.warn(`[Base44 Upload Warning] Failed to convert data URL for "${existingAccount.uploadedFiles[i].name}":`, err.message);
+            console.warn(`[Base44 Upload Warning] Failed to convert data URL for "${uFile.name}":`, err.message);
           }
         }
       }
@@ -9513,6 +9787,21 @@ export async function uploadFilesForExistingAccount(
           }
         };
 
+        const base44FormattedFiles = (existingAccount.uploadedFiles || []).map(f => {
+          const fName = f.fileName || f.name || 'document';
+          const url = f.fileUrl || f.url || '';
+          return {
+            name: `${unescapeHtml(existingAccount.full_name)} (Member)`,
+            fileName: fName,
+            fileUrl: url,
+            url: url,
+            fileType: f.fileType || getMimeType(fName),
+            size: f.size || 0,
+            uploadedAt: f.uploadedAt || new Date().toISOString(),
+            uploadedBy: f.uploadedBy || uName
+          };
+        }).filter(f => f.fileUrl && !f.fileUrl.startsWith('data:'));
+
         await updateEntity.create({
           householdSubmissionId: existingAccount.id,
           fullName: existingAccount.full_name,
@@ -9522,8 +9811,13 @@ export async function uploadFilesForExistingAccount(
           contact: existingAccount.contact_number || '',
           pin: existingAccount.pin || '',
           facebookLink: existingAccount.facebookLink || '',
-          files: JSON.stringify(existingAccount.uploadedFiles || []),
-          uploadedFiles: JSON.stringify(existingAccount.uploadedFiles || []),
+          files: base44FormattedFiles,
+          uploadedFiles: base44FormattedFiles,
+          attachments: base44FormattedFiles,
+          fileUrl: base44FormattedFiles[0]?.fileUrl || null,
+          fileName: base44FormattedFiles[0]?.fileName || null,
+          attachmentUrl: base44FormattedFiles[0]?.fileUrl || null,
+          attachmentName: base44FormattedFiles[0]?.fileName || null,
           createdBy: uName,
           updatedBy: uName,
           updatedAt: new Date().toISOString()

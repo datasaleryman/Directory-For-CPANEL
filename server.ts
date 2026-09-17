@@ -51,6 +51,7 @@ import {
   updateLocalExistingAccount,
   uploadFilesForExistingAccount,
   addHouseholdToDirectory,
+  addAllHouseholdsToDirectory,
   clearAllDirectoryContacts,
   isBarangayMatch,
   uploadContactPhoto,
@@ -711,6 +712,17 @@ export async function getApp(httpServer?: http.Server) {
       res.status(201).json(contact);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Add all pending households from Patient Data List to Clinic Directory (PCU / Barangay)
+  app.post('/api/contacts/add-all-from-household', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const result = await addAllHouseholdsToDirectory(username);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

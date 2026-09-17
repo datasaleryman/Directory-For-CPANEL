@@ -21,7 +21,8 @@ import {
   MapPin,
   Database,
   AlertCircle,
-  HardDrive
+  HardDrive,
+  Printer
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { ParseResult, BulkPreviewResponse } from '../types.js';
@@ -31,6 +32,7 @@ interface BulkImportProps {
   onImportComplete: () => void;
   onCancel: () => void;
   onGoToDirectory?: () => void;
+  onGoToPatientList?: () => void;
   showToast: (message: string, type: 'success' | 'warning' | 'error' | 'info') => void;
 }
 
@@ -39,6 +41,7 @@ export const BulkImport: React.FC<BulkImportProps> = ({
   onImportComplete,
   onCancel,
   onGoToDirectory,
+  onGoToPatientList,
   showToast
 }) => {
   const [inputText, setInputText] = useState('');
@@ -373,14 +376,23 @@ export const BulkImport: React.FC<BulkImportProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-2 w-full sm:w-auto">
+        <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+          {onGoToPatientList && (
+            <button
+              onClick={onGoToPatientList}
+              className="text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl px-4 py-2.5 transition-all cursor-pointer flex items-center gap-1.5"
+            >
+              <Printer className="w-3.5 h-3.5 text-emerald-700" />
+              Patient Data List
+            </button>
+          )}
           {onGoToDirectory && (
             <button
               onClick={onGoToDirectory}
-              className="text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-xl px-4 py-2.5 transition-all cursor-pointer flex items-center gap-1.5"
+              className="text-xs font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 transition-all cursor-pointer flex items-center gap-1.5"
             >
-              <Folder className="w-3.5 h-3.5 text-emerald-700" />
-              View Directory
+              <Folder className="w-3.5 h-3.5 text-slate-600" />
+              PCU / Barangay
             </button>
           )}
           <button
@@ -421,7 +433,7 @@ export const BulkImport: React.FC<BulkImportProps> = ({
             </div>
             <p className="text-[11px] mt-1 text-slate-600">
               {dbStatus?.connected
-                ? 'Contacts entered or uploaded below will be saved directly into your cPanel MySQL "contacts" table.'
+                ? 'Records added here are saved permanently to your cPanel MySQL "contacts" table and displayed on the Patient Data List ready to be added to the PCU / Barangay directory.'
                 : 'cPanel MySQL is currently not connected. Contacts are saved to local JSON storage (data/contacts.json). To save directly to MySQL, configure credentials in Settings > cPanel Database.'}
             </p>
           </div>
@@ -940,15 +952,25 @@ export const BulkImport: React.FC<BulkImportProps> = ({
             )}
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center gap-3 pt-2 w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row items-center gap-3 pt-2 w-full sm:w-auto flex-wrap justify-center">
+            {onGoToPatientList && (
+              <button
+                onClick={onGoToPatientList}
+                className="w-full sm:w-auto px-7 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer min-h-[48px]"
+              >
+                <Printer className="w-4 h-4" />
+                Go to Patient Data List
+                <ArrowRight className="w-4 h-4 ml-1" />
+              </button>
+            )}
+
             {onGoToDirectory && (
               <button
                 onClick={onGoToDirectory}
-                className="w-full sm:w-auto px-7 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer min-h-[48px]"
+                className="w-full sm:w-auto px-6 py-3.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer min-h-[48px]"
               >
                 <Folder className="w-4 h-4" />
                 Go to PCU / Barangay Directory
-                <ArrowRight className="w-4 h-4 ml-1" />
               </button>
             )}
 

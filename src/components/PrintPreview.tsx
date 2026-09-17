@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Printer, X, Loader2, Activity, Search, Plus, Check, UserPlus, Save, ChevronLeft, ChevronRight, ArrowUpDown, ArrowDownAZ, ArrowUpZA, RotateCcw } from 'lucide-react';
+import { Printer, X, Loader2, Activity, Search, Plus, Check, UserPlus, Save, ChevronLeft, ChevronRight, ArrowUpDown, ArrowDownAZ, ArrowUpZA, RotateCcw, Users, CheckCircle2, AlertCircle } from 'lucide-react';
 
 export interface HouseholdItem {
   id: string | number;
+  contactId?: string | number;
   full_name: string;
   barangay: string;
   purok?: string;
@@ -214,9 +215,20 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
     return result;
   }, [households]);
 
-  // Filter household records based on search query and sort alphabetically
+  // Status filter: all, pending (not yet on PCU directory), or added (already on PCU directory)
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'added'>('all');
+  const [addingAll, setAddingAll] = useState(false);
+
+  // Total count of records not yet added to PCU directory
+  const unaddedCount = useMemo(() => {
+    return uniqueHouseholds.filter(h => !h.addedToDirectory).length;
+  }, [uniqueHouseholds]);
+
+  // Filter household records based on status, search query and sort alphabetically
   const filteredHouseholds = useMemo(() => {
     let list = uniqueHouseholds.filter(item => {
+      if (statusFilter === 'pending' && item.addedToDirectory) return false;
+      if (statusFilter === 'added' && !item.addedToDirectory) return false;
       const q = searchQuery.toLowerCase();
       return (
         (item.full_name || '').toLowerCase().includes(q) ||
@@ -234,15 +246,15 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
     }
 
     return list;
-  }, [uniqueHouseholds, searchQuery, alphabetSort]);
+  }, [uniqueHouseholds, statusFilter, searchQuery, alphabetSort]);
 
   // Pagination calculation
   const [currentPage, setCurrentPage] = useState<number>(1);
 
-  // Reset page to 1 whenever search query, sort, or itemsPerPage changes
+  // Reset page to 1 whenever search query, sort, statusFilter, or itemsPerPage changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery, alphabetSort, itemsPerPage]);
+  }, [searchQuery, alphabetSort, statusFilter, itemsPerPage]);
 
   const itemsPerPageNum = useMemo(() => {
     if (itemsPerPage === 'all') return Math.max(1, filteredHouseholds.length);
@@ -264,11 +276,12 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
   const handleResetFilters = () => {
     setSearchQuery('');
     setAlphabetSort('asc');
+    setStatusFilter('all');
   };
 
-  const hasActiveFilters = searchQuery !== '' || alphabetSort !== 'asc';
+  const hasActiveFilters = searchQuery !== '' || alphabetSort !== 'asc' || statusFilter !== 'all';
 
-  // Handle +Add List button click
+  // Handle +Add List button click (promotes record to display on PCU / Barangay directory)
   const handleAddToList = async (item: HouseholdItem) => {
     setAddingId(item.id);
     try {
@@ -279,6 +292,8 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
+          id: item.id,
+          contactId: item.contactId,
           full_name: item.full_name,
           barangay: item.barangay,
           purok: item.purok,
@@ -291,20 +306,49 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to add household to directory.');
+        throw new Error(data.error || 'Failed to add patient to directory.');
       }
 
       // Mark local item state as added
-      setHouseholds(prev => prev.map(h => h.id === item.id ? { ...h, addedToDirectory: true } : h));
+      setHouseholds(prev => prev.map(h => (h.id === item.id || h.full_name.trim().toLowerCase() === item.full_name.trim().toLowerCase()) ? { ...h, addedToDirectory: true } : h));
 
       showToast(
-        `Added "${item.full_name}" to Saint Francis Clinic Directory under Barangay ${item.barangay}!`,
+        `Added "${item.full_name}" to PCU / Barangay Directory under Barangay ${item.barangay}!`,
         'success'
       );
     } catch (err: any) {
       showToast(err.message, 'error');
     } finally {
       setAddingId(null);
+    }
+  };
+
+  // Handle +Add All pending patients to PCU / Barangay directory
+  const handleAddAllToList = async () => {
+    if (addingAll || unaddedCount === 0) return;
+    setAddingAll(true);
+    try {
+      const res = await fetch('/api/contacts/add-all-from-household', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to add patients to directory.');
+      }
+
+      setHouseholds(prev => prev.map(h => ({ ...h, addedToDirectory: true })));
+      showToast(
+        `Successfully added ${data.addedCount || unaddedCount} patients to PCU / Barangay Directory!`,
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setAddingAll(false);
     }
   };
 
@@ -321,11 +365,22 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
           <div className="space-y-1 text-center sm:text-left">
             <h4 className="font-bold text-slate-800 text-lg font-display">Patient Data List & Directory Extractor</h4>
             <p className="text-xs text-slate-500">
-              Sorted <strong className="text-emerald-700">Full Name Alphabetically (A-Z)</strong>. Click <strong className="text-emerald-700">Added List</strong> to save a patient record to the Directory.
+              Sorted <strong className="text-emerald-700">Full Name Alphabetically (A-Z)</strong>. Click <strong className="text-emerald-700">+ Add List</strong> to display records on the PCU / Barangay page.
             </p>
           </div>
 
           <div className="flex items-center gap-2.5 w-full sm:w-auto flex-wrap">
+            {unaddedCount > 0 && (
+              <button
+                onClick={handleAddAllToList}
+                disabled={addingAll}
+                className="flex-1 sm:flex-none px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md shadow-emerald-600/20 flex items-center justify-center gap-1.5"
+                title="Add all pending patients to PCU / Barangay Directory"
+              >
+                {addingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
+                + Add All to PCU ({unaddedCount})
+              </button>
+            )}
             <button
               onClick={() => setIsAddModalOpen(true)}
               className="flex-1 sm:flex-none px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl transition-all cursor-pointer shadow-md shadow-indigo-600/10 flex items-center justify-center gap-1.5"
@@ -347,6 +402,46 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
         {/* Live Search & Alphabetical Controls */}
         {!loading && (
           <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200/80">
+            {/* Status Filter Tabs */}
+            <div className="flex items-center gap-2 flex-wrap pb-1">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">Filter View:</span>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('all')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  statusFilter === 'all'
+                    ? 'bg-slate-800 text-white shadow-xs'
+                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                }`}
+              >
+                All Patients ({uniqueHouseholds.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('pending')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  statusFilter === 'pending'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'bg-white text-amber-700 border border-amber-200 hover:bg-amber-50'
+                }`}
+              >
+                <AlertCircle className="w-3.5 h-3.5" />
+                Pending Action ({unaddedCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter('added')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                  statusFilter === 'added'
+                    ? 'bg-emerald-700 text-white shadow-xs'
+                    : 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50'
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                On PCU / Barangay ({uniqueHouseholds.length - unaddedCount})
+              </button>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
               {/* Search Input */}
               <div className="relative sm:col-span-8">
@@ -524,22 +619,22 @@ export const PrintPreview: React.FC<PrintPreviewProps> = ({
                         <td className="py-2.5 px-3 text-center border border-slate-300 no-print">
                           {item.addedToDirectory ? (
                             <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                              <Check className="w-3 h-3" />
-                              Added
+                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                              On PCU List
                             </span>
                           ) : (
                             <button
                               onClick={() => handleAddToList(item)}
                               disabled={addingId === item.id}
                               className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-[11px] rounded-lg transition-all shadow-xs cursor-pointer inline-flex items-center gap-1 disabled:opacity-50"
-                              title={`Add ${item.full_name} to Saint Francis Clinic Directory under Barangay ${item.barangay}`}
+                              title={`Add ${item.full_name} to PCU / Barangay Directory under Barangay ${item.barangay}`}
                             >
                               {addingId === item.id ? (
                                 <Loader2 className="w-3 h-3 animate-spin" />
                               ) : (
                                 <Plus className="w-3 h-3" />
                               )}
-                              Added List
+                              + Add List
                             </button>
                           )}
                         </td>

@@ -1107,7 +1107,8 @@ export default function App() {
                   authToken={authToken}
                   onImportComplete={fetchStats}
                   onCancel={() => setActiveTab('dashboard')}
-                  onGoToDirectory={() => setActiveTab('contacts')}
+                  onGoToPatientList={() => setActiveTab('print')}
+                  onGoToDirectory={() => setActiveTab('directory')}
                   showToast={showToast}
                 />
               )}

@@ -127,7 +127,16 @@ export interface ExistingAccountItem {
   remarks?: string;
   pin?: string;
   addedToFiles?: boolean;
-  uploadedFiles?: { name: string; url: string; uploadedAt: string; uploadedBy?: string }[];
+  uploadedFiles?: { 
+    name: string; 
+    fileName?: string; 
+    url: string; 
+    fileUrl?: string; 
+    fileType?: string; 
+    size?: number; 
+    uploadedAt: string; 
+    uploadedBy?: string;
+  }[];
   facebookLink?: string;
   isSubmitted?: boolean;
   submittedAt?: string;

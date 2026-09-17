@@ -129,11 +129,11 @@ export function requireAdmin(req: AuthenticatedRequest, res: Response, next: Nex
  * Basic XSS Sanitizer for incoming bodies
  */
 export function sanitizeInput(req: Request, res: Response, next: NextFunction) {
-  // If the request contains large binary file uploads, avoid deep recursive regex scanning of file data
-  if (req.path.includes('/pcu') || req.path.includes('/files') || req.path.includes('/photo') || req.path.includes('/avatar')) {
+  // If the request contains large binary file uploads or accounts with attachments, avoid deep recursive regex scanning of file data
+  if (req.path.includes('/pcu') || req.path.includes('/files') || req.path.includes('/photo') || req.path.includes('/avatar') || req.path.includes('/existing-accounts')) {
     if (req.body && typeof req.body === 'object') {
       for (const key of Object.keys(req.body)) {
-        if (key !== 'fileData' && key !== 'files' && key !== 'photoDataUrl' && typeof req.body[key] === 'string') {
+        if (key !== 'fileData' && key !== 'files' && key !== 'uploadedFiles' && key !== 'photoDataUrl' && key !== 'fileContent' && typeof req.body[key] === 'string') {
           req.body[key] = req.body[key]
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
@@ -162,7 +162,7 @@ export function sanitizeInput(req: Request, res: Response, next: NextFunction) {
     } else if (typeof val === 'object' && val !== null) {
       const sanitized: any = {};
       for (const key of Object.keys(val)) {
-        if (key === 'fileData' || key === 'files' || key === 'photoDataUrl' || key === 'fileContent') {
+        if (key === 'fileData' || key === 'files' || key === 'uploadedFiles' || key === 'photoDataUrl' || key === 'fileContent') {
           sanitized[key] = val[key];
         } else {
           sanitized[key] = sanitize(val[key]);

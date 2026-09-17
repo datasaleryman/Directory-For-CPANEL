@@ -69,7 +69,7 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
   const [selectedVerification, setSelectedVerification] = useState<string>('all');
   const [addingToFilesMap, setAddingToFilesMap] = useState<{[key: string]: boolean}>({});
 
-  const [stagedFiles, setStagedFiles] = useState<{ fileName: string; fileData: string; size: number }[]>([]);
+  const [stagedFiles, setStagedFiles] = useState<{ fileName: string; fileData: string; size: number; fileType?: string }[]>([]);
   const [uploading, setUploading] = useState(false);
 
   // Editable fields for Selected Account Details Modal
@@ -598,14 +598,17 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
       
       const reader = new FileReader();
       reader.onloadend = () => {
-        setStagedFiles(prev => [
-          ...prev,
-          {
-            fileName: file.name,
-            fileData: reader.result as string,
-            size: file.size
-          }
-        ]);
+        if (typeof reader.result === 'string') {
+          setStagedFiles(prev => [
+            ...prev,
+            {
+              fileName: file.name,
+              fileData: reader.result as string,
+              size: file.size,
+              fileType: file.type || 'application/octet-stream'
+            }
+          ]);
+        }
       };
       reader.readAsDataURL(file);
     });
@@ -725,7 +728,12 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
         facebookLink: facebookLink.trim(),
         submitToBase44: isSubmitting,
         isSubmitted: isSubmitting ? true : selectedItem.isSubmitted,
-        files: stagedFiles.map(f => ({ fileName: f.fileName, fileData: f.fileData })),
+        files: stagedFiles.map(f => ({ 
+          fileName: f.fileName, 
+          fileData: f.fileData,
+          fileType: f.fileType,
+          size: f.size 
+        })),
         addedToFiles: true
       };
 
@@ -2012,8 +2020,8 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
                           <div className="flex items-center gap-2 min-w-0 flex-1">
                             <File className="w-4 h-4 text-emerald-600 shrink-0" />
                             <div className="min-w-0 flex-1">
-                              <p className="text-slate-700 font-bold truncate" title={file.name}>
-                                {file.name}
+                              <p className="text-slate-700 font-bold truncate" title={file.name || file.fileName}>
+                                {file.name || file.fileName}
                               </p>
                               {file.uploadedAt && (
                                 <p className="text-[9px] text-slate-400 mt-0.5">
@@ -2024,7 +2032,7 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             <a 
-                              href={file.url} 
+                              href={file.url || file.fileUrl} 
                               target="_blank" 
                               rel="noopener noreferrer"
                               className="p-1.5 hover:bg-white border border-transparent hover:border-slate-200 text-slate-500 hover:text-emerald-700 rounded-lg transition-all flex items-center justify-center cursor-pointer"

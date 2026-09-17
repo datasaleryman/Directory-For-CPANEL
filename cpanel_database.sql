@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS `contacts` (
   `geotagged` TINYINT(1) DEFAULT 0,
   `status` VARCHAR(50) DEFAULT 'ACTIVE',
   `is_submitted` TINYINT(1) DEFAULT 0,
+  `added_from_print_list` TINYINT(1) DEFAULT 1,
   `photo_url` LONGTEXT,
   `pcu_file_url` LONGTEXT,
   `pcu_uploaded_by` VARCHAR(255) DEFAULT '',
@@ -37,8 +38,9 @@ CREATE TABLE IF NOT EXISTS `contacts` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Optional Upgrade for existing contacts table:
--- ALTER TABLE `contacts` ADD COLUMN IF NOT EXISTS `maintenance` VARCHAR(50) DEFAULT 'None';
--- ALTER TABLE `contacts` ADD COLUMN IF NOT EXISTS `maintenance_medicine` TEXT NULL;
+-- ALTER TABLE `contacts` ADD COLUMN `added_from_print_list` TINYINT(1) DEFAULT 1;
+-- ALTER TABLE `contacts` ADD COLUMN `maintenance` VARCHAR(50) DEFAULT 'None';
+-- ALTER TABLE `contacts` ADD COLUMN `maintenance_medicine` TEXT NULL;
 
 -- -------------------------------------------------------------------------
 -- 2. Table: users (Administrators & Staff Accounts)
