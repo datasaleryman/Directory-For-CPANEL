@@ -109,6 +109,7 @@ export interface DashboardStats {
 
 export interface ExistingAccountItem {
   id: string;
+  localId?: string;
   full_name: string;
   barangay: string;
   purok: string;
@@ -122,6 +123,8 @@ export interface ExistingAccountItem {
   existingAccVisited: boolean;
   status: string;
   submittedBy: string;
+  folder?: string;
+  remarks?: string;
   pin?: string;
   addedToFiles?: boolean;
   uploadedFiles?: { name: string; url: string; uploadedAt: string; uploadedBy?: string }[];

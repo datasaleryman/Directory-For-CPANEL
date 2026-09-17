@@ -1,5 +1,23 @@
 [
   {
+    "id": "f98f4bdb-31f7-4f6a-a350-99f69b662aae",
+    "timestamp": "2026-09-15T03:01:56.700Z",
+    "username": "admin",
+    "action": "Submitted existing account record and attached documents to Base44: \"JUAN DELA CRUZ\""
+  },
+  {
+    "id": "267f9f36-1ec3-4dec-9d0b-24c8a4a46f0b",
+    "timestamp": "2026-09-15T03:01:55.181Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "5242e24c-c8cb-482a-a041-b48f21e0d1d7",
+    "timestamp": "2026-09-15T03:01:49.156Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
     "id": "81552859-8b88-4b9d-abd0-3151c49c4748",
     "timestamp": "2026-09-14T02:06:35.507Z",
     "username": "admin",

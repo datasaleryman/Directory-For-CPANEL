@@ -245,6 +245,7 @@ export interface User {
 
 export interface ExistingAccountItem {
   id: string;
+  localId?: string;
   full_name: string;
   barangay: string;
   purok: string;
@@ -7614,6 +7615,9 @@ function parseDataUrl(dataUrl: string): { mimeType: string, buffer: Buffer } {
 
 // Upload file to Base44 public CDN storage
 async function uploadFileToBase44(dataUrl: string, fileName: string): Promise<string> {
+  if (dataUrl && (dataUrl.startsWith('http://') || dataUrl.startsWith('https://'))) {
+    return dataUrl;
+  }
   try {
     const { mimeType, buffer } = parseDataUrl(dataUrl);
     // Create a standard File object supported natively in Node.js 18+
@@ -9054,36 +9058,129 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
 
   const userObj = findUser(username);
   const uName = userObj?.fullName || userObj?.displayName || username;
+  const uEmail = userObj?.email || (userObj?.username ? `${userObj.username}@example.com` : 'admin@example.com');
   const id = existingAccount.id;
   let isNewOrRecreated = false;
+
+  // Make sure all uploaded files have real CDN URLs
+  const processedFiles: { name: string; url: string; uploadedAt: string; uploadedBy?: string }[] = [];
+  if (Array.isArray(existingAccount.uploadedFiles)) {
+    for (const file of existingAccount.uploadedFiles) {
+      let finalUrl = file.url || '';
+      if (finalUrl && finalUrl.startsWith('data:')) {
+        try {
+          console.log(`[Base44 SDK] Uploading staged file "${file.name}" to Base44 public CDN...`);
+          finalUrl = await uploadFileToBase44(finalUrl, file.name);
+        } catch (err: any) {
+          console.warn(`[Base44 SDK Warning] Upload file failed for "${file.name}":`, err.message);
+        }
+      }
+      processedFiles.push({
+        name: file.name,
+        url: finalUrl,
+        uploadedAt: file.uploadedAt || new Date().toISOString(),
+        uploadedBy: file.uploadedBy || uName
+      });
+    }
+  }
+  existingAccount.uploadedFiles = processedFiles;
+
+  const fullName = (existingAccount.full_name || '').trim().toUpperCase();
+  const nameParts = fullName.split(' ');
+  const firstName = nameParts[0] || fullName;
+  const lastName = nameParts.slice(1).join(' ') || '';
+  const address = `${existingAccount.purok ? existingAccount.purok + ', ' : ''}${existingAccount.barangay || ''}`.trim();
+  const contact = existingAccount.contact_number || '';
+  const pin = existingAccount.pin || '';
+
+  const latNum = existingAccount.latitude !== undefined && existingAccount.latitude !== null && !isNaN(Number(existingAccount.latitude))
+    ? Number(existingAccount.latitude)
+    : null;
+  const lngNum = existingAccount.longitude !== undefined && existingAccount.longitude !== null && !isNaN(Number(existingAccount.longitude))
+    ? Number(existingAccount.longitude)
+    : null;
+  const isGeotagged = !!(existingAccount.geotagged && latNum !== null && lngNum !== null);
+
+  const primaryAttachmentUrl = processedFiles[0]?.url || null;
+  const primaryAttachmentName = processedFiles[0]?.name || null;
+
+  const fullPayload: any = {
+    memberName: fullName,
+    fullName: fullName,
+    full_name: fullName,
+    firstName: firstName,
+    lastName: lastName,
+
+    barangay: existingAccount.barangay || 'Central',
+    Barangay: existingAccount.barangay || 'Central',
+    purok: existingAccount.purok || '',
+    address: address,
+
+    contact: contact,
+    contact_number: contact,
+    contactNumber: contact,
+    mobile: contact,
+
+    pin: pin,
+    notes: pin,
+    validationNotes: pin,
+    validation_notes: pin,
+
+    latitude: latNum,
+    longitude: lngNum,
+    geotagged: isGeotagged,
+    geoLocation: isGeotagged ? { latitude: latNum, longitude: lngNum, accuracy: 1 } : undefined,
+
+    status: existingAccount.status || 'approved',
+    existingAcc: true,
+    existingAccVerified: true,
+    existingAccVisited: true,
+    isSubmitted: true,
+    submittedAt: existingAccount.submittedAt || new Date().toISOString(),
+
+    submittedBy: uName,
+    "Submitted by": uName,
+    submittedByEmail: uEmail,
+
+    facebookLink: existingAccount.facebookLink || '',
+
+    uploadedFiles: processedFiles,
+    uploadedFilesJson: JSON.stringify(processedFiles),
+    attachments: processedFiles,
+
+    attachmentUrl: primaryAttachmentUrl,
+    attachmentName: primaryAttachmentName,
+    "Attachment data": primaryAttachmentUrl || '',
+    "Attachment Data": primaryAttachmentUrl || '',
+    "attachment_data": primaryAttachmentUrl || '',
+    "attachmentData": primaryAttachmentUrl || '',
+
+    fpe: {
+      fullName: fullName,
+      pin: pin,
+      mobile: contact,
+      purok: existingAccount.purok || '',
+      barangay: existingAccount.barangay || 'Central',
+      latitude: latNum,
+      longitude: lngNum,
+      geotagged: isGeotagged
+    },
+    pcsf: {
+      contact: contact,
+      pin: pin,
+      purok: existingAccount.purok || '',
+      barangay: existingAccount.barangay || 'Central'
+    },
+
+    updatedAt: new Date().toISOString(),
+    created_at: existingAccount.created_at || new Date().toISOString()
+  };
 
   if (id && !id.toString().startsWith('ext_')) {
     try {
       if (typeof submissionEntity.update === 'function') {
         console.log(`[Base44 SDK] Updating details in Base44 HouseholdSubmission database for ID: ${id}...`);
-        const updatePayload: any = {
-          existingAcc: true,
-          existingAccVerified: existingAccount.existingAccVerified === true,
-          existingAccVisited: existingAccount.existingAccVisited === true,
-          status: existingAccount.status || 'approved',
-          uploadedFiles: existingAccount.uploadedFiles || [],
-          uploadedFilesJson: JSON.stringify(existingAccount.uploadedFiles || []),
-          facebookLink: existingAccount.facebookLink || '',
-          submittedBy: uName,
-          barangay: existingAccount.barangay || 'Central',
-          purok: existingAccount.purok || '',
-          fpe: {
-            fullName: existingAccount.full_name,
-            pin: existingAccount.pin || '',
-            mobile: existingAccount.contact_number || ''
-          },
-          pcsf: {
-            contact: existingAccount.contact_number || '',
-            pin: existingAccount.pin || '',
-            purok: existingAccount.purok || ''
-          }
-        };
-        await submissionEntity.update(id.toString(), updatePayload);
+        await submissionEntity.update(id.toString(), fullPayload);
         console.log(`[Base44 SDK] Successfully updated HouseholdSubmission in Base44.`);
         return id.toString();
       }
@@ -9114,31 +9211,9 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
 
     if (matched && matched.id && !isNewOrRecreated) {
       console.log(`[Base44 SDK] Found matching HouseholdSubmission in Base44 with ID: ${matched.id}. Updating it...`);
-      const updatePayload: any = {
-        existingAcc: true,
-        existingAccVerified: existingAccount.existingAccVerified === true,
-        existingAccVisited: existingAccount.existingAccVisited === true,
-        status: existingAccount.status || 'approved',
-        uploadedFiles: existingAccount.uploadedFiles || [],
-        uploadedFilesJson: JSON.stringify(existingAccount.uploadedFiles || []),
-        facebookLink: existingAccount.facebookLink || '',
-        submittedBy: uName,
-        barangay: existingAccount.barangay || 'Central',
-        purok: existingAccount.purok || '',
-        fpe: {
-          fullName: existingAccount.full_name,
-          pin: existingAccount.pin || '',
-          mobile: existingAccount.contact_number || ''
-        },
-        pcsf: {
-          contact: existingAccount.contact_number || '',
-          pin: existingAccount.pin || '',
-          purok: existingAccount.purok || ''
-        }
-      };
       if (typeof submissionEntity.update === 'function') {
         try {
-          await submissionEntity.update(matched.id, updatePayload);
+          await submissionEntity.update(matched.id, fullPayload);
           console.log(`[Base44 SDK] Successfully updated matched HouseholdSubmission in Base44.`);
           return matched.id;
         } catch (updateErr: any) {
@@ -9156,34 +9231,7 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
 
     console.log(`[Base44 SDK] Creating new HouseholdSubmission record in Base44...`);
     if (typeof submissionEntity.create === 'function') {
-      const newSubmission = await submissionEntity.create({
-        memberName: existingAccount.full_name,
-        existingAcc: true,
-        existingAccVerified: existingAccount.existingAccVerified === true,
-        existingAccVisited: existingAccount.existingAccVisited === true,
-        status: existingAccount.status || 'approved',
-        submittedBy: uName,
-        submittedByEmail: userObj?.email || (userObj?.username ? `${userObj.username}@example.com` : 'admin@example.com'),
-        barangay: existingAccount.barangay || 'Central',
-        purok: existingAccount.purok || '',
-        uploadedFiles: existingAccount.uploadedFiles || [],
-        uploadedFilesJson: JSON.stringify(existingAccount.uploadedFiles || []),
-        facebookLink: existingAccount.facebookLink || '',
-        fpe: {
-          fullName: existingAccount.full_name,
-          pin: existingAccount.pin || '',
-          mobile: existingAccount.contact_number || ''
-        },
-        pcsf: {
-          contact: existingAccount.contact_number || '',
-          pin: existingAccount.pin || '',
-          purok: existingAccount.purok || ''
-        },
-        geoLocation: existingAccount.geotagged ? {
-          latitude: existingAccount.latitude,
-          longitude: existingAccount.longitude
-        } : undefined
-      });
+      const newSubmission = await submissionEntity.create(fullPayload);
       if (newSubmission && newSubmission.id) {
         console.log(`[Base44 SDK] Successfully created new record. ID: ${newSubmission.id}`);
         try {
@@ -9209,26 +9257,85 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
 }
 
 // Update an existing local account
-export async function updateLocalExistingAccount(id: string, updates: Partial<ExistingAccountItem> & { submitToBase44?: boolean }, username: string): Promise<ExistingAccountItem> {
-  const accountIndex = existingAccountsCache.findIndex(acc => acc.id === id);
+export async function updateLocalExistingAccount(
+  id: string, 
+  updates: Partial<ExistingAccountItem> & { submitToBase44?: boolean; files?: { fileName: string; fileData: string }[] }, 
+  username: string
+): Promise<ExistingAccountItem> {
+  const accountIndex = existingAccountsCache.findIndex(acc => acc.id === id || (acc as any).localId === id);
   if (accountIndex === -1) {
     throw new Error(`Existing account with ID "${id}" not found`);
   }
 
   const existingAccount = existingAccountsCache[accountIndex];
+  const userObj = findUser(username);
+  const uName = userObj?.fullName || userObj?.displayName || username;
+
   const isExplicitSubmit = updates.isSubmitted === true || (updates as any).submitToBase44 === true;
   const isAlreadySubmitted = existingAccount.isSubmitted === true;
-  
-  // Only sync to Base44 if the user explicitly submitted or it was already submitted previously
   const shouldSyncToBase44 = isExplicitSubmit || isAlreadySubmitted;
+
+  // Initialize or copy uploadedFiles
+  let updatedFiles = existingAccount.uploadedFiles ? [...existingAccount.uploadedFiles] : [];
+
+  // If explicit uploadedFiles array was provided (e.g. file removed)
+  if (Array.isArray(updates.uploadedFiles)) {
+    updatedFiles = updates.uploadedFiles;
+  }
+
+  // If new staged files are attached in the request
+  if (Array.isArray(updates.files) && updates.files.length > 0) {
+    for (const f of updates.files) {
+      let fileUrl = f.fileData || '';
+      if (shouldSyncToBase44) {
+        try {
+          console.log(`[Base44 Upload] Processing staged file "${f.fileName}" for "${existingAccount.full_name}"...`);
+          fileUrl = await uploadFileToBase44(f.fileData, f.fileName);
+        } catch (err: any) {
+          console.warn(`[Base44 Upload Warning] Failed to upload "${f.fileName}" to Base44 storage, using data URL fallback:`, err.message);
+          fileUrl = f.fileData.startsWith('data:') ? f.fileData : `data:application/octet-stream;base64,${f.fileData}`;
+        }
+      } else {
+        fileUrl = f.fileData.startsWith('data:') ? f.fileData : `data:application/octet-stream;base64,${f.fileData}`;
+      }
+
+      updatedFiles.push({
+        name: f.fileName,
+        url: fileUrl,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: uName
+      });
+    }
+  }
+
+  // If submitting to Base44, ensure any previous data URLs are also uploaded to Base44 CDN
+  if (shouldSyncToBase44) {
+    for (let i = 0; i < updatedFiles.length; i++) {
+      if (updatedFiles[i].url && updatedFiles[i].url.startsWith('data:')) {
+        try {
+          console.log(`[Base44 Upload] Converting cached data URL for "${updatedFiles[i].name}" to Base44 CDN storage...`);
+          const cdnUrl = await uploadFileToBase44(updatedFiles[i].url, updatedFiles[i].name);
+          updatedFiles[i].url = cdnUrl;
+        } catch (err: any) {
+          console.warn(`[Base44 Upload Warning] Failed to convert data URL for "${updatedFiles[i].name}":`, err.message);
+        }
+      }
+    }
+  }
 
   const updatedAccount: ExistingAccountItem = {
     ...existingAccount,
     ...updates,
-    id: existingAccount.id, // Ensure ID does not change unless updated by Base44
+    localId: (existingAccount as any).localId || existingAccount.id,
+    id: existingAccount.id,
+    uploadedFiles: updatedFiles,
     isSubmitted: shouldSyncToBase44 ? true : (existingAccount.isSubmitted || false),
     submittedAt: shouldSyncToBase44 ? (existingAccount.submittedAt || new Date().toISOString()) : existingAccount.submittedAt
   };
+
+  // Clean up non-schema fields
+  delete (updatedAccount as any).files;
+  delete (updatedAccount as any).submitToBase44;
 
   if (shouldSyncToBase44) {
     // Sync to Base44 HouseholdSubmission FIRST and get/update the real Base44 ID
@@ -9240,12 +9347,15 @@ export async function updateLocalExistingAccount(id: string, updates: Partial<Ex
 
   existingAccountsCache[accountIndex] = updatedAccount;
   await safeWriteFile(EXISTING_ACCOUNTS_FILE, JSON.stringify(existingAccountsCache, null, 2), 'utf-8');
+
+  // Persist to cPanel MySQL database
+  saveExistingAccountToCPanel(updatedAccount).catch(err => console.warn('[cPanel DB Warning] Failed to sync account to cPanel MySQL:', err.message));
   
   if (updates.addedToFiles !== undefined) {
     const actionStr = updates.addedToFiles ? 'added to' : 'removed from';
     await addActivity(username, `Updated account: ${actionStr} files list for "${existingAccount.full_name}"`);
   } else if (isExplicitSubmit) {
-    await addActivity(username, `Submitted existing account record to Base44: "${existingAccount.full_name}"`);
+    await addActivity(username, `Submitted existing account record and attached documents to Base44: "${existingAccount.full_name}"`);
   } else {
     await addActivity(username, `Updated existing account record: "${existingAccount.full_name}"`);
   }
@@ -9257,8 +9367,6 @@ export async function updateLocalExistingAccount(id: string, updates: Partial<Ex
     // Log to Base44 ExistingAccFileUpdate table if files are present or upon explicit submit
     if (updatedAccount.uploadedFiles && updatedAccount.uploadedFiles.length > 0) {
       try {
-        const userObj = findUser(username);
-        const uName = userObj?.fullName || userObj?.displayName || username;
         console.log(`[Base44 SDK] Saving Existing Account file update metadata to table ExistingAccFileUpdate on verification save...`);
         const updateEntity = (base44.entities as any).ExistingAccFileUpdate || {
           create: async (data: any) => {
@@ -9273,8 +9381,12 @@ export async function updateLocalExistingAccount(id: string, updates: Partial<Ex
           householdName: updatedAccount.full_name || '',
           barangay: updatedAccount.barangay || '',
           purok: updatedAccount.purok || '',
+          contact: updatedAccount.contact_number || '',
+          pin: updatedAccount.pin || '',
           facebookLink: updatedAccount.facebookLink || '',
+          files: JSON.stringify(updatedAccount.uploadedFiles || []),
           uploadedFiles: JSON.stringify(updatedAccount.uploadedFiles || []),
+          createdBy: uName,
           updatedBy: uName,
           updatedAt: new Date().toISOString()
         });
@@ -9301,7 +9413,7 @@ export async function uploadFilesForExistingAccount(
   username: string,
   submitToBase44: boolean = false
 ): Promise<ExistingAccountItem> {
-  const accountIndex = existingAccountsCache.findIndex(acc => acc.id === id);
+  const accountIndex = existingAccountsCache.findIndex(acc => acc.id === id || (acc as any).localId === id);
   if (accountIndex === -1) {
     throw new Error(`Existing account with ID "${id}" not found`);
   }
@@ -9325,7 +9437,6 @@ export async function uploadFilesForExistingAccount(
           console.log(`[Existing Account Upload] Processing file "${file.fileName}" for account: "${existingAccount.full_name}" to Base44`);
           fileUrl = await uploadFileToBase44(file.fileData, file.fileName);
         } else {
-          // Store file data as data URL locally so user can view/preview it without uploading to Base44
           fileUrl = file.fileData.startsWith('data:') ? file.fileData : `data:application/octet-stream;base64,${file.fileData}`;
         }
         
@@ -9345,11 +9456,27 @@ export async function uploadFilesForExistingAccount(
   }
 
   if (submitToBase44) {
+    // Convert any pre-existing data URLs to Base44 CDN URLs
+    if (existingAccount.uploadedFiles) {
+      for (let i = 0; i < existingAccount.uploadedFiles.length; i++) {
+        if (existingAccount.uploadedFiles[i].url && existingAccount.uploadedFiles[i].url.startsWith('data:')) {
+          try {
+            console.log(`[Base44 Upload] Converting cached data URL for "${existingAccount.uploadedFiles[i].name}" to Base44 CDN storage...`);
+            const cdnUrl = await uploadFileToBase44(existingAccount.uploadedFiles[i].url, existingAccount.uploadedFiles[i].name);
+            existingAccount.uploadedFiles[i].url = cdnUrl;
+          } catch (err: any) {
+            console.warn(`[Base44 Upload Warning] Failed to convert data URL for "${existingAccount.uploadedFiles[i].name}":`, err.message);
+          }
+        }
+      }
+    }
+
     // Mark as submitted upon explicit submission
     existingAccount.isSubmitted = true;
     if (!existingAccount.submittedAt) {
       existingAccount.submittedAt = new Date().toISOString();
     }
+    (existingAccount as any).localId = (existingAccount as any).localId || existingAccount.id;
 
     // Sync to Base44 HouseholdSubmission FIRST and get/update the real Base44 ID
     const realId = await syncToBase44HouseholdSubmission(existingAccount, username);
@@ -9359,12 +9486,15 @@ export async function uploadFilesForExistingAccount(
   }
 
   // Persist locally
-  const accIdx = existingAccountsCache.findIndex(acc => acc.id === id);
+  const accIdx = existingAccountsCache.findIndex(acc => acc.id === id || (acc as any).localId === id);
   if (accIdx !== -1) {
     existingAccountsCache[accIdx] = existingAccount;
   }
   await safeWriteFile(EXISTING_ACCOUNTS_FILE, JSON.stringify(existingAccountsCache, null, 2), 'utf-8');
   
+  // Persist to cPanel MySQL database
+  saveExistingAccountToCPanel(existingAccount).catch(err => console.warn('[cPanel DB Warning] Failed to sync account to cPanel MySQL:', err.message));
+
   if (submitToBase44) {
     if (files && files.length > 0) {
       await addActivity(username, `Uploaded ${files.length} file(s) and submitted existing account to Base44: "${existingAccount.full_name}"`);
@@ -9389,8 +9519,12 @@ export async function uploadFilesForExistingAccount(
           householdName: existingAccount.full_name || '',
           barangay: existingAccount.barangay || '',
           purok: existingAccount.purok || '',
+          contact: existingAccount.contact_number || '',
+          pin: existingAccount.pin || '',
           facebookLink: existingAccount.facebookLink || '',
+          files: JSON.stringify(existingAccount.uploadedFiles || []),
           uploadedFiles: JSON.stringify(existingAccount.uploadedFiles || []),
+          createdBy: uName,
           updatedBy: uName,
           updatedAt: new Date().toISOString()
         });

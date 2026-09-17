@@ -146,11 +146,21 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
 
     // 3. Existing Accounts Table
     `CREATE TABLE IF NOT EXISTS existing_accounts (
-      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      id VARCHAR(100) PRIMARY KEY,
       full_name VARCHAR(255) NOT NULL,
       barangay VARCHAR(255) DEFAULT '',
       purok VARCHAR(255) DEFAULT '',
       contact_number VARCHAR(100) DEFAULT '',
+      pin VARCHAR(100) DEFAULT '',
+      latitude DOUBLE NULL,
+      longitude DOUBLE NULL,
+      geotagged TINYINT(1) DEFAULT 0,
+      facebook_link TEXT NULL,
+      uploaded_files LONGTEXT NULL,
+      is_submitted TINYINT(1) DEFAULT 0,
+      submitted_at VARCHAR(100) NULL,
+      existing_acc_verified TINYINT(1) DEFAULT 1,
+      existing_acc_visited TINYINT(1) DEFAULT 1,
       created_at VARCHAR(100) DEFAULT '',
       status VARCHAR(50) DEFAULT 'PENDING',
       submitted_by VARCHAR(255) DEFAULT '',
@@ -251,7 +261,7 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
     // Inspect and migrate missing columns in 'users' table
     const [userColRows]: any = await connectionPool.query(
       `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users'`
-    );
+    ).catch(() => [[]]);
     const existingUserCols = new Set((userColRows || []).map((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase()));
     if (existingUserCols.size > 0) {
       const missingUserCols = [
@@ -266,6 +276,47 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
             console.log(`[cPanel DB] Added missing column '${col.name}' to users table.`);
           } catch (e: any) {
             console.warn(`[cPanel DB] Column migration notice for users.${col.name}:`, e.message);
+          }
+        }
+      }
+    }
+
+    // Inspect and migrate missing columns in 'existing_accounts' table
+    const [existColRows]: any = await connectionPool.query(
+      `SELECT column_name, data_type, extra FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'existing_accounts'`
+    ).catch(() => [[]]);
+    const existingExistCols = new Set((existColRows || []).map((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase()));
+    if (existingExistCols.size > 0) {
+      // Ensure id column accommodates alphanumeric Base44/external string IDs
+      const idCol = (existColRows || []).find((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase() === 'id');
+      if (idCol && (String(idCol.data_type || idCol.DATA_TYPE).toLowerCase().includes('int') || String(idCol.extra || idCol.EXTRA).toLowerCase().includes('auto_increment'))) {
+        try {
+          await connectionPool.query(`ALTER TABLE existing_accounts MODIFY COLUMN \`id\` VARCHAR(100) NOT NULL`);
+          console.log(`[cPanel DB] Altered existing_accounts.id column to VARCHAR(100) NOT NULL.`);
+        } catch (e: any) {
+          console.warn(`[cPanel DB] Column modification notice for existing_accounts.id:`, e.message);
+        }
+      }
+
+      const missingExistCols = [
+        { name: 'pin', type: "VARCHAR(100) DEFAULT ''" },
+        { name: 'latitude', type: "DOUBLE NULL" },
+        { name: 'longitude', type: "DOUBLE NULL" },
+        { name: 'geotagged', type: "TINYINT(1) DEFAULT 0" },
+        { name: 'facebook_link', type: "TEXT NULL" },
+        { name: 'uploaded_files', type: "LONGTEXT NULL" },
+        { name: 'is_submitted', type: "TINYINT(1) DEFAULT 0" },
+        { name: 'submitted_at', type: "VARCHAR(100) NULL" },
+        { name: 'existing_acc_verified', type: "TINYINT(1) DEFAULT 1" },
+        { name: 'existing_acc_visited', type: "TINYINT(1) DEFAULT 1" }
+      ];
+      for (const col of missingExistCols) {
+        if (!existingExistCols.has(col.name.toLowerCase())) {
+          try {
+            await connectionPool.query(`ALTER TABLE existing_accounts ADD COLUMN \`${col.name}\` ${col.type}`);
+            console.log(`[cPanel DB] Added missing column '${col.name}' to existing_accounts table.`);
+          } catch (e: any) {
+            console.warn(`[cPanel DB] Column migration notice for existing_accounts.${col.name}:`, e.message);
           }
         }
       }
@@ -547,11 +598,21 @@ ON DUPLICATE KEY UPDATE \`role\` = 'MASTER ADMIN';
 -- 3. Table: existing_accounts (External Matching Records)
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS \`existing_accounts\` (
-  \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  \`id\` VARCHAR(100) PRIMARY KEY,
   \`full_name\` VARCHAR(255) NOT NULL,
   \`barangay\` VARCHAR(255) DEFAULT '',
   \`purok\` VARCHAR(255) DEFAULT '',
   \`contact_number\` VARCHAR(100) DEFAULT '',
+  \`pin\` VARCHAR(100) DEFAULT '',
+  \`latitude\` DOUBLE NULL,
+  \`longitude\` DOUBLE NULL,
+  \`geotagged\` TINYINT(1) DEFAULT 0,
+  \`facebook_link\` TEXT NULL,
+  \`uploaded_files\` LONGTEXT NULL,
+  \`is_submitted\` TINYINT(1) DEFAULT 0,
+  \`submitted_at\` VARCHAR(100) NULL,
+  \`existing_acc_verified\` TINYINT(1) DEFAULT 1,
+  \`existing_acc_visited\` TINYINT(1) DEFAULT 1,
   \`created_at\` VARCHAR(100) DEFAULT '',
   \`status\` VARCHAR(50) DEFAULT 'PENDING',
   \`submitted_by\` VARCHAR(255) DEFAULT '',
@@ -1214,19 +1275,39 @@ export async function fetchAllFromCPanelDb(): Promise<{
       };
     });
 
-    const existingAccounts = (eRows || []).map((r: any) => ({
-      id: String(r.id),
-      full_name: r.full_name || r.name || '',
-      barangay: r.barangay || '',
-      purok: r.purok || '',
-      contact_number: r.contact_number || r.phone || '',
-      created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
-      status: r.status || 'PENDING',
-      submittedBy: r.submitted_by || r.submittedBy || '',
-      folder: r.folder || 'GENERAL',
-      remarks: r.remarks || '',
-      deleted_at: (r.deleted_at && r.deleted_at !== '0000-00-00 00:00:00' && r.deleted_at !== '0') ? String(r.deleted_at) : null
-    }));
+    const existingAccounts = (eRows || []).map((r: any) => {
+      let uploadedFiles: any[] = [];
+      try {
+        if (r.uploaded_files) {
+          uploadedFiles = typeof r.uploaded_files === 'string' ? JSON.parse(r.uploaded_files) : r.uploaded_files;
+        }
+      } catch {}
+
+      return {
+        id: String(r.id),
+        full_name: r.full_name || r.name || '',
+        barangay: r.barangay || '',
+        purok: r.purok || '',
+        contact_number: r.contact_number || r.phone || '',
+        pin: r.pin || '',
+        latitude: r.latitude !== null && r.latitude !== undefined ? Number(r.latitude) : undefined,
+        longitude: r.longitude !== null && r.longitude !== undefined ? Number(r.longitude) : undefined,
+        geotagged: Boolean(r.geotagged),
+        facebookLink: r.facebook_link || '',
+        uploadedFiles: Array.isArray(uploadedFiles) ? uploadedFiles : [],
+        isSubmitted: Boolean(r.is_submitted),
+        submittedAt: r.submitted_at || undefined,
+        existingAcc: true,
+        existingAccVerified: r.existing_acc_verified !== 0,
+        existingAccVisited: r.existing_acc_visited !== 0,
+        created_at: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at || new Date().toISOString()),
+        status: r.status || 'PENDING',
+        submittedBy: r.submitted_by || r.submittedBy || '',
+        folder: r.folder || 'GENERAL',
+        remarks: r.remarks || '',
+        deleted_at: (r.deleted_at && r.deleted_at !== '0000-00-00 00:00:00' && r.deleted_at !== '0') ? String(r.deleted_at) : null
+      };
+    });
 
     const activities = (aRows || []).map((r: any) => ({
       id: String(r.id),
@@ -1690,25 +1771,55 @@ export async function saveSettingToCPanel(key: string, val: any): Promise<void> 
 export async function saveExistingAccountToCPanel(account: any): Promise<void> {
   if (!pool || !currentStatus.connected) return;
   try {
+    const filesJson = account.uploadedFiles ? JSON.stringify(account.uploadedFiles) : (account.uploaded_files || '[]');
+    const isGeotagged = account.geotagged ? 1 : 0;
+    const isSubmitted = account.isSubmitted ? 1 : 0;
+    const isVerified = account.existingAccVerified !== false ? 1 : 0;
+    const isVisited = account.existingAccVisited !== false ? 1 : 0;
+
     await pool.query(
-      `INSERT INTO existing_accounts (id, full_name, barangay, purok, contact_number, created_at, status, submitted_by, folder, remarks, deleted_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO existing_accounts (
+         id, full_name, barangay, purok, contact_number, pin, latitude, longitude, geotagged, 
+         facebook_link, uploaded_files, is_submitted, submitted_at, existing_acc_verified, 
+         existing_acc_visited, created_at, status, submitted_by, folder, remarks, deleted_at
+       )
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE 
          full_name = VALUES(full_name),
          barangay = VALUES(barangay),
          purok = VALUES(purok),
          contact_number = VALUES(contact_number),
+         pin = VALUES(pin),
+         latitude = VALUES(latitude),
+         longitude = VALUES(longitude),
+         geotagged = VALUES(geotagged),
+         facebook_link = VALUES(facebook_link),
+         uploaded_files = VALUES(uploaded_files),
+         is_submitted = VALUES(is_submitted),
+         submitted_at = VALUES(submitted_at),
+         existing_acc_verified = VALUES(existing_acc_verified),
+         existing_acc_visited = VALUES(existing_acc_visited),
          status = VALUES(status),
          submitted_by = VALUES(submitted_by),
          folder = VALUES(folder),
          remarks = VALUES(remarks),
          deleted_at = VALUES(deleted_at)`,
       [
-        account.id,
+        String(account.id),
         account.full_name || account.fullName || '',
         account.barangay || '',
         account.purok || '',
         account.contact_number || account.contact || '',
+        account.pin || '',
+        account.latitude !== undefined && account.latitude !== null ? Number(account.latitude) : null,
+        account.longitude !== undefined && account.longitude !== null ? Number(account.longitude) : null,
+        isGeotagged,
+        account.facebookLink || account.facebook_link || '',
+        filesJson,
+        isSubmitted,
+        account.submittedAt || account.submitted_at || null,
+        isVerified,
+        isVisited,
         account.created_at || account.createdAt || new Date().toISOString(),
         account.status || 'PENDING',
         account.submittedBy || account.submitted_by || '',

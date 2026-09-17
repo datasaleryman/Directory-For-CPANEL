@@ -4,19 +4,30 @@
     "full_name": "JUAN DELA CRUZ",
     "barangay": "DAMPALAN",
     "purok": "Purok Mabuhay",
-    "contact_number": "9171234567",
+    "contact_number": "09171234567",
     "created_at": "2026-08-28T02:35:35.768Z",
-    "geotagged": false,
+    "geotagged": true,
     "existingAcc": true,
     "existingAccVerified": true,
     "existingAccVisited": true,
     "status": "approved",
     "submittedBy": "admin",
-    "pin": "",
-    "facebookLink": "",
-    "uploadedFiles": [],
+    "pin": "12-345678901-2",
+    "facebookLink": "https://facebook.com/juandelacruz",
+    "uploadedFiles": [
+      {
+        "name": "test_verification_doc.pdf",
+        "url": "https://base44.app/api/apps/6a430111a71a741248df97b1/files/mp/public/6a430111a71a741248df97b1/273ddb250_test_verification_doc.pdf",
+        "uploadedAt": "2026-09-15T03:01:56.410Z",
+        "uploadedBy": "Night Crow"
+      }
+    ],
     "addedToFiles": false,
-    "isSubmitted": false
+    "isSubmitted": true,
+    "latitude": 8.5234,
+    "longitude": 123.4123,
+    "localId": "6a90f3f807b86d2ddd3c9f14",
+    "submittedAt": "2026-09-15T03:01:56.410Z"
   },
   {
     "id": "6a9634c6aa91555bf3488b70",

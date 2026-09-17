@@ -712,36 +712,8 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
       // CRITICAL: Only submit to Base44 if explicitly requested via "Submit to Base44" button
       const isSubmitting = submitToBase44 === true;
 
-      // 1. If files are staged, upload/save them in safe chunks of 3
-      if (stagedFiles.length > 0) {
-        const BATCH_SIZE = 3;
-        let currentTargetId = selectedItem.id;
-        for (let i = 0; i < stagedFiles.length; i += BATCH_SIZE) {
-          const chunk = stagedFiles.slice(i, i + BATCH_SIZE);
-          const isLastBatch = (i + BATCH_SIZE) >= stagedFiles.length;
-          const uploadRes = await fetch(`/api/existing-accounts/${currentTargetId}/files`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${authToken}`
-            },
-            body: JSON.stringify({
-              files: chunk,
-              facebookLink: facebookLink.trim(),
-              submitToBase44: isSubmitting && isLastBatch
-            })
-          });
-          if (uploadRes.ok) {
-            const updatedData = await uploadRes.json().catch(() => null);
-            if (updatedData && updatedData.id) {
-              currentTargetId = updatedData.id;
-            }
-          }
-        }
-      }
-
-      // 2. Update record details & geotag telemetry
-      const updatePayload: Partial<ExistingAccountItem> & { submitToBase44?: boolean } = {
+      // Single unified atomic update sending all form fields AND staged files
+      const updatePayload = {
         full_name: editFullName.trim().toUpperCase(),
         barangay: editBarangay.trim().toUpperCase(),
         purok: editPurok.trim(),
@@ -752,7 +724,9 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
         geotagged: isGeotagged,
         facebookLink: facebookLink.trim(),
         submitToBase44: isSubmitting,
-        isSubmitted: isSubmitting ? true : selectedItem.isSubmitted
+        isSubmitted: isSubmitting ? true : selectedItem.isSubmitted,
+        files: stagedFiles.map(f => ({ fileName: f.fileName, fileData: f.fileData })),
+        addedToFiles: true
       };
 
       const res = await fetch(`/api/existing-accounts/${selectedItem.id}`, {
@@ -770,18 +744,58 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
       }
 
       // Update state
-      setExistingAccounts(prev => prev.map(acc => acc.id === selectedItem.id ? updatedData : acc));
+      setExistingAccounts(prev => prev.map(acc => (acc.id === selectedItem.id || acc.id === updatedData.id) ? updatedData : acc));
       setStagedFiles([]);
       
       if (isSubmitting) {
         setSelectedItem(null);
-        showToast(`Record for "${updatedData.full_name}" submitted to Base44 database & transferred to "Recent Upload"!`, 'success');
+        showToast(`Record for "${updatedData.full_name}" and all attached files & documents successfully saved to Base44 database!`, 'success');
       } else {
         setSelectedItem(updatedData);
-        showToast('Patient record details & attached files saved locally (not submitted to Base44 database).', 'success');
+        showToast('Patient record details & attached files saved locally.', 'success');
       }
     } catch (err: any) {
       showToast(err.message || 'Failed to save changes.', 'error');
+    } finally {
+      setIsSavingRecord(false);
+    }
+  };
+
+  // Delete an existing uploaded file
+  const handleDeleteUploadedFile = async (fileIndex: number) => {
+    if (!selectedItem || !selectedItem.uploadedFiles) return;
+    const fileToRemove = selectedItem.uploadedFiles[fileIndex];
+    if (!fileToRemove) return;
+
+    if (!window.confirm(`Are you sure you want to remove the document "${fileToRemove.name}"?`)) {
+      return;
+    }
+
+    try {
+      setIsSavingRecord(true);
+      const newFiles = selectedItem.uploadedFiles.filter((_, idx) => idx !== fileIndex);
+      const res = await fetch(`/api/existing-accounts/${selectedItem.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          uploadedFiles: newFiles,
+          submitToBase44: selectedItem.isSubmitted
+        })
+      });
+
+      const updatedData = await res.json();
+      if (!res.ok) {
+        throw new Error(updatedData.error || 'Failed to remove file.');
+      }
+
+      setExistingAccounts(prev => prev.map(acc => (acc.id === selectedItem.id || acc.id === updatedData.id) ? updatedData : acc));
+      setSelectedItem(updatedData);
+      showToast(`Document "${fileToRemove.name}" removed successfully.`, 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to remove file.', 'error');
     } finally {
       setIsSavingRecord(false);
     }
@@ -2008,15 +2022,26 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
                               )}
                             </div>
                           </div>
-                          <a 
-                            href={file.url} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="p-1.5 hover:bg-white border border-transparent hover:border-slate-200 text-slate-500 hover:text-emerald-700 rounded-lg shrink-0 transition-all flex items-center justify-center cursor-pointer"
-                            title="Open File"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                          </a>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <a 
+                              href={file.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="p-1.5 hover:bg-white border border-transparent hover:border-slate-200 text-slate-500 hover:text-emerald-700 rounded-lg transition-all flex items-center justify-center cursor-pointer"
+                              title="Open File"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteUploadedFile(idx)}
+                              disabled={isSavingRecord}
+                              className="p-1.5 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer disabled:opacity-40"
+                              title="Delete File"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
