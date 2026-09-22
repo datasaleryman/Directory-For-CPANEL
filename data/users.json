@@ -1402,7 +1402,7 @@
   {
     "username": "lalainecabayaran",
     "passwordHash": "767328cadad3f46764bb7e4d61003d9dac998cd73b54146a14ce345638a23efe",
-    "role": "Staff",
+    "role": "IT",
     "displayName": "Lalaine Cabayaran",
     "avatarDataUrl": "",
     "fullName": "Lalaine Cabayaran",
@@ -1411,7 +1411,7 @@
     "status": "Pending",
     "createdAt": "2026-09-03T02:06:11.255Z",
     "passwordPlain": "11495",
-    "updatedAt": "2026-09-03T02:06:11.255Z"
+    "updatedAt": "2026-09-17T03:53:00.990Z"
   },
   {
     "username": "april",

@@ -585,35 +585,54 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
     }
   };
 
-  // Handle file selection for upload
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle file selection for upload (full binary integrity preservation)
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     const filesArray = Array.from(e.target.files) as File[];
-    
-    filesArray.forEach((file: File) => {
-      if (file.size > 5 * 1024 * 1024) {
-        showToast(`File "${file.name}" exceeds the 5MB size limit.`, 'error');
-        return;
+    if (filesArray.length === 0) return;
+
+    const validFiles: File[] = [];
+    for (const file of filesArray) {
+      if (file.size > 25 * 1024 * 1024) {
+        showToast(`File "${file.name}" exceeds the 25MB size limit.`, 'error');
+        continue;
       }
-      
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') {
-          setStagedFiles(prev => [
-            ...prev,
-            {
-              fileName: file.name,
-              fileData: reader.result as string,
-              size: file.size,
-              fileType: file.type || 'application/octet-stream'
-            }
-          ]);
-        }
-      };
-      reader.readAsDataURL(file);
-    });
-    // Clear input so same file can be selected again
-    e.target.value = '';
+      validFiles.push(file);
+    }
+
+    try {
+      const readResults = await Promise.all(
+        validFiles.map(file => {
+          return new Promise<{ fileName: string; fileData: string; size: number; fileType: string }>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              if (typeof reader.result === 'string') {
+                resolve({
+                  fileName: file.name,
+                  fileData: reader.result,
+                  size: file.size,
+                  fileType: file.type || 'application/octet-stream'
+                });
+              } else {
+                reject(new Error(`Failed to read binary data for "${file.name}"`));
+              }
+            };
+            reader.onerror = () => reject(reader.error || new Error(`Error reading file "${file.name}"`));
+            reader.readAsDataURL(file);
+          });
+        })
+      );
+
+      setStagedFiles(prev => [...prev, ...readResults]);
+      if (readResults.length > 0) {
+        showToast(`${readResults.length} file(s) attached and ready for submission.`, 'success');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error loading files', 'error');
+    } finally {
+      // Clear input so same file can be selected again
+      e.target.value = '';
+    }
   };
 
   const removeStagedFile = (index: number) => {
@@ -2297,7 +2316,6 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
                   </p>
                   <ul className="list-disc pl-4 space-y-1 text-red-900">
                     <li>This record will be permanently deleted from the local database.</li>
-                    <li>If synchronized, the corresponding record on the Base44 database will be removed.</li>
                     <li>Any associated files, verification status, and history will be permanently lost.</li>
                   </ul>
                 </div>

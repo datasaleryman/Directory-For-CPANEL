@@ -7,6 +7,8 @@ import {
   saveContactsBulkToCPanel,
   deleteContactFromCPanel,
   saveUserToCPanel,
+  updateUserRoleInCPanel,
+  updateUserStatusInCPanel,
   deleteUserFromCPanel,
   saveExistingAccountToCPanel,
   deleteExistingAccountFromCPanel,
@@ -23,7 +25,8 @@ import {
   saveCPanelDbConfig,
   testCPanelDbConnection,
   generateCPanelSchemaSql,
-  checkCPanelDbNeedsSync
+  checkCPanelDbNeedsSync,
+  getCPanelContactsStats
 } from './cpanel_db.js';
 
 // Intercept console functions to suppress Base44 429 rate-limiting logs (preventing artificial AI Studio applet failures)
@@ -512,6 +515,24 @@ export function isContactTombstoned(c: { id?: number | string; full_name?: strin
   });
 }
 
+export function removeContactTombstone(c: { id?: number | string; full_name?: string; barangay?: string }): void {
+  if (!c) return;
+  const targetId = c.id !== undefined && c.id !== null ? String(c.id).trim() : '';
+  const targetName = (c.full_name || '').trim();
+
+  const initialLen = deletedContactsCache.length;
+  deletedContactsCache = deletedContactsCache.filter(del => {
+    if (!del) return false;
+    if (targetId && del.id !== undefined && del.id !== null && del.id.toString().trim() === targetId) return false;
+    if (targetName && del.full_name && (normalizeCompareName(del.full_name, targetName) || targetName.toLowerCase() === del.full_name.toLowerCase().trim())) return false;
+    return true;
+  });
+
+  if (deletedContactsCache.length !== initialLen) {
+    safeWriteFile(DELETED_CONTACTS_FILE, JSON.stringify(deletedContactsCache, null, 2), 'utf-8').catch(() => {});
+  }
+}
+
 export function isExistingAccountTombstoned(acc: { id?: string; full_name?: string; barangay?: string }): boolean {
   if (!acc) return false;
   if (acc.barangay && isBarangayTombstoned(acc.barangay)) return true;
@@ -741,14 +762,14 @@ export function getSheetsStatus() {
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'recent-upload', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'IT': ['dashboard', 'map', 'directory', 'recent-upload', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'ADMIN': ['dashboard', 'map', 'directory', 'recent-upload', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'Administrator': ['dashboard', 'map', 'directory', 'recent-upload', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'LEADER': ['dashboard', 'map', 'directory', 'recent-upload', 'bulk', 'print', 'existing-account'],
-  'CO-LEADER': ['dashboard', 'map', 'directory', 'recent-upload', 'bulk', 'print', 'existing-account'],
-  'ENCODER': ['dashboard', 'map', 'directory', 'recent-upload', 'bulk', 'print', 'existing-account'],
-  'STAFF': ['dashboard', 'map', 'directory', 'recent-upload', 'bulk', 'print', 'existing-account']
+  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'IT': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'ADMIN': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'Administrator': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'LEADER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account'],
+  'CO-LEADER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account'],
+  'ENCODER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account'],
+  'STAFF': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account']
 };
 
 export interface SiteSettings {
@@ -1520,6 +1541,13 @@ export async function syncWithCPanelDb(username: string = 'admin'): Promise<{ su
       const activeContacts = (cpanelData.contacts || []).filter(c => c && !c.deleted_at && c.status !== 'DELETED');
       contactsCache = deduplicateContactsByName(activeContacts);
 
+      // Ensure active contacts from MySQL have any stale deletion tombstones cleared
+      for (const ac of activeContacts) {
+        if (!ac.isSubmitted && ac.status !== 'SUBMITTED') {
+          removeContactTombstone({ full_name: ac.full_name, id: ac.id });
+        }
+      }
+
       // Bidirectional user synchronization to protect new registrations
       await syncUsersFromCPanel();
 
@@ -2266,12 +2294,13 @@ export function getPublicBarangays(): string[] {
 }
 
 // User helper matching username or email
-export function normalizeUserStatus(status?: string): 'Active' | 'Pending' | 'Suspended' {
-  if (!status) return 'Active';
-  const s = status.trim().toLowerCase();
-  if (s.startsWith('pend')) return 'Pending';
+export function normalizeUserStatus(status?: string | number, defaultStatus: 'Active' | 'Pending' | 'Suspended' = 'Active'): 'Active' | 'Pending' | 'Suspended' {
+  if (status === undefined || status === null || String(status).trim() === '') return defaultStatus;
+  const s = String(status).trim().toLowerCase();
+  if (s.startsWith('pend') || s === '0' || s === 'unapproved' || s === 'awaiting' || s === 'unverified') return 'Pending';
   if (s.startsWith('susp') || s.startsWith('inact') || s.startsWith('block') || s === 'disabled') return 'Suspended';
-  return 'Active';
+  if (s.startsWith('act') || s === '1' || s === 'approved' || s === 'verified') return 'Active';
+  return defaultStatus;
 }
 
 export function findUser(input: string): User | undefined {
@@ -2767,7 +2796,10 @@ export async function updateUserRole(username: string, newRole: string, actorUse
 
   // Immediately persist updated role into cPanel MySQL Database
   try {
-    await saveUserToCPanel(user);
+    const directOk = await updateUserRoleInCPanel(user.username, user.email || '', trimmedRole);
+    if (!directOk) {
+      await saveUserToCPanel(user);
+    }
   } catch (cpanelErr: any) {
     console.warn('[cPanel User Role] Notice saving user to MySQL:', cpanelErr.message);
   }
@@ -2816,7 +2848,10 @@ export async function updateUserStatus(username: string, newStatus: 'Active' | '
 
   // Immediately persist updated status (e.g. Active approval) into cPanel MySQL Database
   try {
-    await saveUserToCPanel(user);
+    const directOk = await updateUserStatusInCPanel(user.username, user.email || '', newStatus);
+    if (!directOk) {
+      await saveUserToCPanel(user);
+    }
   } catch (cpanelErr: any) {
     console.warn('[cPanel User Status] Notice saving user to MySQL:', cpanelErr.message);
   }
@@ -4269,10 +4304,10 @@ export async function addContact(
   },
   username: string
 ) {
-  const rawName = contact.full_name.trim();
-  const rawBarangay = (contact.barangay || contact.address || '').trim();
+  const rawName = (contact.full_name || (contact as any).fullName || '').trim();
+  const rawBarangay = (contact.barangay || (contact as any).address || '').trim();
   const rawPurok = (contact.purok || '').trim();
-  const rawNumber = contact.contact_number.trim();
+  const rawNumber = (contact.contact_number || (contact as any).contactNumber || '').trim();
 
   if (!rawName || !rawBarangay || !rawNumber) {
     throw new Error('Full Name, Barangay, and Contact Number are required.');
@@ -4296,6 +4331,9 @@ export async function addContact(
   const updateLat = hasGeo ? Number(contact.latitude) : undefined;
   const updateLng = hasGeo ? Number(contact.longitude) : undefined;
   const updateGeotag = contact.geotagged !== undefined ? Boolean(contact.geotagged) : (hasGeo ? true : undefined);
+
+  // Clear any existing tombstone so this contact can be cleanly re-entered without being blocked
+  removeContactTombstone({ full_name: formattedName });
 
   if (existing) {
     if (existing.added_from_print_list === false) {
@@ -4338,6 +4376,7 @@ export async function addContact(
     added_from_print_list: true
   };
 
+  removeContactTombstone({ full_name: formattedName });
   contactsCache.push(newContact);
   await saveContacts();
   await addActivity(username, `Added contact: "${formattedName}" (${rawNumber})`);
@@ -4520,7 +4559,7 @@ export async function deleteContact(id: number | string, username: string) {
   await addActivity(username, `Permanently deleted contact from Clinic Directory: "${deletedContact.full_name}"`);
 
   if (isCPanelDbConnected()) {
-    deleteContactFromCPanel(deletedContact.id, new Date().toISOString()).catch(err => console.warn('Error deleting contact from cPanel DB:', err));
+    deleteContactFromCPanel(deletedContact.id, new Date().toISOString(), deletedContact.full_name, deletedContact.barangay).catch(err => console.warn('Error deleting contact from cPanel DB:', err));
   }
 
   resetGoogleSheetsCooldown();
@@ -5124,6 +5163,9 @@ export async function saveBulkImport(
 
     const nameKey = getCanonicalNameKey(formattedName);
 
+    // Clear any existing tombstone so re-entered contacts are not blocked
+    removeContactTombstone({ full_name: formattedName });
+
     // If option is add_as_new, always insert as a new contact even if name matches!
     if (option === 'add_as_new') {
       while (contactsCache.some(c => Number(c.id) === currentNextId)) {
@@ -5214,7 +5256,7 @@ export async function saveBulkImport(
         updated_at: new Date().toISOString(),
         deleted_at: null,
         added_locally: true,
-        added_from_print_list: false
+        added_from_print_list: true
       };
       contactsCache.push(newContact);
       appended.push(newContact);
@@ -5227,6 +5269,12 @@ export async function saveBulkImport(
   if (option !== 'add_as_new') {
     contactsCache = deduplicateContactsByName(contactsCache);
   }
+
+  // Clear any existing deletion tombstones for all imported contacts so they are fully active
+  for (const c of [...appended, ...updated]) {
+    removeContactTombstone({ full_name: c.full_name, id: c.id });
+  }
+
   await saveContacts();
   await addActivity(
     username,
@@ -5414,8 +5462,107 @@ async function pushBulkToSheets(appended: Contact[], updated: Contact[]) {
   }
 }
 
-// Dashboard statistics
-export function getDashboardStats() {
+// Helper to get valid date strings (YYYY-MM-DD) for today across client timezone, UTC, local server, and Asia/Manila
+export function getValidTodayDateStrings(clientDate?: string, clientTz?: string): string[] {
+  const validDates = new Set<string>();
+  if (clientDate && /^\d{4}-\d{2}-\d{2}$/.test(clientDate)) {
+    validDates.add(clientDate);
+  }
+  const now = new Date();
+  validDates.add(now.toISOString().slice(0, 10)); // UTC date
+  validDates.add(now.toLocaleDateString('en-CA')); // Server local date
+  try {
+    validDates.add(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(now));
+  } catch {}
+  if (clientTz) {
+    try {
+      validDates.add(new Intl.DateTimeFormat('en-CA', { timeZone: clientTz }).format(now));
+    } catch {}
+  }
+  return Array.from(validDates);
+}
+
+// Helper to determine if a contact was added today
+export function isContactAddedToday(c: Contact, clientDate?: string, clientTz?: string): boolean {
+  if (!c) return false;
+  const raw = c.created_at || (c as any).createdAt || (c as any).updated_at || '';
+  if (!raw) return false;
+
+  const validDateStrings = getValidTodayDateStrings(clientDate, clientTz);
+  const str = String(raw).trim();
+  for (const v of validDateStrings) {
+    if (str.startsWith(v)) return true;
+  }
+
+  try {
+    const parsed = new Date(str);
+    if (!isNaN(parsed.getTime())) {
+      const pUtc = parsed.toISOString().slice(0, 10);
+      const pLocal = parsed.toLocaleDateString('en-CA');
+      if (validDateStrings.includes(pUtc) || validDateStrings.includes(pLocal)) return true;
+      try {
+        const pManila = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(parsed);
+        if (validDateStrings.includes(pManila)) return true;
+      } catch {}
+      if (clientTz) {
+        try {
+          const pClient = new Intl.DateTimeFormat('en-CA', { timeZone: clientTz }).format(parsed);
+          if (validDateStrings.includes(pClient)) return true;
+        } catch {}
+      }
+    }
+  } catch {}
+
+  return false;
+}
+
+// Async Dashboard statistics that checks direct MySQL metrics if connected
+export async function getDashboardStatsAsync(clientDate?: string, clientTz?: string) {
+  const dateStrings = getValidTodayDateStrings(clientDate, clientTz);
+  let cpanelStats: { totalContacts: number; contactsToday: number; totalAddresses: number } | null = null;
+  if (isCPanelDbConnected()) {
+    try {
+      cpanelStats = await getCPanelContactsStats(dateStrings);
+    } catch (e: any) {
+      console.warn('[cPanel DB] Notice getting direct MySQL contacts stats:', e.message);
+    }
+  }
+
+  const activeContacts = deduplicateContactsByName(contactsCache.filter(isAvailableForDirectory));
+  
+  const totalContacts = (cpanelStats && cpanelStats.totalContacts !== undefined)
+    ? cpanelStats.totalContacts
+    : activeContacts.length;
+
+  const barangaySet = new Set<string>();
+  activeContacts.forEach(c => {
+    if (c.barangay) {
+      barangaySet.add(c.barangay.toLowerCase().trim());
+    }
+  });
+  const totalAddresses = (cpanelStats && cpanelStats.totalAddresses !== undefined)
+    ? cpanelStats.totalAddresses
+    : barangaySet.size;
+
+  const contactsToday = (cpanelStats && cpanelStats.contactsToday !== undefined)
+    ? cpanelStats.contactsToday
+    : activeContacts.filter(c => isContactAddedToday(c, clientDate, clientTz)).length;
+
+  const recentActivities = activitiesCache.slice(0, 15);
+
+  return {
+    totalContacts,
+    totalAddresses,
+    contactsToday,
+    recentActivities,
+    cpanelDbStatus: getCPanelDbStatus(),
+    sheetsStatus: getSheetsStatus(),
+    base44SyncStatus: getBase44SyncStatus()
+  };
+}
+
+// Synchronous Dashboard statistics fallback
+export function getDashboardStats(clientDate?: string, clientTz?: string) {
   const activeContacts = deduplicateContactsByName(contactsCache.filter(isAvailableForDirectory));
   
   // Total Contacts in PCU Directory
@@ -5430,9 +5577,8 @@ export function getDashboardStats() {
   });
   const totalAddresses = barangaySet.size;
 
-  // Contacts added today (PST or Server local time matching 2026-07-21)
-  const todayStr = new Date().toISOString().split('T')[0];
-  const contactsToday = activeContacts.filter(c => c.created_at.startsWith(todayStr)).length;
+  // Contacts added today (PST or Server local time matching today's date)
+  const contactsToday = activeContacts.filter(c => isContactAddedToday(c, clientDate, clientTz)).length;
 
   // Get recent activities (last 15)
   const recentActivities = activitiesCache.slice(0, 15);
@@ -7737,7 +7883,7 @@ function getMimeType(fileName: string, fallbackMime?: string): string {
   }
 }
 
-// Helper to parse base64 Data URLs without regex backtracking
+// Helper to parse base64 Data URLs without regex backtracking or byte corruption
 function parseDataUrl(dataUrl: string, fileName?: string): { mimeType: string, buffer: Buffer } {
   if (dataUrl && dataUrl.startsWith('data:')) {
     const commaIdx = dataUrl.indexOf(',');
@@ -7747,16 +7893,28 @@ function parseDataUrl(dataUrl: string, fileName?: string): { mimeType: string, b
       if (fileName) {
         mimeType = getMimeType(fileName, mimeType);
       }
-      const rawBase64 = dataUrl.substring(commaIdx + 1).replace(/\s/g, '');
+      let rawBase64 = dataUrl.substring(commaIdx + 1).trim();
+      if (rawBase64.includes('%')) {
+        try {
+          rawBase64 = decodeURIComponent(rawBase64);
+        } catch (_) {}
+      }
+      rawBase64 = rawBase64.replace(/\s/g, '');
       return { mimeType, buffer: Buffer.from(rawBase64, 'base64') };
     }
   }
   const fallbackMime = fileName ? getMimeType(fileName, 'application/octet-stream') : 'application/octet-stream';
-  const rawBase64 = (dataUrl || '').replace(/\s/g, '');
+  let rawBase64 = (dataUrl || '').trim();
+  if (rawBase64.includes('%')) {
+    try {
+      rawBase64 = decodeURIComponent(rawBase64);
+    } catch (_) {}
+  }
+  rawBase64 = rawBase64.replace(/\s/g, '');
   return { mimeType: fallbackMime, buffer: Buffer.from(rawBase64, 'base64') };
 }
 
-// Upload file to Base44 public CDN storage
+// Upload file to Base44 public CDN storage with strict byte integrity
 async function uploadFileToBase44(dataUrl: string, fileName: string, explicitMime?: string): Promise<string> {
   if (dataUrl && (dataUrl.startsWith('http://') || dataUrl.startsWith('https://'))) {
     return dataUrl;
@@ -7766,11 +7924,17 @@ async function uploadFileToBase44(dataUrl: string, fileName: string, explicitMim
     const mimeType = explicitMime && explicitMime !== 'application/octet-stream' 
       ? explicitMime 
       : (parsedMime && parsedMime !== 'application/octet-stream' ? parsedMime : getMimeType(fileName));
-    // Create a standard File object supported natively in Node.js 18+
-    const file = new File([buffer], fileName, { type: mimeType });
     
-    console.log(`[Base44 Upload] Uploading file "${fileName}" (${buffer.length} bytes, type: ${mimeType}) to Base44 storage...`);
+    // Create an isolated Uint8Array buffer slice to prevent Node pool slab offset corruption
+    const exactBytes = new Uint8Array(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+    const safeFileName = (fileName || 'document').replace(/[^\w.-]/g, '_');
+    const file = new File([exactBytes], safeFileName, { type: mimeType });
+    
+    console.log(`[Base44 Upload] Uploading file "${safeFileName}" (${exactBytes.length} bytes, type: ${mimeType}) to Base44 storage...`);
     const result = await base44.integrations.Core.UploadFile({ file });
+    if (!result || !result.file_url) {
+      throw new Error(`Upload returned no file_url from Base44.`);
+    }
     console.log(`[Base44 Upload] Successfully uploaded. URL: ${result.file_url}`);
     return result.file_url;
   } catch (err: any) {
@@ -8024,7 +8188,7 @@ export async function addPCUUpdate(
     if (isCPanelDbConnected()) {
       try {
         console.log(`[Submission Pipeline] Step 2: Marking contact "${fullName}" deleted in cPanel MySQL database...`);
-        await deleteContactFromCPanel(contact.id, new Date().toISOString());
+        await deleteContactFromCPanel(contact.id, new Date().toISOString(), fullName, contact.barangay);
         console.log(`[Submission Pipeline] Step 2 Confirmed: Contact "${fullName}" deleted in cPanel MySQL database.`);
       } catch (err: any) {
         cpanelSyncSuccess = false;
@@ -8390,7 +8554,7 @@ export async function addPCUUpdatesMultiple(
     if (isCPanelDbConnected()) {
       try {
         console.log(`[Submission Pipeline] Step 2: Marking contact "${fullName}" deleted in cPanel MySQL database...`);
-        await deleteContactFromCPanel(contact.id, new Date().toISOString());
+        await deleteContactFromCPanel(contact.id, new Date().toISOString(), fullName, contact.barangay);
         console.log(`[Submission Pipeline] Step 2 Confirmed: Contact "${fullName}" deleted in cPanel MySQL database.`);
       } catch (err: any) {
         cpanelSyncSuccess = false;
@@ -8447,6 +8611,99 @@ export async function addPCUUpdatesMultiple(
   }
 
   return contact;
+}
+
+/**
+ * Directly submits a contact from the PCU Directory to Base44.
+ * Once successfully submitted to Base44, the contact is automatically and permanently
+ * deleted from the cPanel MySQL database and the PCU Directory.
+ */
+export async function submitContactToBase44(contactIdOrName: string | number, username: string = 'Admin') {
+  const idStr = String(contactIdOrName).trim();
+  const idNum = !isNaN(Number(contactIdOrName)) ? Number(contactIdOrName) : null;
+
+  let contact = contactsCache.find(c => {
+    if (!c) return false;
+    const cIdStr = c.id !== undefined && c.id !== null ? String(c.id).trim() : '';
+    if (idStr && cIdStr && cIdStr === idStr) return true;
+    if (idNum !== null && Number(c.id) === idNum) return true;
+    if (normalizeCompareName(c.full_name, idStr)) return true;
+    return false;
+  });
+
+  if (!contact) {
+    throw new Error(`Contact "${contactIdOrName}" not found in PCU Directory.`);
+  }
+
+  const fullName = contact.full_name;
+  const barangay = contact.barangay || '';
+
+  // 1. Submit to Base44
+  console.log(`[PCU Directory] Submitting contact "${fullName}" to Base44 database...`);
+  contact.isSubmitted = true;
+  contact.submittedAt = new Date().toISOString();
+  contact.status = 'SUBMITTED';
+  contact.updated_at = new Date().toISOString();
+
+  try {
+    await saveContactToBase44(contact, username);
+    console.log(`[PCU Directory] Confirmed: Contact "${fullName}" saved to Base44 database.`);
+  } catch (bErr: any) {
+    console.error(`[PCU Directory] Error: Base44 save failed:`, bErr);
+    throw new Error(`Failed to submit contact to Base44 database: ${bErr.message || bErr}. Contact was kept in PCU Directory.`);
+  }
+
+  // 2. Permanently delete from cPanel MySQL database
+  let cpanelSyncSuccess = true;
+  let cpanelSyncWarning: string | null = null;
+  if (isCPanelDbConnected()) {
+    try {
+      console.log(`[PCU Directory] Permanently deleting contact "${fullName}" from cPanel MySQL database...`);
+      await deleteContactFromCPanel(contact.id, new Date().toISOString(), fullName, barangay);
+      console.log(`[PCU Directory] Confirmed: Contact "${fullName}" deleted from cPanel MySQL database.`);
+    } catch (cErr: any) {
+      cpanelSyncSuccess = false;
+      cpanelSyncWarning = cErr.message || 'Error deleting from cPanel MySQL database';
+      console.warn('[PCU Directory] Warning deleting from cPanel MySQL:', cpanelSyncWarning);
+    }
+  }
+
+  // 3. Record tombstone in deletedContactsCache with submitted_to_base44: true
+  const targetContactId = contact.id;
+  deletedContactsCache = deletedContactsCache.filter(d => 
+    !(targetContactId && d.id && d.id.toString() === targetContactId.toString()) && 
+    !(fullName && d.full_name && normalizeCompareName(d.full_name, fullName))
+  );
+  deletedContactsCache.push({
+    id: targetContactId,
+    full_name: fullName,
+    barangay: barangay,
+    deletedAt: new Date().toISOString(),
+    submitted_to_base44: true
+  });
+  await safeWriteFile(DELETED_CONTACTS_FILE, JSON.stringify(deletedContactsCache, null, 2), 'utf-8');
+  syncDeletedRecordsToGoogleSheets(true).catch(err => console.error('Failed to sync deleted records to Google Sheets:', err));
+
+  // 4. Permanently remove from contactsCache so it NEVER displays in PCU Directory
+  contactsCache = contactsCache.filter(c => 
+    !(targetContactId && c.id && c.id.toString() === targetContactId.toString()) && 
+    !(fullName && c.full_name && normalizeCompareName(c.full_name, fullName))
+  );
+  await saveContacts();
+
+  // 5. Delete from Google Sheets if enabled
+  if (sheetsConfig.syncEnabled) {
+    deleteContactPermanentlyFromGoogleSheets(contact).catch(() => {});
+  }
+
+  await addActivity(username, `Submitted contact "${fullName}" to Base44 database and permanently deleted from PCU Directory.`);
+
+  return {
+    success: true,
+    message: `Contact "${fullName}" successfully submitted to Base44 database and automatically deleted from PCU Directory.`,
+    cpanelSyncSuccess,
+    cpanelSyncWarning: cpanelSyncWarning || undefined
+  };
 }
 
 // Get all PCU Updates
@@ -8781,16 +9038,11 @@ export async function removePCUFileFromContact(contactId: number | string, usern
           );
         });
 
-        for (const entry of matchingEntries) {
-          if (entry.id && typeof pcuEntity.delete === 'function') {
-            console.log(`[Base44 SDK] Automatically deleting matching PCUUpdate record ${entry.id} from base44 database...`);
-            await pcuEntity.delete(entry.id);
-          }
-        }
+        // Note: Application is submission-only and strictly never deletes records from Base44 database
       }
     }
   } catch (err: any) {
-    console.error('[Base44 SDK Warning] Failed to delete matching PCUUpdate from Base44 DB:', err.message || err);
+    console.error('[Base44 SDK Warning] Error in removePCUFileFromContact:', err.message || err);
   }
 
   // Remove matching updates from local cache
@@ -9064,7 +9316,8 @@ export async function syncToBase44MemberVerifiedSubmission(existingAccount: Exis
 
     const itemsToIterate = filesToSync.length > 0 ? filesToSync : [{ url: '', name: '' }];
 
-    for (const currentFile of itemsToIterate) {
+    for (const item of itemsToIterate) {
+      const currentFile = item as any;
       const rawUrl = currentFile.fileUrl || currentFile.url || '';
       // Ensure we NEVER send raw data URLs to Base44 string fields
       const fileUrl = (rawUrl && !rawUrl.startsWith('data:')) ? rawUrl : '';
@@ -9289,35 +9542,8 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
   }
   existingAccount.uploadedFiles = processedFiles;
 
-  let mergedAttachments = [...processedFiles];
-  try {
-    const subs = await getCachedHouseholdSubmissions(false);
-    const existingSub = subs.find((s: any) => s.id === id || (s.memberName && s.memberName.trim().toUpperCase() === fullName));
-    if (existingSub && Array.isArray(existingSub.attachments)) {
-      for (const oldAtt of existingSub.attachments) {
-        const oldUrl = oldAtt.fileUrl || oldAtt.url;
-        const oldName = oldAtt.fileName || oldAtt.name;
-        const isDuplicate = mergedAttachments.some(a => (oldUrl && a.fileUrl === oldUrl) || (oldName && a.fileName === oldName));
-        if (!isDuplicate && oldUrl) {
-          mergedAttachments.push({
-            name: oldAtt.name || `${fullName} (Member)`,
-            fileName: oldAtt.fileName || oldName || 'attachment',
-            fileUrl: oldUrl,
-            url: oldUrl,
-            fileType: oldAtt.fileType || getMimeType(oldName),
-            size: oldAtt.size || 0,
-            uploadedAt: oldAtt.uploadedAt || new Date().toISOString(),
-            uploadedBy: oldAtt.uploadedBy || uName
-          });
-        }
-      }
-    }
-  } catch (mergeErr: any) {
-    console.warn('[Base44 SDK] Failed to check existing attachments for merge:', mergeErr.message);
-  }
-
-  // Filter out any invalid items where fileUrl is still a data URL or empty
-  const validAttachments = mergedAttachments.filter(a => a.fileUrl && !a.fileUrl.startsWith('data:'));
+  // Application is strictly submission-only: keep uploaded attachments intact and direct without pulling/merging stale records
+  const validAttachments = processedFiles.filter(a => a.fileUrl && !a.fileUrl.startsWith('data:'));
   const primaryAttachmentUrl = validAttachments[0]?.fileUrl || null;
   const primaryAttachmentName = validAttachments[0]?.fileName || null;
 
@@ -9526,8 +9752,8 @@ export async function updateLocalExistingAccount(
           console.log(`[Base44 Upload] Processing staged file "${fName}" for "${existingAccount.full_name}"...`);
           fileUrl = await uploadFileToBase44(f.fileData, fName, mType);
         } catch (err: any) {
-          console.warn(`[Base44 Upload Warning] Failed to upload "${fName}" to Base44 storage, using data URL fallback:`, err.message);
-          fileUrl = f.fileData.startsWith('data:') ? f.fileData : `data:${mType};base64,${f.fileData}`;
+          console.error(`[Base44 Upload Error] Failed to upload "${fName}" to Base44 storage:`, err);
+          throw new Error(`Failed to upload attachment "${fName}" to Base44 storage: ${err.message || 'Upload failed'}. Aborted submission to guarantee attachment integrity.`);
         }
       } else {
         fileUrl = f.fileData.startsWith('data:') ? f.fileData : `data:${mType};base64,${f.fileData}`;
@@ -9560,7 +9786,8 @@ export async function updateLocalExistingAccount(
           uFile.url = cdnUrl;
           uFile.fileUrl = cdnUrl;
         } catch (err: any) {
-          console.warn(`[Base44 Upload Warning] Failed to convert data URL for "${uFile.name}":`, err.message);
+          console.error(`[Base44 Upload Error] Failed to convert data URL for "${uFile.name}":`, err);
+          throw new Error(`Failed to upload attachment "${uFile.fileName || uFile.name}" to Base44 storage: ${err.message || 'Upload failed'}. Aborted submission to guarantee attachment integrity.`);
         }
       }
     }

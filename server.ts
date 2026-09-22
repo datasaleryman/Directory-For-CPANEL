@@ -12,6 +12,7 @@ import {
   previewBulkImport,
   saveBulkImport,
   getDashboardStats,
+  getDashboardStatsAsync,
   findUser,
   findUserByEmail,
   hashPassword,
@@ -79,7 +80,8 @@ import {
   getAllBarangaysRaw,
   getAllActivitiesRaw,
   syncWithCPanelDb,
-  syncUsersFromCPanel
+  syncUsersFromCPanel,
+  submitContactToBase44
 } from './server/db.js';
 import {
   loadCPanelDbConfig,
@@ -458,6 +460,13 @@ export async function getApp(httpServer?: http.Server) {
   // Get raw Base44 Household Submissions list for Print List page
   app.get('/api/base44/households', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
+      if (isCPanelDbConnected() && (await checkCPanelDbNeedsSync())) {
+        try {
+          await syncWithCPanelDb();
+        } catch (syncErr: any) {
+          console.warn('[cPanel DB] Base44 households sync warning:', syncErr.message);
+        }
+      }
       const households = await fetchHouseholdSubmissionsFromBase44();
       res.json(households);
     } catch (err: any) {
@@ -756,12 +765,20 @@ export async function getApp(httpServer?: http.Server) {
   // Add single contact
   app.post('/api/contacts', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { full_name, barangay, purok, address, contact_number, latitude, longitude, geotagged, maintenance, maintenance_medicine } = req.body;
+      const full_name = req.body.full_name || req.body.fullName || '';
+      const contact_number = req.body.contact_number || req.body.contactNumber || '';
+      const barangay = req.body.barangay || req.body.address || '';
+      const purok = req.body.purok || '';
+      const latitude = req.body.latitude;
+      const longitude = req.body.longitude;
+      const geotagged = req.body.geotagged;
+      const maintenance = req.body.maintenance;
+      const maintenance_medicine = req.body.maintenance_medicine || req.body.maintenanceMedicine || '';
       const username = req.user?.username || 'Admin';
 
       const contact = await addContact({
         full_name,
-        barangay: barangay || address || '',
+        barangay,
         purok,
         contact_number,
         latitude: latitude !== undefined && latitude !== null ? parseFloat(latitude) : undefined,
@@ -797,6 +814,21 @@ export async function getApp(httpServer?: http.Server) {
         maintenance_medicine: maintenance_medicine !== undefined ? maintenance_medicine : undefined
       }, username);
       res.json(contact);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Submit contact directly to Base44 and permanently delete from PCU Directory and cPanel MySQL
+  app.post('/api/contacts/:id/submit-base44', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const idRaw = req.params.id;
+      const idNum = parseInt(idRaw, 10);
+      const id = !isNaN(idNum) && String(idNum) === idRaw ? idNum : idRaw;
+      const username = req.user?.username || 'Admin';
+
+      const result = await submitContactToBase44(id, username);
+      res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
@@ -995,14 +1027,19 @@ export async function getApp(httpServer?: http.Server) {
   // Get Dashboard Metrics & logs
   app.get('/api/dashboard/stats', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      if (isCPanelDbConnected() && (await checkCPanelDbNeedsSync())) {
+      if (isCPanelDbConnected()) {
         try {
-          await syncWithCPanelDb();
+          const needsSync = await checkCPanelDbNeedsSync(true);
+          if (needsSync) {
+            await syncWithCPanelDb();
+          }
         } catch (syncErr: any) {
           console.warn('[cPanel DB] Dashboard stats sync warning:', syncErr.message);
         }
       }
-      const stats = getDashboardStats();
+      const clientDate = req.query.date as string | undefined;
+      const clientTz = req.query.tz as string | undefined;
+      const stats = await getDashboardStatsAsync(clientDate, clientTz);
       res.json(stats);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

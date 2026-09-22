@@ -1,5 +1,59 @@
 [
   {
+    "id": "9fb01c50-38ce-4033-a31c-f4f5aea0dca4",
+    "timestamp": "2026-09-17T23:17:58.890Z",
+    "username": "admin",
+    "action": "Permanently deleted contact from Clinic Directory: \"Test Patient Accuracy\""
+  },
+  {
+    "id": "26a9fbcb-3e4d-4d7e-98c1-e77bb1f9571a",
+    "timestamp": "2026-09-17T23:17:54.545Z",
+    "username": "admin",
+    "action": "Added contact: \"Test Patient Accuracy\" (09123456789)"
+  },
+  {
+    "id": "a80d0b90-ef80-4820-994a-65128be6d711",
+    "timestamp": "2026-09-17T23:17:45.237Z",
+    "username": "admin",
+    "action": "Permanently deleted contact from Clinic Directory: \"Test Patient Accuracy\""
+  },
+  {
+    "id": "b0952931-4cec-416c-9e62-eea52b1e44da",
+    "timestamp": "2026-09-17T23:17:36.771Z",
+    "username": "admin",
+    "action": "Added contact: \"Test Patient Accuracy\" (09123456789)"
+  },
+  {
+    "id": "b427d9ba-c0d6-4994-9329-f37e6561e7e6",
+    "timestamp": "2026-09-17T23:16:35.993Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "8833969d-ef90-4a8f-9fa1-abc057c819e0",
+    "timestamp": "2026-09-17T03:53:00.991Z",
+    "username": "admin",
+    "action": "Updated user @lalainecabayaran (Lalaine Cabayaran) role permission to IT"
+  },
+  {
+    "id": "0847ebd8-a30c-4102-9c5f-2419d874ab3b",
+    "timestamp": "2026-09-17T03:52:53.342Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "44ec37eb-9b6b-4e9a-b31a-a67eb804edf9",
+    "timestamp": "2026-09-17T03:28:39.987Z",
+    "username": "admin",
+    "action": "Performed bulk entry import. Saved: 8 records (including 8 updated records), Skipped: 0."
+  },
+  {
+    "id": "a7ad774c-5b88-4a5a-8841-c01354d165cc",
+    "timestamp": "2026-09-17T03:28:20.354Z",
+    "username": "admin",
+    "action": "Performed bulk entry import. Saved: 8 records (including 8 updated records), Skipped: 0."
+  },
+  {
     "id": "f98f4bdb-31f7-4f6a-a350-99f69b662aae",
     "timestamp": "2026-09-15T03:01:56.700Z",
     "username": "admin",

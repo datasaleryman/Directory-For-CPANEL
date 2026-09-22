@@ -143,26 +143,55 @@ export function sanitizeInput(req: Request, res: Response, next: NextFunction) {
     return next();
   }
 
+  const fileKeys = new Set([
+    'fileData',
+    'files',
+    'uploadedFiles',
+    'attachments',
+    'stagedFiles',
+    'photoDataUrl',
+    'fileContent',
+    'fileUrl',
+    'url',
+    'fileType',
+    'mimeType',
+    'fileName'
+  ]);
+
   const sanitize = (val: any): any => {
     if (typeof val === 'string') {
-      // Do not sanitize base64 data URLs or standard http/https URLs of files/images to avoid corrupting them
-      if ((val.startsWith('data:') && val.includes(';base64,')) || val.startsWith('http://') || val.startsWith('https://')) {
+      const trimmed = val.trim();
+      // Do not sanitize base64 data URLs, http/https URLs, or blob URLs
+      if (
+        trimmed.startsWith('data:') ||
+        trimmed.startsWith('http://') ||
+        trimmed.startsWith('https://') ||
+        trimmed.startsWith('blob:')
+      ) {
         return val;
       }
-      // Basic escaping of < > & " ' and / to prevent script injection (XSS protection)
+      // Do not sanitize MIME types (e.g. application/pdf, image/jpeg)
+      if (/^[a-z0-9.+_-]+\/[a-z0-9.+_-]+$/i.test(trimmed)) {
+        return val;
+      }
+      // Do not sanitize raw base64 data strings (long alphanumeric + / + =)
+      if (trimmed.length > 50 && /^[A-Za-z0-9+/=]+$/.test(trimmed)) {
+        return val;
+      }
+      // Escaping of < > & " and ' to prevent HTML script injection (XSS protection)
+      // Note: Never replace '/' with '&#x2F;' to prevent corrupting dates, paths, filenames, or file attachments
       return val
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#x27;')
-        .replace(/\//g, '&#x2F;');
+        .replace(/'/g, '&#x27;');
     } else if (Array.isArray(val)) {
       return val.map(sanitize);
     } else if (typeof val === 'object' && val !== null) {
       const sanitized: any = {};
       for (const key of Object.keys(val)) {
-        if (key === 'fileData' || key === 'files' || key === 'uploadedFiles' || key === 'photoDataUrl' || key === 'fileContent') {
+        if (fileKeys.has(key)) {
           sanitized[key] = val[key];
         } else {
           sanitized[key] = sanitize(val[key]);

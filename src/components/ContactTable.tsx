@@ -15,6 +15,28 @@ export const isContactLocked = (c: Contact | null | undefined): boolean => {
     (c.uploadedFiles && Array.isArray(c.uploadedFiles) && c.uploadedFiles.length > 0)
   );
 };
+
+export const deduplicateContactsByFullName = (items: Contact[]): Contact[] => {
+  const seen = new Set<string>();
+  const unique: Contact[] = [];
+  for (const item of items) {
+    if (!item || item.deleted_at) continue;
+    const nameKey = (item.full_name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean)
+      .sort()
+      .join(' ');
+    const key = nameKey || (item.id !== undefined && item.id !== null ? String(item.id) : '');
+    if (!seen.has(key)) {
+      seen.add(key);
+      unique.push(item);
+    }
+  }
+  return unique;
+};
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -269,6 +291,8 @@ export const ContactTable: React.FC<ContactTableProps> = ({
   const [highlightedContactId, setHighlightedContactId] = useState<number | string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Contact | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [submitBase44Target, setSubmitBase44Target] = useState<Contact | null>(null);
+  const [submittingBase44, setSubmittingBase44] = useState(false);
   const [deleteFolderTarget, setDeleteFolderTarget] = useState<string | null>(null);
   const [deletingFolder, setDeletingFolder] = useState(false);
 
@@ -776,7 +800,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
       }
 
       const rawContacts: Contact[] = data.contacts || [];
-      setContacts(rawContacts);
+      setContacts(deduplicateContactsByFullName(rawContacts));
       setTotal(data.total || 0);
       setTotalPages(data.totalPages || 1);
       setAllPuroks(data.allPuroks || []);
@@ -968,7 +992,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
       setIsEditingContactInModal(false);
       
       // Immediately reflect edited data in the contacts list for instant UI feedback
-      setContacts(prev => prev.map(c => {
+      setContacts(prev => deduplicateContactsByFullName(prev.map(c => {
         const idMatch = String(c.id) === String(data.id);
         const nameMatch = Boolean(c.full_name && data.full_name && c.full_name.trim().toLowerCase() === data.full_name.trim().toLowerCase());
         if (idMatch || nameMatch) {
@@ -983,7 +1007,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
           };
         }
         return c;
-      }));
+      })));
 
       // Refresh list to keep parent sync
       fetchContacts(false, page, true);
@@ -994,13 +1018,15 @@ export const ContactTable: React.FC<ContactTableProps> = ({
     }
   };
 
-  // Perform soft delete operations
+  // Permanently delete contact from MySQL and directory
   const handleDeleteConfirm = async () => {
     if (!deleteTarget) return;
     setDeleting(true);
+    const targetId = deleteTarget.id;
+    const targetName = deleteTarget.full_name;
 
     try {
-      const res = await fetch(`/api/contacts/${deleteTarget.id}`, {
+      const res = await fetch(`/api/contacts/${targetId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${authToken}` }
       });
@@ -1010,14 +1036,60 @@ export const ContactTable: React.FC<ContactTableProps> = ({
         throw new Error(data.error || 'Failed to delete record.');
       }
 
-      showToast(`Contact "${deleteTarget.full_name}" has been soft-deleted successfully.`, 'success');
+      // Immediately remove from active directory state
+      setContacts(prev => prev.filter(c => 
+        String(c.id) !== String(targetId) &&
+        (!c.full_name || c.full_name.trim().toLowerCase() !== targetName.trim().toLowerCase())
+      ));
+
+      showToast(`Contact "${targetName}" has been permanently deleted from MySQL database.`, 'success');
       setDeleteTarget(null);
       onDeleted();
-      fetchContacts();
+      fetchContacts(false, page, true);
     } catch (err: any) {
       showToast(err.message, 'error');
     } finally {
       setDeleting(false);
+    }
+  };
+
+  // Direct submit to Base44 database (automatically permanently deletes from PCU Directory)
+  const handleSubmitBase44Confirm = async () => {
+    if (!submitBase44Target) return;
+    setSubmittingBase44(true);
+    const targetId = submitBase44Target.id;
+    const targetName = submitBase44Target.full_name;
+
+    try {
+      const res = await fetch(`/api/contacts/${targetId}/submit-base44`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        }
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to submit contact to Base44 database.');
+      }
+
+      // Automatically remove from directory table
+      setContacts(prev => prev.filter(c => 
+        String(c.id) !== String(targetId) &&
+        (!c.full_name || c.full_name.trim().toLowerCase() !== targetName.trim().toLowerCase())
+      ));
+
+      setSubmitBase44Target(null);
+      if (viewContact && (String(viewContact.id) === String(targetId) || viewContact.full_name === targetName)) {
+        setViewContact(null);
+      }
+      showToast(`Contact "${targetName}" was successfully submitted to Base44 database and automatically deleted from PCU Directory!`, 'success');
+      fetchContacts(false, page, true);
+    } catch (err: any) {
+      showToast(err.message, 'error');
+    } finally {
+      setSubmittingBase44(false);
     }
   };
 
@@ -2381,6 +2453,13 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                                     <Edit2 className="w-4 h-4" />
                                   </button>
                                   <button
+                                    onClick={(e) => { e.stopPropagation(); setSubmitBase44Target(contact); }}
+                                    className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Submit to Base44 database (removes from directory)"
+                                  >
+                                    <Database className="w-4 h-4" />
+                                  </button>
+                                  <button
                                     onClick={(e) => { e.stopPropagation(); setDeleteTarget(contact); }}
                                     className="p-1.5 text-slate-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                                     title="Delete record"
@@ -2553,6 +2632,13 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                                 title="Edit contact"
                               >
                                 <Edit2 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); setSubmitBase44Target(contact); }}
+                                className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                                title="Submit to Base44 database (removes from directory)"
+                              >
+                                <Database className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setDeleteTarget(contact); }}
@@ -3093,7 +3179,19 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                         )}
                       </div>
 
-                      <div className="pt-5">
+                      <div className="pt-5 flex flex-col gap-2">
+                        {stagedPcuFiles.length === 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSubmitBase44Target(viewContact);
+                            }}
+                            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer min-h-[42px] flex items-center justify-center gap-2 shadow-sm font-display"
+                          >
+                            <Database className="w-4 h-4" />
+                            Submit Contact to Base44 Database
+                          </button>
+                        )}
                         <button
                           onClick={() => setViewContact(null)}
                           className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer min-h-[42px]"
@@ -3212,7 +3310,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
 
               <h3 className="text-lg font-bold text-slate-800 font-display">Delete Household Record?</h3>
               <p className="text-xs text-slate-500 mt-1">
-                Are you sure you want to soft-delete <strong className="text-slate-700">{deleteTarget.full_name}</strong> from directory?
+                Are you sure you want to permanently delete <strong className="text-slate-700">{deleteTarget.full_name}</strong>? This will permanently remove the record from the MySQL database and allow it to be re-entered.
               </p>
 
               <div className="pt-6 flex gap-3">
@@ -3227,7 +3325,47 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                   disabled={deleting}
                   className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 min-h-[42px]"
                 >
-                  {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Delete Record'}
+                  {deleting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Delete Permanently'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal: Submit to Base44 Confirmation */}
+      <AnimatePresence>
+        {submitBase44Target && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-900/40 backdrop-blur-xs overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl max-w-sm w-full p-5 sm:p-6 text-center shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto my-auto"
+            >
+              <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center mx-auto mb-4">
+                <Database className="w-6 h-6" />
+              </div>
+
+              <h3 className="text-lg font-bold text-slate-800 font-display">Submit to Base44 Database?</h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Are you sure you want to submit <strong className="text-slate-700">{submitBase44Target.full_name}</strong> to the Base44 database? Once submitted, it will be automatically and permanently deleted from the PCU Directory.
+              </p>
+
+              <div className="pt-6 flex gap-3">
+                <button
+                  onClick={() => setSubmitBase44Target(null)}
+                  className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer min-h-[42px]"
+                  disabled={submittingBase44}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSubmitBase44Confirm}
+                  disabled={submittingBase44}
+                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 min-h-[42px]"
+                >
+                  {submittingBase44 ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Submit & Delete'}
                 </button>
               </div>
             </motion.div>

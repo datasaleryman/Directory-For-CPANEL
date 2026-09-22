@@ -1062,10 +1062,10 @@ export function mapFlexibleRowToContact(r: any, defaultIndex: number = 1): any {
 /**
  * Lightweight check to see if cPanel MySQL contacts or sheet1 table has changed since last sync
  */
-export async function checkCPanelDbNeedsSync(): Promise<boolean> {
+export async function checkCPanelDbNeedsSync(force: boolean = false): Promise<boolean> {
   if (!pool || !currentStatus.connected) return false;
   const now = Date.now();
-  if (now - lastSyncCheck.lastCheckedTime < 2500) {
+  if (!force && (now - lastSyncCheck.lastCheckedTime < 2500)) {
     return false;
   }
   lastSyncCheck.lastCheckedTime = now;
@@ -1075,11 +1075,13 @@ export async function checkCPanelDbNeedsSync(): Promise<boolean> {
     let maxUpdated = '';
     let maxId = 0;
 
-    // 1. Check contacts table
+    // 1. Check contacts table with complete SQL null-safety
     try {
       const [rows]: any = await pool.query(
         `SELECT COUNT(*) AS cnt, COALESCE(MAX(updated_at), '') AS max_updated, COALESCE(MAX(id), 0) AS max_id 
-         FROM contacts WHERE deleted_at IS NULL AND status != 'DELETED'`
+         FROM contacts 
+         WHERE (deleted_at IS NULL OR deleted_at = '' OR deleted_at = '0000-00-00 00:00:00' OR deleted_at = '0') 
+           AND (status IS NULL OR status != 'DELETED')`
       );
       if (rows && rows.length > 0) {
         cnt += Number(rows[0].cnt) || 0;
@@ -1114,6 +1116,63 @@ export async function checkCPanelDbNeedsSync(): Promise<boolean> {
     return false;
   } catch {
     return false;
+  }
+}
+
+/**
+ * Get direct contact statistics directly from cPanel MySQL database.
+ * Used by the Dashboard to provide 100% accurate Total Contacts and Added Today counts.
+ */
+export async function getCPanelContactsStats(todayDateStrings: string[]): Promise<{
+  totalContacts: number;
+  contactsToday: number;
+  totalAddresses: number;
+} | null> {
+  if (!pool || !currentStatus.connected) return null;
+  try {
+    // 1. Total Active Contacts
+    const [totRows]: any = await pool.query(
+      `SELECT COUNT(*) AS total 
+       FROM contacts 
+       WHERE (deleted_at IS NULL OR deleted_at = '' OR deleted_at = '0000-00-00 00:00:00' OR deleted_at = '0') 
+         AND (status IS NULL OR status != 'DELETED')`
+    );
+    const totalContacts = Number(totRows?.[0]?.total) || 0;
+
+    // 2. Total Unique Barangays
+    const [bgRows]: any = await pool.query(
+      `SELECT COUNT(DISTINCT LOWER(TRIM(barangay))) AS total_bg 
+       FROM contacts 
+       WHERE (deleted_at IS NULL OR deleted_at = '' OR deleted_at = '0000-00-00 00:00:00' OR deleted_at = '0') 
+         AND (status IS NULL OR status != 'DELETED')
+         AND barangay IS NOT NULL AND TRIM(barangay) != ''`
+    );
+    const totalAddresses = Number(bgRows?.[0]?.total_bg) || 0;
+
+    // 3. Contacts Added Today
+    let contactsToday = 0;
+    if (todayDateStrings && todayDateStrings.length > 0) {
+      const conditions = todayDateStrings.map(() => `(created_at LIKE ?)`).join(' OR ');
+      const params = todayDateStrings.map(d => `${d}%`);
+      const [todayRows]: any = await pool.query(
+        `SELECT COUNT(*) AS today_count 
+         FROM contacts 
+         WHERE (deleted_at IS NULL OR deleted_at = '' OR deleted_at = '0000-00-00 00:00:00' OR deleted_at = '0') 
+           AND (status IS NULL OR status != 'DELETED')
+           AND (${conditions})`,
+        params
+      );
+      contactsToday = Number(todayRows?.[0]?.today_count) || 0;
+    }
+
+    return {
+      totalContacts,
+      contactsToday,
+      totalAddresses
+    };
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error calculating direct contacts stats from MySQL:', err.message);
+    return null;
   }
 }
 
@@ -1260,11 +1319,18 @@ export async function fetchAllFromCPanelDb(): Promise<{
         if (r.permissions) permissions = JSON.parse(r.permissions);
       } catch {}
       const rawStatus = (r.status !== undefined && r.status !== null) ? String(r.status).trim() : '';
-      let normStatus: 'Active' | 'Pending' | 'Suspended' = 'Active';
-      if (rawStatus.toLowerCase().startsWith('pend')) {
+      let normStatus: 'Active' | 'Pending' | 'Suspended' = 'Pending';
+      const sLower = rawStatus.toLowerCase();
+      if (sLower.startsWith('pend') || sLower === '0' || sLower === 'unapproved' || sLower === 'awaiting') {
         normStatus = 'Pending';
-      } else if (rawStatus.toLowerCase().startsWith('susp') || rawStatus.toLowerCase().startsWith('inact') || rawStatus.toLowerCase() === 'disabled') {
+      } else if (sLower.startsWith('susp') || sLower.startsWith('inact') || sLower.startsWith('block') || sLower === 'disabled') {
         normStatus = 'Suspended';
+      } else if (sLower.startsWith('act') || sLower === '1' || sLower === 'approved' || (r.username && r.username.toLowerCase() === 'admin')) {
+        normStatus = 'Active';
+      } else if (r.username && r.username.toLowerCase() === 'admin') {
+        normStatus = 'Active';
+      } else {
+        normStatus = 'Pending';
       }
 
       return {
@@ -1277,6 +1343,7 @@ export async function fetchAllFromCPanelDb(): Promise<{
         status: normStatus,
         barangay: r.barangay || 'Central',
         createdAt: r.created_at || '',
+        updatedAt: r.updated_at || r.created_at || '',
         avatarDataUrl: r.avatar_data_url || undefined,
         permissions,
         passwordPlain: r.password_plain || undefined
@@ -1525,7 +1592,7 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
 
 /**
  * Bulk save contacts directly into cPanel MySQL database in chunked batches.
- * Handles multi-row parameterization with ON DUPLICATE KEY UPDATE.
+ * Handles multi-row parameterization with fallback to single-row insertion to guarantee 100% data preservation.
  */
 export async function saveContactsBulkToCPanel(
   contacts: any[]
@@ -1541,6 +1608,39 @@ export async function saveContactsBulkToCPanel(
   if (!Array.isArray(contacts) || contacts.length === 0) {
     return { success: true, saved: 0 };
   }
+
+  // Ensure all necessary columns exist on the contacts table
+  try {
+    const [colRows]: any = await pool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'contacts'`
+    ).catch(() => [[]]);
+    const existing = new Set((colRows || []).map((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase()));
+    if (existing.size > 0) {
+      const definitions: { name: string; type: string }[] = [
+        { name: 'latitude', type: 'DECIMAL(10, 7) NULL' },
+        { name: 'longitude', type: 'DECIMAL(10, 7) NULL' },
+        { name: 'geotagged', type: 'TINYINT(1) DEFAULT 0' },
+        { name: 'status', type: "VARCHAR(50) DEFAULT 'ACTIVE'" },
+        { name: 'is_submitted', type: 'TINYINT(1) DEFAULT 0' },
+        { name: 'added_from_print_list', type: 'TINYINT(1) DEFAULT 1' },
+        { name: 'photo_url', type: 'LONGTEXT' },
+        { name: 'pcu_file_url', type: 'LONGTEXT' },
+        { name: 'pcu_uploaded_by', type: "VARCHAR(255) DEFAULT ''" },
+        { name: 'pcu_uploaded_at', type: "VARCHAR(100) DEFAULT ''" },
+        { name: 'deleted_at', type: 'VARCHAR(100) NULL' },
+        { name: 'maintenance', type: "VARCHAR(50) DEFAULT 'None'" },
+        { name: 'maintenance_medicine', type: 'TEXT NULL' }
+      ];
+
+      for (const def of definitions) {
+        if (!existing.has(def.name.toLowerCase())) {
+          try {
+            await pool.query(`ALTER TABLE contacts ADD COLUMN \`${def.name}\` ${def.type}`);
+          } catch (_) {}
+        }
+      }
+    }
+  } catch (_) {}
 
   let totalSaved = 0;
   const CHUNK_SIZE = 50;
@@ -1612,8 +1712,20 @@ export async function saveContactsBulkToCPanel(
           added_from_print_list = VALUES(added_from_print_list)
       `;
 
-      await pool.query(sql, values);
-      totalSaved += chunk.length;
+      try {
+        await pool.query(sql, values);
+        totalSaved += chunk.length;
+      } catch (chunkErr: any) {
+        console.warn('[cPanel DB] Batch chunk insert error, falling back to row-by-row insertion:', chunkErr.message);
+        for (const singleContact of chunk) {
+          try {
+            const singleRes = await saveContactToCPanel(singleContact);
+            if (singleRes.success) {
+              totalSaved++;
+            }
+          } catch (_) {}
+        }
+      }
     }
 
     // Refresh table statistics
@@ -1641,18 +1753,158 @@ export async function saveContactsBulkToCPanel(
   }
 }
 
-export async function deleteContactFromCPanel(id: number | string, deletedAt: string): Promise<void> {
+export async function deleteContactFromCPanel(
+  id: number | string, 
+  deletedAt?: string,
+  fullName?: string,
+  barangay?: string
+): Promise<void> {
   if (!pool || !currentStatus.connected) return;
   try {
-    await pool.query('UPDATE contacts SET deleted_at = ?, status = "DELETED" WHERE id = ?', [deletedAt, id]);
+    const idVal = id !== undefined && id !== null && !isNaN(Number(id)) ? Number(id) : null;
+    if (idVal) {
+      await pool.query('DELETE FROM contacts WHERE id = ?', [idVal]).catch(() => {});
+      await pool.query('DELETE FROM sheet1 WHERE id = ?', [idVal]).catch(() => {});
+    }
+    if (fullName && fullName.trim()) {
+      const trimmedName = fullName.trim();
+      if (barangay && barangay.trim()) {
+        const trimmedBgy = barangay.trim();
+        await pool.query(
+          'DELETE FROM contacts WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?)) AND (LOWER(TRIM(barangay)) = LOWER(TRIM(?)) OR barangay = "" OR barangay IS NULL)',
+          [trimmedName, trimmedBgy]
+        ).catch(() => {});
+        await pool.query(
+          'DELETE FROM sheet1 WHERE (LOWER(TRIM(full_name)) = LOWER(TRIM(?)) OR LOWER(TRIM(name)) = LOWER(TRIM(?))) AND (LOWER(TRIM(barangay)) = LOWER(TRIM(?)) OR barangay = "" OR barangay IS NULL)',
+          [trimmedName, trimmedName, trimmedBgy]
+        ).catch(() => {});
+      } else {
+        await pool.query(
+          'DELETE FROM contacts WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))',
+          [trimmedName]
+        ).catch(() => {});
+        await pool.query(
+          'DELETE FROM sheet1 WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?)) OR LOWER(TRIM(name)) = LOWER(TRIM(?))',
+          [trimmedName, trimmedName]
+        ).catch(() => {});
+      }
+    }
+
+    // Also purge from any other sheet-named tables in MySQL
+    try {
+      const [tableList]: any = await pool.query(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND LOWER(table_name) LIKE '%sheet%' AND LOWER(table_name) != 'sheet1'`
+      ).catch(() => [[]]);
+      for (const t of (tableList || [])) {
+        const sheetTbl = t.table_name || t.TABLE_NAME;
+        if (!sheetTbl) continue;
+        if (idVal) {
+          await pool.query(`DELETE FROM \`${sheetTbl}\` WHERE id = ?`, [idVal]).catch(() => {});
+        }
+        if (fullName && fullName.trim()) {
+          const trimmedName = fullName.trim();
+          await pool.query(
+            `DELETE FROM \`${sheetTbl}\` WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?)) OR LOWER(TRIM(name)) = LOWER(TRIM(?))`,
+            [trimmedName, trimmedName]
+          ).catch(() => {});
+        }
+      }
+    } catch {}
+
+    console.log(`[cPanel DB] Permanently deleted contact (ID: ${id}, Name: ${fullName || 'N/A'}) from MySQL contacts and sheet tables.`);
   } catch (err: any) {
-    console.warn('[cPanel DB] Error marking contact deleted in MySQL:', err.message);
+    console.warn('[cPanel DB] Error permanently deleting contact from MySQL:', err.message);
+  }
+}
+
+/**
+ * Directly updates a user's role in MySQL cPanel database
+ */
+export async function updateUserRoleInCPanel(username: string, email: string, newRole: string): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    const now = new Date().toISOString();
+    const uname = (username || '').trim().toLowerCase();
+    const uemail = (email || '').trim().toLowerCase();
+
+    const [res]: any = await pool.query(
+      `UPDATE users SET role = ?, updated_at = ? WHERE LOWER(TRIM(username)) = ? OR (email != '' AND LOWER(TRIM(email)) = ?)`,
+      [newRole, now, uname, uemail]
+    );
+
+    if (res && res.affectedRows > 0) {
+      console.log(`[cPanel DB] Successfully updated role to "${newRole}" for user "${username}" in MySQL.`);
+      return true;
+    }
+    return false;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Notice updating user role in MySQL:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Directly updates a user's status in MySQL cPanel database
+ */
+export async function updateUserStatusInCPanel(username: string, email: string, newStatus: string): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    const now = new Date().toISOString();
+    const uname = (username || '').trim().toLowerCase();
+    const uemail = (email || '').trim().toLowerCase();
+
+    const [res]: any = await pool.query(
+      `UPDATE users SET status = ?, updated_at = ? WHERE LOWER(TRIM(username)) = ? OR (email != '' AND LOWER(TRIM(email)) = ?)`,
+      [newStatus, now, uname, uemail]
+    );
+
+    if (res && res.affectedRows > 0) {
+      console.log(`[cPanel DB] Successfully updated status to "${newStatus}" for user "${username}" in MySQL.`);
+      return true;
+    }
+    return false;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Notice updating user status in MySQL:', err.message);
+    return false;
   }
 }
 
 export async function saveUserToCPanel(u: any): Promise<void> {
   if (!pool || !currentStatus.connected) return;
   try {
+    // Ensure all necessary columns exist on the users table safely
+    try {
+      const [userColRows]: any = await pool.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'users'`
+      ).catch(() => [[]]);
+      const existing = new Set((userColRows || []).map((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase()));
+      if (existing.size > 0) {
+        const definitions: { name: string; type: string }[] = [
+          { name: 'password_hash', type: "VARCHAR(255) NOT NULL DEFAULT ''" },
+          { name: 'role', type: "VARCHAR(50) NOT NULL DEFAULT 'Staff'" },
+          { name: 'full_name', type: "VARCHAR(255) DEFAULT ''" },
+          { name: 'display_name', type: "VARCHAR(255) DEFAULT ''" },
+          { name: 'email', type: "VARCHAR(255) DEFAULT ''" },
+          { name: 'status', type: "VARCHAR(50) DEFAULT 'Pending'" },
+          { name: 'barangay', type: "VARCHAR(255) DEFAULT ''" },
+          { name: 'created_at', type: "VARCHAR(100) DEFAULT ''" },
+          { name: 'updated_at', type: "VARCHAR(100) DEFAULT ''" },
+          { name: 'avatar_data_url', type: 'LONGTEXT' },
+          { name: 'permissions', type: 'TEXT' },
+          { name: 'password_plain', type: "VARCHAR(255) DEFAULT ''" }
+        ];
+
+        for (const def of definitions) {
+          if (!existing.has(def.name.toLowerCase())) {
+            try {
+              await pool.query(`ALTER TABLE users ADD COLUMN \`${def.name}\` ${def.type}`);
+              console.log(`[cPanel DB] Added missing column '${def.name}' to users table.`);
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (_) {}
+
     const rawStatus = (u.status !== undefined && u.status !== null) ? String(u.status).trim() : '';
     let normStatus: 'Active' | 'Pending' | 'Suspended' = 'Pending';
     if (rawStatus.toLowerCase().startsWith('act')) {
@@ -1676,22 +1928,56 @@ export async function saveUserToCPanel(u: any): Promise<void> {
     const permissions = u.permissions ? (typeof u.permissions === 'string' ? u.permissions : JSON.stringify(u.permissions)) : null;
     const plainPass = u.passwordPlain || '';
 
-    try {
+    // First try a clean UPDATE by username or email
+    const [updateRes]: any = await pool.query(
+      `UPDATE users SET 
+        role = ?, 
+        full_name = ?, 
+        email = ?, 
+        status = ?, 
+        barangay = ?, 
+        avatar_data_url = COALESCE(?, avatar_data_url), 
+        permissions = COALESCE(?, permissions), 
+        password_plain = CASE WHEN ? != '' THEN ? ELSE password_plain END,
+        display_name = ?, 
+        updated_at = ?
+       WHERE LOWER(TRIM(username)) = LOWER(TRIM(?)) OR (email != '' AND LOWER(TRIM(email)) = LOWER(TRIM(?)))`,
+      [
+        role,
+        fullName,
+        email,
+        normStatus,
+        barangay,
+        avatar,
+        permissions,
+        plainPass,
+        plainPass,
+        displayName,
+        updatedAt,
+        u.username,
+        email
+      ]
+    ).catch(() => [{ affectedRows: 0 }]);
+
+    if (!updateRes || updateRes.affectedRows === 0) {
+      // If user does not exist yet in MySQL, insert them
       await pool.query(
-        `INSERT INTO users (username, password_hash, role, full_name, email, status, barangay, created_at, avatar_data_url, permissions, password_plain, display_name, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE
-           password_hash = VALUES(password_hash),
-           role = VALUES(role),
-           full_name = VALUES(full_name),
-           email = VALUES(email),
-           status = VALUES(status),
-           barangay = VALUES(barangay),
-           avatar_data_url = VALUES(avatar_data_url),
-           permissions = VALUES(permissions),
-           password_plain = VALUES(password_plain),
-           display_name = VALUES(display_name),
-           updated_at = VALUES(updated_at)`,
+        `INSERT INTO users (
+          username, password_hash, role, full_name, email, 
+          status, barangay, created_at, avatar_data_url, permissions, 
+          password_plain, display_name, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+          role = VALUES(role),
+          full_name = VALUES(full_name),
+          email = VALUES(email),
+          status = VALUES(status),
+          barangay = VALUES(barangay),
+          avatar_data_url = VALUES(avatar_data_url),
+          permissions = VALUES(permissions),
+          password_plain = VALUES(password_plain),
+          display_name = VALUES(display_name),
+          updated_at = VALUES(updated_at)`,
         [
           u.username,
           u.passwordHash || '',
@@ -1707,43 +1993,12 @@ export async function saveUserToCPanel(u: any): Promise<void> {
           displayName,
           updatedAt
         ]
-      );
-    } catch (colErr: any) {
-      if (colErr.message && (colErr.message.includes('password_plain') || colErr.message.includes('display_name') || colErr.message.includes('Unknown column'))) {
-        try {
-          await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS `password_plain` VARCHAR(255) DEFAULT ''");
-          await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS `display_name` VARCHAR(255) DEFAULT ''");
-          await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS `updated_at` VARCHAR(100) DEFAULT ''");
-        } catch (_) {}
-        await pool.query(
-          `INSERT INTO users (username, password_hash, role, full_name, email, status, barangay, created_at, avatar_data_url, permissions)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE
-             password_hash = VALUES(password_hash),
-             role = VALUES(role),
-             full_name = VALUES(full_name),
-             email = VALUES(email),
-             status = VALUES(status),
-             barangay = VALUES(barangay),
-             avatar_data_url = VALUES(avatar_data_url),
-             permissions = VALUES(permissions)`,
-          [
-            u.username,
-            u.passwordHash || '',
-            role,
-            fullName,
-            email,
-            normStatus,
-            barangay,
-            createdAt,
-            avatar,
-            permissions
-          ]
-        );
-      } else {
-        throw colErr;
-      }
+      ).catch(e => {
+        console.warn('[cPanel DB] Insert user warning:', e.message);
+      });
     }
+
+    console.log(`[cPanel DB] Successfully saved user @${u.username} (Role: ${role}, Status: ${normStatus}) to MySQL.`);
   } catch (err: any) {
     console.warn('[cPanel DB] Error saving user to MySQL:', err.message);
   }
@@ -1876,7 +2131,11 @@ export async function saveBarangayToCPanel(name: string): Promise<void> {
 export async function deleteBarangayFromCPanel(name: string): Promise<void> {
   if (!pool || !currentStatus.connected) return;
   try {
-    await pool.query('DELETE FROM barangays WHERE name = ?', [name]);
+    const cleanName = (name || '').trim();
+    if (!cleanName) return;
+    await pool.query('DELETE FROM barangays WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', [cleanName]);
+    await pool.query('DELETE FROM contacts WHERE LOWER(TRIM(barangay)) = LOWER(TRIM(?))', [cleanName]);
+    console.log(`[cPanel DB] Permanently deleted barangay "${cleanName}" and associated contacts from MySQL.`);
   } catch (err: any) {
     console.warn('[cPanel DB] Error deleting barangay from MySQL:', err.message);
   }

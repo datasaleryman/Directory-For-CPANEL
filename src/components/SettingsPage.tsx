@@ -48,7 +48,6 @@ interface SettingsPageProps {
     navDashboard?: string;
     navMap?: string;
     navDirectory?: string;
-    navRecentUpload?: string;
     navAccounts?: string;
     navBulk?: string;
     navPrint?: string;
@@ -120,7 +119,6 @@ const APP_PAGES = [
   { id: 'exist-acc-files', name: 'Exist. Acc. Files', desc: 'Patient uploaded archives and records list' },
   { id: 'member-verification', name: 'Member verification', desc: 'Search and verify clinical or community membership accounts' },
   { id: 'verification-entry', name: 'Verification Entry', desc: 'Sleek interface to search patients and submit a verification entry record' },
-  { id: 'recent-upload', name: 'Recent Upload', desc: 'Private PCU upload archives' },
   { id: 'accounts', name: 'Account Management', desc: 'User accounts & roles' },
   { id: 'bulk', name: 'Bulk Entry', desc: 'CSV & batch patient imports' },
   { id: 'print', name: 'Print List', desc: 'Formatted printable directory' },
@@ -153,7 +151,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [navDashboard, setNavDashboard] = useState(siteSettings.navDashboard || 'Dashboard');
   const [navMap, setNavMap] = useState(siteSettings.navMap || 'Clinic Map');
   const [navDirectory, setNavDirectory] = useState(siteSettings.navDirectory || 'Clinic Directory');
-  const [navRecentUpload, setNavRecentUpload] = useState(siteSettings.navRecentUpload || 'Recent Upload');
   const [navAccounts, setNavAccounts] = useState(siteSettings.navAccounts || 'Account Management');
   const [navBulk, setNavBulk] = useState(siteSettings.navBulk || 'Bulk Entry');
   const [navPrint, setNavPrint] = useState(siteSettings.navPrint || 'Print List');
@@ -167,14 +164,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [rolesList, setRolesList] = useState<string[]>(DEFAULT_ROLES);
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(() => {
     return siteSettings.rolePermissions || {
-      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'recent-upload', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'IT': ['dashboard', 'map', 'directory', 'recent-upload', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'ADMIN': ['dashboard', 'map', 'directory', 'recent-upload', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'Administrator': ['dashboard', 'map', 'directory', 'recent-upload', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'LEADER': ['dashboard', 'map', 'directory', 'recent-upload', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'CO-LEADER': ['dashboard', 'map', 'directory', 'recent-upload', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'ENCODER': ['dashboard', 'map', 'directory', 'recent-upload', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'STAFF': ['dashboard', 'map', 'directory', 'recent-upload', 'bulk', 'print', 'existing-account', 'verification-entry']
+      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'IT': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'ADMIN': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'Administrator': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'LEADER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'CO-LEADER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'ENCODER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'STAFF': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account', 'verification-entry']
     };
   });
 
@@ -425,7 +422,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setNavDashboard(siteSettings.navDashboard || 'Dashboard');
     setNavMap(siteSettings.navMap || 'Clinic Map');
     setNavDirectory(siteSettings.navDirectory || 'Clinic Directory');
-    setNavRecentUpload(siteSettings.navRecentUpload || 'Recent Upload');
     setNavAccounts(siteSettings.navAccounts || 'Account Management');
     setNavBulk(siteSettings.navBulk || 'Bulk Entry');
     setNavPrint(siteSettings.navPrint || 'Print List');
@@ -588,7 +584,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           navDashboard: navDashboard.trim() || 'Dashboard',
           navMap: navMap.trim() || 'Clinic Map',
           navDirectory: navDirectory.trim() || 'Clinic Directory',
-          navRecentUpload: navRecentUpload.trim() || 'Recent Upload',
           navAccounts: navAccounts.trim() || 'Account Management',
           navBulk: navBulk.trim() || 'Bulk Entry',
           navPrint: navPrint.trim() || 'Print List',
@@ -625,7 +620,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setNavDashboard('Dashboard');
       setNavMap('Clinic Map');
       setNavDirectory('Clinic Directory');
-      setNavRecentUpload('Recent Upload');
       setNavAccounts('Account Management');
       setNavBulk('Bulk Entry');
       setNavPrint('Print List');
@@ -1069,19 +1063,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   value={navDirectory}
                   onChange={(e) => setNavDirectory(e.target.value)}
                   placeholder="e.g. Clinic Directory"
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
-                />
-              </div>
-
-              <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Recent Upload Link Title
-                </label>
-                <input
-                  type="text"
-                  value={navRecentUpload}
-                  onChange={(e) => setNavRecentUpload(e.target.value)}
-                  placeholder="e.g. Recent Upload"
                   className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
                 />
               </div>

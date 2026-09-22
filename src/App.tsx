@@ -37,7 +37,6 @@ import { AccountManagement } from './components/AccountManagement.js';
 import { SettingsPage } from './components/SettingsPage.js';
 import { ProfileModal } from './components/ProfileModal.js';
 import { ClinicMap } from './components/ClinicMap.js';
-import { RecentUpload } from './components/RecentUpload.js';
 import { ExistingAccount } from './components/ExistingAccount.js';
 import { Inbox } from './components/Inbox.js';
 
@@ -52,10 +51,10 @@ export default function App() {
   });
 
   // Navigation Panel Routing
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'map' | 'directory' | 'recent-upload' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings'>(() => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'map' | 'directory' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings'>(() => {
     try {
       const saved = sessionStorage.getItem('clinic_active_tab') || localStorage.getItem('clinic_active_tab');
-      if (saved) return saved as any;
+      if (saved && saved !== 'recent-upload') return saved as any;
     } catch {}
     return 'dashboard';
   });
@@ -86,7 +85,7 @@ export default function App() {
     }
   }, [activeTab]);
 
-  const handleTabChange = (tab: 'dashboard' | 'inbox' | 'map' | 'directory' | 'recent-upload' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings') => {
+  const handleTabChange = (tab: 'dashboard' | 'inbox' | 'map' | 'directory' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings') => {
     setActiveTab(tab);
     setIsMobileMenuOpen(false);
   };
@@ -100,7 +99,6 @@ export default function App() {
     navDashboard?: string;
     navMap?: string;
     navDirectory?: string;
-    navRecentUpload?: string;
     navAccounts?: string;
     navBulk?: string;
     navPrint?: string;
@@ -117,7 +115,6 @@ export default function App() {
     navDashboard: 'Dashboard',
     navMap: 'Clinic Map',
     navDirectory: 'Clinic Directory',
-    navRecentUpload: 'Recent Upload',
     navAccounts: 'Account Management',
     navBulk: 'Bulk Entry',
     navPrint: 'Print List',
@@ -259,7 +256,7 @@ export default function App() {
   // Redirect if current active tab is not permitted for user's role
   useEffect(() => {
     if (adminUser && !hasTabPermission(activeTab)) {
-      const allTabs = ['dashboard', 'inbox', 'map', 'directory', 'exist-acc-files', 'recent-upload', 'accounts', 'bulk', 'print', 'existing-account'];
+      const allTabs = ['dashboard', 'inbox', 'map', 'directory', 'exist-acc-files', 'accounts', 'bulk', 'print', 'existing-account'];
       const allowed = allTabs.find(t => hasTabPermission(t));
       if (allowed) {
         setActiveTab(allowed as any);
@@ -450,7 +447,9 @@ export default function App() {
     if (!authToken) return;
     setLoadingStats(true);
     try {
-      const res = await fetch(`/api/dashboard/stats?_t=${Date.now()}`, {
+      const clientTz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Manila';
+      const clientDate = new Date().toLocaleDateString('en-CA');
+      const res = await fetch(`/api/dashboard/stats?date=${encodeURIComponent(clientDate)}&tz=${encodeURIComponent(clientTz)}&_t=${Date.now()}`, {
         headers: { Authorization: `Bearer ${authToken}` }
       });
       const data = await res.json();
@@ -504,11 +503,12 @@ export default function App() {
     }
   }, [authToken]);
 
-  // Initial load and stats update
+  // Refresh dashboard metrics whenever user navigates to the dashboard tab
   useEffect(() => {
-    if (!authToken) return;
-    fetchStats();
-  }, [authToken]);
+    if (authToken && activeTab === 'dashboard') {
+      fetchStats();
+    }
+  }, [activeTab, authToken]);
 
   const handleLoginSuccess = (token: string, user: { username: string; role: string }) => {
     localStorage.setItem('dir_auth_token', token);
@@ -690,7 +690,6 @@ export default function App() {
             { id: 'map', label: siteSettings.navMap || 'Clinic Map', icon: MapPin },
             { id: 'directory', label: siteSettings.navDirectory || 'Patient List', icon: Users },
             { id: 'exist-acc-files', label: siteSettings.navExistAccFiles || 'Exist. Acc. Files', icon: UserCheck },
-            { id: 'recent-upload', label: siteSettings.navRecentUpload || 'Recent Upload', icon: UploadCloud },
             { id: 'accounts', label: siteSettings.navAccounts || 'Account Management', icon: ShieldCheck },
           ] as const)
             .filter((item) => hasTabPermission(item.id))
@@ -869,10 +868,8 @@ export default function App() {
                     ? (siteSettings.navPrint || 'Formatted Print Directory') 
                     : activeTab === 'directory' 
                       ? 'PCU / Barangay' 
-                      : activeTab === 'recent-upload'
-                        ? (siteSettings.navRecentUpload || 'Recent Upload')
-                        : activeTab === 'accounts'
-                          ? (siteSettings.navAccounts || 'Account Management')
+                      : activeTab === 'accounts'
+                        ? (siteSettings.navAccounts || 'Account Management')
                           : activeTab === 'existing-account'
                             ? (siteSettings.navExistingAccount || 'Existing Account')
                           : activeTab === 'exist-acc-files'
@@ -1084,15 +1081,6 @@ export default function App() {
                   onClearBackNavigateContact={() => setMapNavigateContact(null)}
                 />
               </div>
-
-              {activeTab === 'recent-upload' && (
-                <RecentUpload
-                  authToken={authToken}
-                  currentUsername={adminUser.username}
-                  isAdmin={isSuperUser || userRole.toUpperCase().includes('ADMIN')}
-                  showToast={showToast}
-                />
-              )}
 
               {activeTab === 'accounts' && (
                 <AccountManagement
