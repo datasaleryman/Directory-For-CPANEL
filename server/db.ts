@@ -16,6 +16,9 @@ import {
   deleteBarangayFromCPanel,
   saveActivityToCPanel,
   saveSettingToCPanel,
+  savePcuSubmissionToCPanel,
+  deletePcuSubmissionFromCPanel,
+  deletePcuFileFromCPanel,
   fetchAllFromCPanelDb,
   getCPanelDbStatus,
   isCPanelDbConnected,
@@ -8561,6 +8564,26 @@ export async function addPCUUpdatesMultiple(
         cpanelSyncWarning = err.message || 'Error updating cPanel MySQL database';
         console.error('[Submission Pipeline] Step 2 Error deleting contact from cPanel MySQL database:', cpanelSyncWarning);
       }
+
+      // Record in dedicated pcu_submissions table in cPanel MySQL
+      try {
+        await savePcuSubmissionToCPanel({
+          id: String(contact.id || crypto.randomUUID()),
+          contactId: contact.id,
+          fullName: contact.full_name || fullName,
+          barangay: contact.barangay || options?.barangay || '',
+          purok: contact.purok || options?.purok || '',
+          contactNumber: contact.contact_number || options?.contact_number || '',
+          fileName: files[0]?.fileName || 'PCU Document',
+          fileUrl: lastFileUrl,
+          uploadedFiles: contact.uploadedFiles,
+          uploadedBy: username,
+          uploadedAt: lastUploadedAt,
+          status: 'SUBMITTED'
+        });
+      } catch (err: any) {
+        console.warn('[cPanel DB Warning] Failed to save to pcu_submissions table:', err.message || err);
+      }
     }
 
     // 3. PERMANENTLY DELETE CONTACT FROM PCU DIRECTORY AND RECORD TOMBSTONE:
@@ -9088,6 +9111,122 @@ export async function removePCUFileFromContact(contactId: number | string, usern
   }
 
   return contact;
+}
+
+/**
+ * Permanently deletes a PCU submission or individual file from cPanel MySQL and all clinic records.
+ */
+export async function permanentlyDeletePcuSubmission(params: {
+  id?: string | number;
+  fullName?: string;
+  fileName?: string;
+  fileUrl?: string;
+  deleteAll?: boolean;
+  username?: string;
+}): Promise<{ success: boolean; message: string; remainingFiles?: number }> {
+  const { id, fullName, fileName, fileUrl, deleteAll, username } = params;
+
+  console.log(`[PCU Deletion] Permanently deleting PCU record/file:`, params);
+
+  // 1. Permanently delete from cPanel MySQL database
+  if (isCPanelDbConnected()) {
+    try {
+      if (deleteAll || (!fileName && !fileUrl)) {
+        await deletePcuSubmissionFromCPanel({ id, fullName, fileName, fileUrl });
+      } else {
+        await deletePcuFileFromCPanel({ id, fullName, fileName, fileUrl });
+      }
+    } catch (err: any) {
+      console.warn('[PCU Deletion Warning] Failed to delete from cPanel MySQL:', err.message || err);
+    }
+  }
+
+  // 2. Remove or update in local pcuUpdatesCache
+  const normName = (fullName || '').trim().toLowerCase();
+  const idStr = id !== undefined && id !== null ? String(id).trim() : '';
+
+  if (deleteAll || (!fileName && !fileUrl)) {
+    pcuUpdatesCache = pcuUpdatesCache.filter(u => {
+      if (!u) return false;
+      if (idStr && (String(u.id) === idStr || String(u.contactId) === idStr)) return false;
+      if (normName && (u.fullName || '').trim().toLowerCase() === normName) return false;
+      return true;
+    });
+  } else {
+    pcuUpdatesCache = pcuUpdatesCache.filter(u => {
+      if (!u) return false;
+      const matchPerson = (idStr && (String(u.id) === idStr || String(u.contactId) === idStr)) ||
+                          (normName && (u.fullName || '').trim().toLowerCase() === normName);
+      if (matchPerson) {
+        if (fileName && (u.fileName === fileName || (u as any).name === fileName)) return false;
+        if (fileUrl && (u.fileData === fileUrl || (u as any).url === fileUrl)) return false;
+      }
+      return true;
+    });
+  }
+  await savePCUUpdates();
+
+  // 3. Update or remove from contactsCache if matching
+  let remainingCount = 0;
+  const matchingContact = contactsCache.find(c => {
+    if (!c) return false;
+    if (idStr && String(c.id) === idStr) return true;
+    if (normName && (c.full_name || '').trim().toLowerCase() === normName) return true;
+    return false;
+  });
+
+  if (matchingContact) {
+    if (deleteAll || (!fileName && !fileUrl)) {
+      delete matchingContact.pcu_file_url;
+      delete matchingContact.pcu_uploaded_by;
+      delete matchingContact.pcu_uploaded_at;
+      matchingContact.uploadedFiles = [];
+      matchingContact.isSubmitted = false;
+      delete matchingContact.submittedAt;
+      matchingContact.updated_at = new Date().toISOString();
+      remainingCount = 0;
+    } else if (Array.isArray(matchingContact.uploadedFiles) && matchingContact.uploadedFiles.length > 0) {
+      matchingContact.uploadedFiles = matchingContact.uploadedFiles.filter((f: any) => {
+        if (fileName && (f.name === fileName || f.fileName === fileName)) return false;
+        if (fileUrl && (f.url === fileUrl || f.fileData === fileUrl)) return false;
+        return true;
+      });
+      remainingCount = matchingContact.uploadedFiles.length;
+      if (matchingContact.uploadedFiles.length > 0) {
+        const last: any = matchingContact.uploadedFiles[matchingContact.uploadedFiles.length - 1];
+        matchingContact.pcu_file_url = last.url || last.fileData || '';
+      } else {
+        delete matchingContact.pcu_file_url;
+        delete matchingContact.pcu_uploaded_by;
+        delete matchingContact.pcu_uploaded_at;
+        matchingContact.isSubmitted = false;
+        delete matchingContact.submittedAt;
+      }
+      matchingContact.updated_at = new Date().toISOString();
+    }
+    await saveContacts();
+  }
+
+  // 4. Update or clean up deletedContactsCache if tombstone exists
+  if (deleteAll || (!fileName && !fileUrl) || remainingCount === 0) {
+    deletedContactsCache = deletedContactsCache.filter(d => {
+      if (!d) return false;
+      if (idStr && String(d.id) === idStr) return false;
+      if (normName && (d.full_name || '').trim().toLowerCase() === normName) return false;
+      return true;
+    });
+    safeWriteFile(DELETED_CONTACTS_FILE, JSON.stringify(deletedContactsCache, null, 2), 'utf-8').catch(() => {});
+  }
+
+  // 5. Activity log
+  const targetLabel = fileName ? `file "${fileName}" for ${fullName || 'patient'}` : `submission for "${fullName || id}"`;
+  await addActivity(username || 'Admin', `Permanently deleted PCU ${targetLabel} from MySQL database.`);
+
+  return {
+    success: true,
+    message: `Permanently deleted PCU ${targetLabel} from MySQL database and clinic records.`,
+    remainingFiles: remainingCount
+  };
 }
 
 // Get local existing accounts

@@ -39,6 +39,7 @@ import { ProfileModal } from './components/ProfileModal.js';
 import { ClinicMap } from './components/ClinicMap.js';
 import { ExistingAccount } from './components/ExistingAccount.js';
 import { Inbox } from './components/Inbox.js';
+import { SubmitPcu } from './components/SubmitPcu.js';
 
 export const DEFAULT_SITE_LOGO = 'https://www.image2url.com/r2/default/images/1785037750375-501bcf0e-4b15-4e0e-8be2-610bc89d072e.png';
 
@@ -51,7 +52,7 @@ export default function App() {
   });
 
   // Navigation Panel Routing
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'map' | 'directory' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings'>(() => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'map' | 'directory' | 'submit-pcu' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings'>(() => {
     try {
       const saved = sessionStorage.getItem('clinic_active_tab') || localStorage.getItem('clinic_active_tab');
       if (saved && saved !== 'recent-upload') return saved as any;
@@ -85,7 +86,7 @@ export default function App() {
     }
   }, [activeTab]);
 
-  const handleTabChange = (tab: 'dashboard' | 'inbox' | 'map' | 'directory' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings') => {
+  const handleTabChange = (tab: 'dashboard' | 'inbox' | 'map' | 'directory' | 'submit-pcu' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings') => {
     setActiveTab(tab);
     setIsMobileMenuOpen(false);
   };
@@ -99,6 +100,7 @@ export default function App() {
     navDashboard?: string;
     navMap?: string;
     navDirectory?: string;
+    navSubmitPcu?: string;
     navAccounts?: string;
     navBulk?: string;
     navPrint?: string;
@@ -115,6 +117,7 @@ export default function App() {
     navDashboard: 'Dashboard',
     navMap: 'Clinic Map',
     navDirectory: 'Clinic Directory',
+    navSubmitPcu: 'Submit PCU',
     navAccounts: 'Account Management',
     navBulk: 'Bulk Entry',
     navPrint: 'Print List',
@@ -131,6 +134,9 @@ export default function App() {
     let targetTabId = tabId === 'exist-acc-files' ? 'existing-account' : tabId;
     if (targetTabId === 'inbox') {
       targetTabId = 'dashboard';
+    }
+    if (tabId === 'submit-pcu' || targetTabId === 'submit-pcu') {
+      return true;
     }
     // Safety check: Prevent lockouts for administrative roles
     const usernameLower = adminUser?.username?.toLowerCase() || '';
@@ -256,7 +262,7 @@ export default function App() {
   // Redirect if current active tab is not permitted for user's role
   useEffect(() => {
     if (adminUser && !hasTabPermission(activeTab)) {
-      const allTabs = ['dashboard', 'inbox', 'map', 'directory', 'exist-acc-files', 'accounts', 'bulk', 'print', 'existing-account'];
+      const allTabs = ['dashboard', 'inbox', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'accounts', 'bulk', 'print', 'existing-account'];
       const allowed = allTabs.find(t => hasTabPermission(t));
       if (allowed) {
         setActiveTab(allowed as any);
@@ -689,6 +695,7 @@ export default function App() {
             { id: 'inbox', label: 'Inbox', icon: Mail },
             { id: 'map', label: siteSettings.navMap || 'Clinic Map', icon: MapPin },
             { id: 'directory', label: siteSettings.navDirectory || 'Patient List', icon: Users },
+            { id: 'submit-pcu', label: siteSettings.navSubmitPcu || 'Submit PCU', icon: UploadCloud },
             { id: 'exist-acc-files', label: siteSettings.navExistAccFiles || 'Exist. Acc. Files', icon: UserCheck },
             { id: 'accounts', label: siteSettings.navAccounts || 'Account Management', icon: ShieldCheck },
           ] as const)
@@ -868,7 +875,9 @@ export default function App() {
                     ? (siteSettings.navPrint || 'Formatted Print Directory') 
                     : activeTab === 'directory' 
                       ? 'PCU / Barangay' 
-                      : activeTab === 'accounts'
+                      : activeTab === 'submit-pcu'
+                        ? (siteSettings.navSubmitPcu || 'Submit PCU')
+                        : activeTab === 'accounts'
                         ? (siteSettings.navAccounts || 'Account Management')
                           : activeTab === 'existing-account'
                             ? (siteSettings.navExistingAccount || 'Existing Account')
@@ -1117,6 +1126,15 @@ export default function App() {
                   showToast={showToast}
                   activeTab={activeTab}
                   currentUser={adminUser}
+                />
+              )}
+
+              {activeTab === 'submit-pcu' && (
+                <SubmitPcu
+                  authToken={authToken}
+                  currentUser={adminUser}
+                  showToast={showToast}
+                  onNavigateToDirectory={() => setActiveTab('directory')}
                 />
               )}
 

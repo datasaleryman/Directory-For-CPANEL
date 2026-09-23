@@ -1,5 +1,101 @@
 [
   {
+    "id": "f86dcc9b-e3e8-41a8-b843-eb66bd92ab4a",
+    "timestamp": "2026-09-23T02:38:52.751Z",
+    "username": "admin",
+    "action": "Deleted user account: \"@stafftest\""
+  },
+  {
+    "id": "ee25bfc8-80cb-4c19-812a-1fa035e58b92",
+    "timestamp": "2026-09-23T02:38:51.013Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "d1ee6017-e8c7-4191-835a-ab345d9e4387",
+    "timestamp": "2026-09-23T02:36:15.760Z",
+    "username": "admin",
+    "action": "Permanently deleted PCU submission for \"JUAN DELA CRUZ\" from MySQL database."
+  },
+  {
+    "id": "b5801f2c-5811-4cbd-b391-72ba27f42a1e",
+    "timestamp": "2026-09-23T02:36:09.703Z",
+    "username": "admin",
+    "action": "Permanently deleted PCU submission for \"JUAN DELA CRUZ\" from MySQL database."
+  },
+  {
+    "id": "c070a6df-c3ff-432f-a692-4992265163dd",
+    "timestamp": "2026-09-23T02:32:17.213Z",
+    "username": "admin",
+    "action": "Permanently deleted PCU submission for \"Test Deletion Zed\" from MySQL database."
+  },
+  {
+    "id": "879c71f7-8cbe-4c4d-9c70-6d4437022127",
+    "timestamp": "2026-09-23T02:32:17.197Z",
+    "username": "admin",
+    "action": "Permanently deleted PCU submission for \"Test Deletion Yara\" from MySQL database."
+  },
+  {
+    "id": "40cefb83-6f21-4202-8f52-575248574965",
+    "timestamp": "2026-09-23T02:32:17.181Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "f41921f5-94e8-4ae9-a311-bda1454a9264",
+    "timestamp": "2026-09-23T02:32:09.055Z",
+    "username": "admin",
+    "action": "Permanently deleted PCU submission for \"Test Deletion Patient\" from MySQL database."
+  },
+  {
+    "id": "a185bf42-34ca-40a9-b83f-42a712329ed8",
+    "timestamp": "2026-09-23T02:32:08.603Z",
+    "username": "admin",
+    "action": "Uploaded 1 PCU File(s), submitted to Base44, and permanently deleted from PCU Directory: \"Test Deletion Patient\""
+  },
+  {
+    "id": "81d61233-e48b-46c0-97e2-041ee35d0a6a",
+    "timestamp": "2026-09-23T02:32:07.782Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "17b444c6-ed5e-42f4-ab04-fea0abed0902",
+    "timestamp": "2026-09-23T02:32:07.439Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "3ad086f3-ec55-4bc7-b073-12a4c328b666",
+    "timestamp": "2026-09-23T02:05:32.136Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "e22ef880-fd4f-4d24-9350-50f637004f62",
+    "timestamp": "2026-09-23T02:05:17.438Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "1f4a6c76-2e7b-4dfa-a326-2b7840796a9e",
+    "timestamp": "2026-09-23T01:59:00.297Z",
+    "username": "admin",
+    "action": "Uploaded 2 PCU File(s), submitted to Base44, and permanently deleted from PCU Directory: \"Test Patient Alpha\""
+  },
+  {
+    "id": "dc4802ed-2638-45a1-85f4-1ab951017212",
+    "timestamp": "2026-09-23T01:58:59.155Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "2c80db9d-10c9-4811-a21e-3557edd2c910",
+    "timestamp": "2026-09-23T01:58:54.978Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
     "id": "9fb01c50-38ce-4033-a31c-f4f5aea0dca4",
     "timestamp": "2026-09-17T23:17:58.890Z",
     "username": "admin",

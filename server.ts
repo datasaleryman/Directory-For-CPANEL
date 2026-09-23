@@ -81,7 +81,8 @@ import {
   getAllActivitiesRaw,
   syncWithCPanelDb,
   syncUsersFromCPanel,
-  submitContactToBase44
+  submitContactToBase44,
+  permanentlyDeletePcuSubmission
 } from './server/db.js';
 import {
   loadCPanelDbConfig,
@@ -926,6 +927,90 @@ export async function getApp(httpServer?: http.Server) {
       res.json(update);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Dedicated Submit PCU Endpoint for Submit PCU page
+  app.post('/api/pcu/submit', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { fullName, barangay, purok, contact_number, files, fileName, fileData, latitude, longitude, geotagged } = req.body;
+      const username = req.user?.username || 'Admin';
+
+      if (!fullName || typeof fullName !== 'string' || !fullName.trim()) {
+        return res.status(400).json({ error: 'Full Name is required.' });
+      }
+
+      if (!barangay || typeof barangay !== 'string' || !barangay.trim()) {
+        return res.status(400).json({ error: 'Barangay selection is required.' });
+      }
+
+      const fileList = Array.isArray(files) && files.length > 0
+        ? files
+        : (fileName && fileData ? [{ fileName, fileData }] : []);
+
+      if (fileList.length === 0) {
+        return res.status(400).json({ error: 'At least one PCU image or document file is required.' });
+      }
+
+      const options = {
+        barangay: barangay.trim(),
+        purok: typeof purok === 'string' ? purok.trim() : '',
+        contact_number: typeof contact_number === 'string' ? contact_number.trim() : '',
+        latitude: latitude !== undefined && latitude !== null ? parseFloat(latitude) : undefined,
+        longitude: longitude !== undefined && longitude !== null ? parseFloat(longitude) : undefined,
+        geotagged: geotagged !== undefined ? Boolean(geotagged) : undefined,
+        isLastBatch: true,
+        totalFilesCount: fileList.length
+      };
+
+      const result = await addPCUUpdatesMultiple('new', fullName.trim(), fileList, username, options);
+      res.json({ success: true, message: 'PCU submitted successfully.', data: result });
+    } catch (err: any) {
+      console.error('[Submit PCU API Error]:', err);
+      res.status(400).json({ error: err.message || 'Failed to submit PCU.' });
+    }
+  });
+
+  // Permanently delete a PCU submission or individual file from Submit PCU page (Master Admin only)
+  app.post('/api/pcu/submissions/delete', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const role = (req.user?.role || '').toUpperCase().trim();
+      const isMasterAdmin = role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username.toLowerCase() === 'admin';
+
+      if (!isMasterAdmin) {
+        return res.status(403).json({ error: 'Access Denied: Only Master Admin can delete PCU files and submissions.' });
+      }
+
+      const { id, fullName, fileName, fileUrl, deleteAll } = req.body;
+
+      if (!id && !fullName && !fileName && !fileUrl) {
+        return res.status(400).json({ error: 'Identification (id, fullName, or file information) is required to delete.' });
+      }
+
+      const result = await permanentlyDeletePcuSubmission({
+        id,
+        fullName,
+        fileName,
+        fileUrl,
+        deleteAll: Boolean(deleteAll),
+        username
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('[Delete PCU Submission API Error]:', err);
+      res.status(400).json({ error: err.message || 'Failed to permanently delete PCU record.' });
+    }
+  });
+
+  // Authenticated route for barangays
+  app.get('/api/barangays', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const barangays = getBarangayList();
+      res.json({ barangays });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to fetch barangays' });
     }
   });
 

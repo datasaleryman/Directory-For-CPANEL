@@ -148,4 +148,48 @@ CREATE TABLE IF NOT EXISTS `deleted_records` (
   INDEX `idx_table_name` (`table_name`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- -------------------------------------------------------------------------
+-- 9. Table: pcu_submissions (Submit PCU Page Submissions & Files)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `pcu_submissions` (
+  `id` VARCHAR(100) NOT NULL PRIMARY KEY,
+  `contact_id` VARCHAR(100) DEFAULT '',
+  `full_name` VARCHAR(255) NOT NULL,
+  `barangay` VARCHAR(255) NOT NULL DEFAULT '',
+  `purok` VARCHAR(255) DEFAULT '',
+  `contact_number` VARCHAR(100) DEFAULT '',
+  `file_name` VARCHAR(255) DEFAULT '',
+  `file_url` LONGTEXT,
+  `uploaded_files` LONGTEXT NULL,
+  `uploaded_by` VARCHAR(255) DEFAULT 'Admin',
+  `uploaded_at` VARCHAR(100) DEFAULT '',
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `status` VARCHAR(50) DEFAULT 'SUBMITTED',
+  INDEX `idx_pcu_contact_id` (`contact_id`),
+  INDEX `idx_pcu_barangay` (`barangay`),
+  INDEX `idx_pcu_full_name` (`full_name`),
+  INDEX `idx_pcu_uploaded_at` (`uploaded_at`),
+  INDEX `idx_pcu_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
+-- 10. Table: pcu_deletion_audit (Master Admin Permanent Deletion Log)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `pcu_deletion_audit` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `submission_id` VARCHAR(100) DEFAULT '',
+  `patient_name` VARCHAR(255) NOT NULL,
+  `barangay` VARCHAR(255) DEFAULT '',
+  `file_name` VARCHAR(255) DEFAULT '',
+  `action_type` VARCHAR(50) NOT NULL DEFAULT 'SUBMISSION_DELETED',
+  `deleted_by` VARCHAR(255) NOT NULL DEFAULT 'Master Admin',
+  `deleted_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `ip_address` VARCHAR(100) DEFAULT '',
+  `details` TEXT NULL,
+  INDEX `idx_pcu_del_patient` (`patient_name`),
+  INDEX `idx_pcu_del_action` (`action_type`),
+  INDEX `idx_pcu_del_by` (`deleted_by`),
+  INDEX `idx_pcu_del_at` (`deleted_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;

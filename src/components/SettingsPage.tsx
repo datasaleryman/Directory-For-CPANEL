@@ -48,6 +48,7 @@ interface SettingsPageProps {
     navDashboard?: string;
     navMap?: string;
     navDirectory?: string;
+    navSubmitPcu?: string;
     navAccounts?: string;
     navBulk?: string;
     navPrint?: string;
@@ -151,6 +152,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [navDashboard, setNavDashboard] = useState(siteSettings.navDashboard || 'Dashboard');
   const [navMap, setNavMap] = useState(siteSettings.navMap || 'Clinic Map');
   const [navDirectory, setNavDirectory] = useState(siteSettings.navDirectory || 'Clinic Directory');
+  const [navSubmitPcu, setNavSubmitPcu] = useState(siteSettings.navSubmitPcu || 'Submit PCU');
   const [navAccounts, setNavAccounts] = useState(siteSettings.navAccounts || 'Account Management');
   const [navBulk, setNavBulk] = useState(siteSettings.navBulk || 'Bulk Entry');
   const [navPrint, setNavPrint] = useState(siteSettings.navPrint || 'Print List');
@@ -164,14 +166,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [rolesList, setRolesList] = useState<string[]>(DEFAULT_ROLES);
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(() => {
     return siteSettings.rolePermissions || {
-      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'IT': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'ADMIN': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'Administrator': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'LEADER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'CO-LEADER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'ENCODER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'STAFF': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account', 'verification-entry']
+      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'bulk', 'print', 'existing-account', 'verification-entry']
     };
   });
 
@@ -422,6 +424,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setNavDashboard(siteSettings.navDashboard || 'Dashboard');
     setNavMap(siteSettings.navMap || 'Clinic Map');
     setNavDirectory(siteSettings.navDirectory || 'Clinic Directory');
+    setNavSubmitPcu(siteSettings.navSubmitPcu || 'Submit PCU');
     setNavAccounts(siteSettings.navAccounts || 'Account Management');
     setNavBulk(siteSettings.navBulk || 'Bulk Entry');
     setNavPrint(siteSettings.navPrint || 'Print List');
@@ -584,6 +587,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           navDashboard: navDashboard.trim() || 'Dashboard',
           navMap: navMap.trim() || 'Clinic Map',
           navDirectory: navDirectory.trim() || 'Clinic Directory',
+          navSubmitPcu: navSubmitPcu.trim() || 'Submit PCU',
           navAccounts: navAccounts.trim() || 'Account Management',
           navBulk: navBulk.trim() || 'Bulk Entry',
           navPrint: navPrint.trim() || 'Print List',
@@ -1128,6 +1132,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   value={navExistingAccount}
                   onChange={(e) => setNavExistingAccount(e.target.value)}
                   placeholder="e.g. Existing Account"
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
+                />
+              </div>
+
+              <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Submit PCU Link Title
+                </label>
+                <input
+                  type="text"
+                  value={navSubmitPcu}
+                  onChange={(e) => setNavSubmitPcu(e.target.value)}
+                  placeholder="e.g. Submit PCU"
                   className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
                 />
               </div>

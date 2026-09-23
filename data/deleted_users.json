@@ -8,5 +8,10 @@
     "username": "mariadoctor",
     "email": "maria.doctor@clinic.test",
     "deletedAt": "2026-09-14T02:06:35.505Z"
+  },
+  {
+    "username": "stafftest",
+    "email": "",
+    "deletedAt": "2026-09-23T02:38:52.650Z"
   }
 ]

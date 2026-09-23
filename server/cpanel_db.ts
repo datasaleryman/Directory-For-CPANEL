@@ -215,6 +215,46 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       deleted_at VARCHAR(100) NOT NULL,
       deleted_by VARCHAR(100) DEFAULT '',
       INDEX idx_table_name (table_name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    // 9. PCU Submissions Table (Submit PCU Page)
+    `CREATE TABLE IF NOT EXISTS pcu_submissions (
+      id VARCHAR(100) PRIMARY KEY,
+      contact_id VARCHAR(100) DEFAULT '',
+      full_name VARCHAR(255) NOT NULL,
+      barangay VARCHAR(255) NOT NULL DEFAULT '',
+      purok VARCHAR(255) DEFAULT '',
+      contact_number VARCHAR(100) DEFAULT '',
+      file_name VARCHAR(255) DEFAULT '',
+      file_url LONGTEXT,
+      uploaded_files LONGTEXT NULL,
+      uploaded_by VARCHAR(255) DEFAULT 'Admin',
+      uploaded_at VARCHAR(100) DEFAULT '',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      status VARCHAR(50) DEFAULT 'SUBMITTED',
+      INDEX idx_pcu_contact_id (contact_id),
+      INDEX idx_pcu_barangay (barangay),
+      INDEX idx_pcu_full_name (full_name),
+      INDEX idx_pcu_uploaded_at (uploaded_at),
+      INDEX idx_pcu_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    // 10. Master Admin Deletion Audit Trail Table
+    `CREATE TABLE IF NOT EXISTS pcu_deletion_audit (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      submission_id VARCHAR(100) DEFAULT '',
+      patient_name VARCHAR(255) NOT NULL,
+      barangay VARCHAR(255) DEFAULT '',
+      file_name VARCHAR(255) DEFAULT '',
+      action_type VARCHAR(50) NOT NULL DEFAULT 'SUBMISSION_DELETED',
+      deleted_by VARCHAR(255) NOT NULL DEFAULT 'Master Admin',
+      deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      ip_address VARCHAR(100) DEFAULT '',
+      details TEXT NULL,
+      INDEX idx_pcu_del_patient (patient_name),
+      INDEX idx_pcu_del_action (action_type),
+      INDEX idx_pcu_del_by (deleted_by),
+      INDEX idx_pcu_del_at (deleted_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
   ];
 
@@ -678,6 +718,28 @@ CREATE TABLE IF NOT EXISTS \`deleted_records\` (
   \`deleted_at\` VARCHAR(100) NOT NULL,
   \`deleted_by\` VARCHAR(100) DEFAULT '',
   INDEX \`idx_table_name\` (\`table_name\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
+-- 9. Table: pcu_submissions (Submit PCU Page Submissions)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS \`pcu_submissions\` (
+  \`id\` VARCHAR(100) PRIMARY KEY,
+  \`contact_id\` VARCHAR(100) DEFAULT '',
+  \`full_name\` VARCHAR(255) NOT NULL,
+  \`barangay\` VARCHAR(255) NOT NULL DEFAULT '',
+  \`purok\` VARCHAR(255) DEFAULT '',
+  \`contact_number\` VARCHAR(100) DEFAULT '',
+  \`file_name\` VARCHAR(255) DEFAULT '',
+  \`file_url\` LONGTEXT,
+  \`uploaded_files\` LONGTEXT NULL,
+  \`uploaded_by\` VARCHAR(255) DEFAULT 'Admin',
+  \`uploaded_at\` VARCHAR(100) DEFAULT '',
+  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  \`status\` VARCHAR(50) DEFAULT 'SUBMITTED',
+  INDEX \`idx_pcu_barangay\` (\`barangay\`),
+  INDEX \`idx_pcu_full_name\` (\`full_name\`),
+  INDEX \`idx_pcu_uploaded_at\` (\`uploaded_at\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;
@@ -2140,4 +2202,196 @@ export async function deleteBarangayFromCPanel(name: string): Promise<void> {
     console.warn('[cPanel DB] Error deleting barangay from MySQL:', err.message);
   }
 }
+
+export async function savePcuSubmissionToCPanel(submission: {
+  id: string;
+  contactId?: string | number;
+  fullName: string;
+  barangay: string;
+  purok?: string;
+  contactNumber?: string;
+  fileName?: string;
+  fileUrl?: string;
+  uploadedFiles?: any[];
+  uploadedBy?: string;
+  uploadedAt?: string;
+  status?: string;
+}): Promise<void> {
+  if (!pool || !currentStatus.connected) return;
+  try {
+    const id = submission.id || crypto.randomUUID();
+    const contactId = submission.contactId !== undefined && submission.contactId !== null ? String(submission.contactId) : '';
+    const fullName = (submission.fullName || '').trim();
+    const barangay = (submission.barangay || '').trim();
+    const purok = (submission.purok || '').trim();
+    const contactNumber = (submission.contactNumber || '').trim();
+    const fileName = submission.fileName || '';
+    const fileUrl = submission.fileUrl || '';
+    const uploadedFiles = submission.uploadedFiles ? JSON.stringify(submission.uploadedFiles) : null;
+    const uploadedBy = submission.uploadedBy || 'Admin';
+    const uploadedAt = submission.uploadedAt || new Date().toISOString();
+    const status = submission.status || 'SUBMITTED';
+
+    await pool.query(
+      `INSERT INTO pcu_submissions 
+        (id, contact_id, full_name, barangay, purok, contact_number, file_name, file_url, uploaded_files, uploaded_by, uploaded_at, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        contact_id = VALUES(contact_id),
+        full_name = VALUES(full_name),
+        barangay = VALUES(barangay),
+        purok = VALUES(purok),
+        contact_number = VALUES(contact_number),
+        file_name = VALUES(file_name),
+        file_url = VALUES(file_url),
+        uploaded_files = VALUES(uploaded_files),
+        uploaded_by = VALUES(uploaded_by),
+        uploaded_at = VALUES(uploaded_at),
+        status = VALUES(status)`,
+      [id, contactId, fullName, barangay, purok, contactNumber, fileName, fileUrl, uploadedFiles, uploadedBy, uploadedAt, status]
+    );
+    console.log(`[cPanel DB] Saved PCU submission ${id} for "${fullName}" to MySQL database.`);
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error saving PCU submission to MySQL:', err.message || err);
+  }
+}
+
+/**
+ * Permanently deletes a PCU submission from cPanel MySQL table `pcu_submissions`.
+ */
+export async function deletePcuSubmissionFromCPanel(params: {
+  id?: string | number;
+  contactId?: string | number;
+  fullName?: string;
+  fileName?: string;
+  fileUrl?: string;
+}): Promise<boolean> {
+  if (!pool) return false;
+
+  try {
+    const { id, contactId, fullName, fileName, fileUrl } = params;
+
+    if (id) {
+      await pool.query('DELETE FROM pcu_submissions WHERE id = ?', [String(id)]).catch(() => {});
+    }
+
+    if (contactId) {
+      await pool.query('DELETE FROM pcu_submissions WHERE contact_id = ?', [String(contactId)]).catch(() => {});
+    }
+
+    if (fullName) {
+      await pool.query('DELETE FROM pcu_submissions WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))', [fullName.trim()]).catch(() => {});
+    }
+
+    if (fileName) {
+      await pool.query('DELETE FROM pcu_submissions WHERE file_name = ?', [fileName]).catch(() => {});
+    }
+
+    if (fileUrl) {
+      await pool.query('DELETE FROM pcu_submissions WHERE file_url = ?', [fileUrl]).catch(() => {});
+    }
+
+    // Log deletion into pcu_deletion_audit
+    await pool.query(
+      `INSERT INTO pcu_deletion_audit (submission_id, patient_name, file_name, action_type, deleted_by, details)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        String(id || contactId || ''),
+        String(fullName || 'Unknown Patient'),
+        String(fileName || 'Entire Submission'),
+        'SUBMISSION_DELETED',
+        'Master Admin',
+        JSON.stringify(params)
+      ]
+    ).catch(() => {});
+
+    console.log(`[cPanel DB] Permanently deleted PCU submission from MySQL database:`, params);
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error deleting PCU submission from MySQL:', err.message || err);
+    return false;
+  }
+}
+
+/**
+ * Permanently deletes an individual file from a PCU submission in cPanel MySQL.
+ */
+export async function deletePcuFileFromCPanel(params: {
+  id?: string | number;
+  fullName?: string;
+  fileName?: string;
+  fileUrl?: string;
+}): Promise<boolean> {
+  if (!pool) return false;
+
+  try {
+    const { id, fullName, fileName, fileUrl } = params;
+
+    // Find the record in pcu_submissions
+    let rows: any[] = [];
+    if (id) {
+      const [res]: any = await pool.query('SELECT * FROM pcu_submissions WHERE id = ?', [String(id)]).catch(() => [[]]);
+      rows = res || [];
+    }
+    if (rows.length === 0 && fullName) {
+      const [res]: any = await pool.query('SELECT * FROM pcu_submissions WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))', [fullName.trim()]).catch(() => [[]]);
+      rows = res || [];
+    }
+
+    for (const row of rows) {
+      let uploadedFiles: any[] = [];
+      try {
+        if (row.uploaded_files) {
+          uploadedFiles = typeof row.uploaded_files === 'string' ? JSON.parse(row.uploaded_files) : row.uploaded_files;
+        }
+      } catch (e) {}
+
+      if (Array.isArray(uploadedFiles) && uploadedFiles.length > 0) {
+        const remaining = uploadedFiles.filter((f: any) => {
+          if (fileName && (f.name === fileName || f.fileName === fileName)) return false;
+          if (fileUrl && (f.url === fileUrl || f.fileData === fileUrl)) return false;
+          return true;
+        });
+
+        if (remaining.length === 0) {
+          // No files left -> permanently remove row
+          await pool.query('DELETE FROM pcu_submissions WHERE id = ?', [row.id]).catch(() => {});
+        } else {
+          // Update row with remaining files
+          const newFirstName = remaining[0]?.name || remaining[0]?.fileName || '';
+          const newFirstUrl = remaining[0]?.url || remaining[0]?.fileData || '';
+          await pool.query(
+            'UPDATE pcu_submissions SET uploaded_files = ?, file_name = ?, file_url = ? WHERE id = ?',
+            [JSON.stringify(remaining), newFirstName, newFirstUrl, row.id]
+          ).catch(() => {});
+        }
+      } else {
+        // Single file row -> delete row
+        await pool.query('DELETE FROM pcu_submissions WHERE id = ?', [row.id]).catch(() => {});
+      }
+    }
+
+    // Log file deletion into pcu_deletion_audit
+    await pool.query(
+      `INSERT INTO pcu_deletion_audit (submission_id, patient_name, file_name, action_type, deleted_by, details)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        String(id || ''),
+        String(fullName || 'Unknown Patient'),
+        String(fileName || 'Single File'),
+        'FILE_DELETED',
+        'Master Admin',
+        JSON.stringify(params)
+      ]
+    ).catch(() => {});
+
+    console.log(`[cPanel DB] Permanently deleted PCU file from MySQL:`, params);
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error deleting PCU file from MySQL:', err.message || err);
+    return false;
+  }
+}
+
+
 
