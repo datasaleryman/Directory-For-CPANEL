@@ -1785,23 +1785,23 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                       className="relative cursor-pointer group flex flex-col h-full min-h-[110px] w-full select-none"
                     >
                       {/* Physical Folder Body */}
-                      <div className={`flex-1 rounded-xl shadow-2xs group-hover:shadow-xs group-hover:border-emerald-300 transition-all duration-300 p-3 flex flex-col justify-between relative overflow-hidden z-0 ${
+                      <div className={`flex-1 rounded-lg border transition-colors p-3.5 flex flex-col justify-between relative overflow-hidden z-0 ${
                         isHighlighted
-                          ? 'folder-highlight-active bg-emerald-50/25 border-emerald-500 shadow-md scale-[1.015]'
-                          : 'bg-amber-50/10 hover:bg-amber-50/25 border border-amber-300/40'
+                          ? 'bg-emerald-50/40 border-emerald-500 shadow-xs'
+                          : 'bg-white hover:bg-slate-50 border-slate-200/90 hover:border-slate-300'
                       }`}>
                         {/* Barangay Details */}
-                        <div className="space-y-2">
-                          <h3 className={`text-sm font-extrabold font-display transition-colors truncate ${
+                        <div className="space-y-1.5">
+                          <h3 className={`text-xs font-bold font-display transition-colors truncate ${
                             isHighlighted
-                              ? 'text-emerald-900 group-hover:text-emerald-800'
-                              : 'text-slate-800 group-hover:text-emerald-800'
+                              ? 'text-emerald-900'
+                              : 'text-slate-900 group-hover:text-emerald-700'
                           }`}>
                             {folder.barangay}
                           </h3>
                           
-                          {/* Count Badge matching the user's uploaded image */}
-                          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 border rounded-full text-[11px] font-bold w-fit bg-emerald-50/80 border-emerald-200/60 text-emerald-800">
+                          {/* Count Badge */}
+                          <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 tabular-nums">
                             <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 inline-block shrink-0"></span>
                             <span>{folder.count} {folder.count === 1 ? 'Contact' : 'Contacts'}</span>
                           </div>
@@ -2073,23 +2073,23 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                         className="relative cursor-pointer group flex flex-col h-full min-h-[110px] w-full select-none"
                       >
                         {/* Physical Folder Body */}
-                        <div className={`flex-1 rounded-xl shadow-2xs group-hover:shadow-xs group-hover:border-emerald-300 transition-all duration-300 p-3.5 flex flex-col justify-between relative overflow-hidden z-0 ${
+                        <div className={`flex-1 rounded-lg border transition-colors p-3.5 flex flex-col justify-between relative overflow-hidden z-0 ${
                           isHighlighted
-                            ? 'folder-highlight-active bg-emerald-50/25 border-emerald-500 shadow-md scale-[1.015]'
-                            : 'bg-amber-50/10 hover:bg-amber-50/25 border border-amber-300/40'
+                            ? 'bg-emerald-50/40 border-emerald-500 shadow-xs'
+                            : 'bg-white hover:bg-slate-50 border-slate-200/90 hover:border-slate-300'
                         }`}>
                           {/* Purok Details */}
-                          <div className="space-y-2">
-                            <h3 className={`text-sm font-extrabold font-display transition-colors truncate ${
+                          <div className="space-y-1.5">
+                            <h3 className={`text-xs font-bold font-display transition-colors truncate ${
                               isHighlighted
-                                ? 'text-emerald-900 group-hover:text-emerald-800'
-                                : 'text-slate-800 group-hover:text-emerald-800'
+                                ? 'text-emerald-900'
+                                : 'text-slate-900 group-hover:text-emerald-700'
                             }`}>
                               {formatPurokName(folder.purok)}
                             </h3>
                             
-                            {/* Count Badge matching the user's uploaded image */}
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 border rounded-full text-[11px] font-bold w-fit bg-emerald-50/80 border-emerald-200/60 text-emerald-800">
+                            {/* Count Badge */}
+                            <div className="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 tabular-nums">
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 inline-block shrink-0"></span>
                               <span>{folder.count} {folder.count === 1 ? 'Contact' : 'Contacts'}</span>
                             </div>

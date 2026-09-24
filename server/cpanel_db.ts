@@ -219,7 +219,7 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
 
     // 9. PCU Submissions Table (Submit PCU Page)
     `CREATE TABLE IF NOT EXISTS pcu_submissions (
-      id VARCHAR(100) PRIMARY KEY,
+      id VARCHAR(100) NOT NULL,
       contact_id VARCHAR(100) DEFAULT '',
       full_name VARCHAR(255) NOT NULL,
       barangay VARCHAR(255) NOT NULL DEFAULT '',
@@ -231,7 +231,12 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       uploaded_by VARCHAR(255) DEFAULT 'Admin',
       uploaded_at VARCHAR(100) DEFAULT '',
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      status VARCHAR(50) DEFAULT 'SUBMITTED',
+      status VARCHAR(50) DEFAULT 'PENDING',
+      verified_at VARCHAR(100) NULL,
+      verified_by VARCHAR(255) NULL,
+      credit_added TINYINT(1) DEFAULT 0,
+      notes TEXT NULL,
+      PRIMARY KEY (id),
       INDEX idx_pcu_contact_id (contact_id),
       INDEX idx_pcu_barangay (barangay),
       INDEX idx_pcu_full_name (full_name),
@@ -259,7 +264,7 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
 
     // 11. PCU Submissions Settlement Table (Master Admin Ledger Payroll)
     `CREATE TABLE IF NOT EXISTS pcu_settlements (
-      id VARCHAR(100) PRIMARY KEY,
+      id VARCHAR(100) NOT NULL PRIMARY KEY,
       submitter VARCHAR(255) NOT NULL,
       total_submissions INT DEFAULT 0,
       base_rate DECIMAL(10,2) DEFAULT 0.00,
@@ -378,6 +383,45 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
             console.log(`[cPanel DB] Added missing column '${col.name}' to existing_accounts table.`);
           } catch (e: any) {
             console.warn(`[cPanel DB] Column migration notice for existing_accounts.${col.name}:`, e.message);
+          }
+        }
+      }
+    }
+
+    // Inspect and migrate missing columns or missing PRIMARY KEY in 'pcu_submissions'
+    // Resolves cPanel phpMyAdmin warning: "Current selection does not contain a unique column."
+    const [pcuColRows]: any = await connectionPool.query(
+      `SELECT column_name, column_key FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'pcu_submissions'`
+    ).catch(() => [[]]);
+    const existingPcuCols = new Set((pcuColRows || []).map((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase()));
+    if (existingPcuCols.size > 0) {
+      // 1. Check if PRIMARY KEY exists
+      const hasPrimaryKey = (pcuColRows || []).some((r: any) => (r.column_key || r.COLUMN_KEY) === 'PRI');
+      if (!hasPrimaryKey && existingPcuCols.has('id')) {
+        try {
+          await connectionPool.query('ALTER TABLE `pcu_submissions` MODIFY `id` VARCHAR(100) NOT NULL, ADD PRIMARY KEY (`id`)');
+          console.log('[cPanel DB] Added PRIMARY KEY to pcu_submissions.id (fixes unique column phpMyAdmin warning).');
+        } catch (e: any) {
+          console.warn('[cPanel DB] Notice adding PRIMARY KEY to pcu_submissions:', e.message);
+        }
+      }
+
+      // 2. Check and add missing columns
+      const missingPcuCols = [
+        { name: 'verified_at', type: "VARCHAR(100) NULL" },
+        { name: 'verified_by', type: "VARCHAR(255) NULL" },
+        { name: 'credit_added', type: "TINYINT(1) DEFAULT 0" },
+        { name: 'notes', type: "TEXT NULL" },
+        { name: 'status', type: "VARCHAR(50) DEFAULT 'PENDING'" },
+        { name: 'uploaded_files', type: "LONGTEXT NULL" }
+      ];
+      for (const col of missingPcuCols) {
+        if (!existingPcuCols.has(col.name.toLowerCase())) {
+          try {
+            await connectionPool.query(`ALTER TABLE pcu_submissions ADD COLUMN \`${col.name}\` ${col.type}`);
+            console.log(`[cPanel DB] Added missing column '${col.name}' to pcu_submissions table.`);
+          } catch (e: any) {
+            console.warn(`[cPanel DB] Column migration notice for pcu_submissions.${col.name}:`, e.message);
           }
         }
       }
@@ -741,9 +785,10 @@ CREATE TABLE IF NOT EXISTS \`deleted_records\` (
 
 -- -------------------------------------------------------------------------
 -- 9. Table: pcu_submissions (Submit PCU Page Submissions)
+-- Contains PRIMARY KEY (id) to enable grid edit, checkboxes, copy, and delete in cPanel phpMyAdmin
 -- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS \`pcu_submissions\` (
-  \`id\` VARCHAR(100) PRIMARY KEY,
+  \`id\` VARCHAR(100) NOT NULL,
   \`contact_id\` VARCHAR(100) DEFAULT '',
   \`full_name\` VARCHAR(255) NOT NULL,
   \`barangay\` VARCHAR(255) NOT NULL DEFAULT '',
@@ -755,11 +800,67 @@ CREATE TABLE IF NOT EXISTS \`pcu_submissions\` (
   \`uploaded_by\` VARCHAR(255) DEFAULT 'Admin',
   \`uploaded_at\` VARCHAR(100) DEFAULT '',
   \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  \`status\` VARCHAR(50) DEFAULT 'SUBMITTED',
+  \`status\` VARCHAR(50) DEFAULT 'PENDING',
+  \`verified_at\` VARCHAR(100) NULL,
+  \`verified_by\` VARCHAR(255) NULL,
+  \`credit_added\` TINYINT(1) DEFAULT 0,
+  \`notes\` TEXT NULL,
+  PRIMARY KEY (\`id\`),
+  INDEX \`idx_pcu_contact_id\` (\`contact_id\`),
   INDEX \`idx_pcu_barangay\` (\`barangay\`),
   INDEX \`idx_pcu_full_name\` (\`full_name\`),
-  INDEX \`idx_pcu_uploaded_at\` (\`uploaded_at\`)
+  INDEX \`idx_pcu_uploaded_at\` (\`uploaded_at\`),
+  INDEX \`idx_pcu_status\` (\`status\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
+-- 10. Table: pcu_deletion_audit (Master Admin Permanent Deletion Log)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS \`pcu_deletion_audit\` (
+  \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  \`submission_id\` VARCHAR(100) DEFAULT '',
+  \`patient_name\` VARCHAR(255) NOT NULL,
+  \`barangay\` VARCHAR(255) DEFAULT '',
+  \`file_name\` VARCHAR(255) DEFAULT '',
+  \`action_type\` VARCHAR(50) NOT NULL DEFAULT 'SUBMISSION_DELETED',
+  \`deleted_by\` VARCHAR(255) NOT NULL DEFAULT 'Master Admin',
+  \`deleted_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  \`ip_address\` VARCHAR(100) DEFAULT '',
+  \`details\` TEXT NULL,
+  INDEX \`idx_pcu_del_patient\` (\`patient_name\`),
+  INDEX \`idx_pcu_del_action\` (\`action_type\`),
+  INDEX \`idx_pcu_del_by\` (\`deleted_by\`),
+  INDEX \`idx_pcu_del_at\` (\`deleted_at\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
+-- 11. Table: pcu_settlements (Submit PCU Salary Settlements & Payroll)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS \`pcu_settlements\` (
+  \`id\` VARCHAR(100) NOT NULL PRIMARY KEY,
+  \`submitter\` VARCHAR(255) NOT NULL,
+  \`total_submissions\` INT DEFAULT 0,
+  \`base_rate\` DECIMAL(10,2) DEFAULT 0.00,
+  \`total_salary\` DECIMAL(12,2) DEFAULT 0.00,
+  \`amount_paid\` DECIMAL(12,2) DEFAULT 0.00,
+  \`payment_status\` VARCHAR(50) DEFAULT 'SETTLED',
+  \`payment_method\` VARCHAR(100) DEFAULT 'CASH',
+  \`reference_notes\` TEXT,
+  \`settled_by\` VARCHAR(100) DEFAULT 'Master Admin',
+  \`settled_at\` VARCHAR(100) NOT NULL,
+  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX \`idx_settle_submitter\` (\`submitter\`),
+  INDEX \`idx_settle_status\` (\`payment_status\`),
+  INDEX \`idx_settle_at\` (\`settled_at\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
+-- FIX FOR cPanel phpMyAdmin WARNING:
+-- "Current selection does not contain a unique column. Grid edit, checkbox, Edit, Copy and Delete features are not available."
+-- Run these lines if pcu_submissions already exists without a PRIMARY KEY:
+-- -------------------------------------------------------------------------
+-- UPDATE \`pcu_submissions\` SET \`id\` = UUID() WHERE \`id\` IS NULL OR \`id\` = '';
+-- ALTER TABLE \`pcu_submissions\` MODIFY \`id\` VARCHAR(100) NOT NULL, ADD PRIMARY KEY (\`id\`);
 
 SET FOREIGN_KEY_CHECKS = 1;
 
