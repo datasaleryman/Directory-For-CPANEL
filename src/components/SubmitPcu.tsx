@@ -40,7 +40,13 @@ import {
   BarChart3,
   Calendar,
   Layers,
-  ArrowUpRight
+  ArrowUpRight,
+  Coins,
+  Banknote,
+  Receipt,
+  Printer,
+  Wallet,
+  CreditCard
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -134,6 +140,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Verification Confirmation Popup Card state (centered on screen)
+  const [verifyTarget, setVerifyTarget] = useState<UploadedPcuRecord | null>(null);
+
   // Check if current user is Master Admin (only Master Admin can delete PCU files and view Ledger)
   const isMasterAdmin = React.useMemo(() => {
     if (!currentUser) return false;
@@ -142,8 +151,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     return role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username === 'admin';
   }, [currentUser]);
 
-  // Tab state: 'folders' (Barangay Folders) | 'ledger' (Master Admin Ledger)
-  const [activeTab, setActiveTab] = useState<'folders' | 'ledger'>('folders');
+  // Tab state: 'pending' (Pending PCU Uploads) | 'verified' (Verified PCU Uploads) | 'ledger' (Master Admin Ledger)
+  const [activeTab, setActiveTab] = useState<'pending' | 'verified' | 'ledger'>('pending');
 
   // Currently opened Barangay folder: null = showing all folder cards; string = inside that folder
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
@@ -154,15 +163,56 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   // Folder search filter
   const [folderSearch, setFolderSearch] = useState('');
 
-  // Ledger state & filters (Master Admin Only)
-  const [ledgerSearch, setLedgerSearch] = useState('');
-  const [ledgerSubmitterFilter, setLedgerSubmitterFilter] = useState('ALL');
-  const [ledgerBarangayFilter, setLedgerBarangayFilter] = useState('ALL');
+  // Pagination states: 6 rows x 5 columns = 30 items per page
+  const [folderPage, setFolderPage] = useState<number>(1);
+  const [allGridPage, setAllGridPage] = useState<number>(1);
+  const [inFolderPage, setInFolderPage] = useState<number>(1);
+  const ITEMS_PER_PAGE = 30; // 6 rows x 5 columns = 30 items per page
 
-  // Security guard: If a non-master admin somehow has activeTab === 'ledger', force back to 'folders'
+  // Verification in progress tracking
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
+
+  // Reset pagination and folder when active tab changes
+  useEffect(() => {
+    setSelectedFolder(null);
+    setFolderPage(1);
+    setAllGridPage(1);
+    setInFolderPage(1);
+  }, [activeTab]);
+
+  // Reset pagination when search or filters change
+  useEffect(() => {
+    setFolderPage(1);
+  }, [folderSearch]);
+
+  useEffect(() => {
+    setAllGridPage(1);
+  }, [searchQuery, filterBarangay]);
+
+  useEffect(() => {
+    setInFolderPage(1);
+  }, [selectedFolder, searchQuery]);
+
+  // Ledger Base Rate & Settlements State (Master Admin Only)
+  const [baseRate, setBaseRate] = useState<number>(50);
+  const [baseRateInput, setBaseRateInput] = useState<string>('50');
+  const [savingBaseRate, setSavingBaseRate] = useState<boolean>(false);
+  const [settlements, setSettlements] = useState<any[]>([]);
+  const [loadingSettlements, setLoadingSettlements] = useState<boolean>(false);
+  const [settlingSubmitter, setSettlingSubmitter] = useState<{
+    name: string;
+    submissionsCount: number;
+    totalSalary: number;
+  } | null>(null);
+  const [settlementAmount, setSettlementAmount] = useState<string>('');
+  const [settlementMethod, setSettlementMethod] = useState<string>('Cash');
+  const [settlementNotes, setSettlementNotes] = useState<string>('');
+  const [submittingSettlement, setSubmittingSettlement] = useState<boolean>(false);
+
+  // Security guard: If a non-master admin somehow has activeTab === 'ledger', force back to 'pending'
   useEffect(() => {
     if (!isMasterAdmin && activeTab === 'ledger') {
-      setActiveTab('folders');
+      setActiveTab('pending');
     }
   }, [isMasterAdmin, activeTab]);
 
@@ -194,7 +244,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const fetchUploadedRecords = async () => {
     setLoadingRecords(true);
     try {
-      const res = await fetch('/api/contacts/recent-uploads?limit=100', {
+      const res = await fetch('/api/contacts/recent-uploads?limit=5000', {
         headers: { Authorization: `Bearer ${authToken}` }
       });
 
@@ -232,7 +282,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
             fileUrl: files[0]?.url || item.pcu_file_url || '',
             uploadedAt: item.pcu_uploaded_at || item.updated_at || item.created_at || new Date().toISOString(),
             uploadedBy: item.pcu_uploaded_by || 'Staff',
-            status: item.status || 'SUBMITTED',
+            status: (item.status || '').toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'PENDING',
             filesCount: files.length,
             uploadedFiles: files
           };
@@ -263,7 +313,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               fileUrl: item.fileData || '',
               uploadedAt: item.uploadedAt || new Date().toISOString(),
               uploadedBy: item.uploadedBy || 'Staff',
-              status: 'SUBMITTED',
+              status: (item.status || '').toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'PENDING',
               filesCount: 1,
               uploadedFiles: [fileItem]
             };
@@ -278,9 +328,268 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     }
   };
 
+  // Fetch PCU Base Rate from MySQL
+  const fetchBaseRate = async () => {
+    try {
+      const res = await fetch('/api/pcu/base-rate', {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.baseRate === 'number') {
+          setBaseRate(data.baseRate);
+          setBaseRateInput(String(data.baseRate));
+        }
+      }
+    } catch (err: any) {
+      console.warn('Error fetching base rate:', err.message);
+    }
+  };
+
+  // Fetch PCU Settlements from MySQL
+  const fetchSettlements = async () => {
+    setLoadingSettlements(true);
+    try {
+      const res = await fetch('/api/pcu/settlements', {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.settlements)) {
+          setSettlements(data.settlements);
+        }
+      }
+    } catch (err: any) {
+      console.warn('Error fetching settlements:', err.message);
+    } finally {
+      setLoadingSettlements(false);
+    }
+  };
+
+  // Save Base Rate permanently to MySQL
+  const handleSaveBaseRate = async (rateToSave?: number) => {
+    const val = rateToSave !== undefined ? rateToSave : parseFloat(baseRateInput);
+    if (isNaN(val) || val < 0) {
+      showToast('Please enter a valid base rate (0 or greater).', 'error');
+      return;
+    }
+    setSavingBaseRate(true);
+    try {
+      const res = await fetch('/api/pcu/base-rate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ baseRate: val })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setBaseRate(data.baseRate);
+        setBaseRateInput(String(data.baseRate));
+        showToast(`Base rate ₱${data.baseRate.toFixed(2)} saved permanently to MySQL!`, 'success');
+      } else {
+        const err = await res.json();
+        showToast(err.error || 'Failed to update base rate.', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error updating base rate.', 'error');
+    } finally {
+      setSavingBaseRate(false);
+    }
+  };
+
+  // Open Settlement Modal for a Submitter
+  const openSettlementModal = (sub: { name: string; submissionsCount: number }) => {
+    const existing = settlements.find(s => s.submitter && s.submitter.toLowerCase() === sub.name.toLowerCase());
+    const computedSalary = sub.submissionsCount * baseRate;
+    setSettlingSubmitter({
+      name: sub.name,
+      totalSubmissions: sub.submissionsCount,
+      totalSalary: computedSalary
+    });
+    setSettlementAmount(existing ? String(existing.amountPaid ?? existing.totalSalary) : String(computedSalary));
+    setSettlementMethod(existing ? (existing.paymentMethod || 'Cash') : 'Cash');
+    setSettlementNotes(existing ? (existing.referenceNotes || '') : '');
+  };
+
+  // Confirm Settlement and Save to MySQL
+  const handleConfirmSettlement = async () => {
+    if (!settlingSubmitter) return;
+    const amount = parseFloat(settlementAmount);
+    if (isNaN(amount) || amount < 0) {
+      showToast('Please enter a valid payout amount.', 'error');
+      return;
+    }
+    setSubmittingSettlement(true);
+    try {
+      const existing = settlements.find(s => s.submitter && s.submitter.toLowerCase() === settlingSubmitter.name.toLowerCase());
+      const res = await fetch('/api/pcu/settlements', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          id: existing?.id,
+          submitter: settlingSubmitter.name,
+          totalSubmissions: settlingSubmitter.totalSubmissions,
+          baseRate: baseRate,
+          totalSalary: settlingSubmitter.totalSalary,
+          amountPaid: amount,
+          paymentStatus: 'SETTLED',
+          paymentMethod: settlementMethod,
+          referenceNotes: settlementNotes
+        })
+      });
+      if (res.ok) {
+        await fetchSettlements();
+        showToast(`Settlement for "${settlingSubmitter.name}" saved permanently to MySQL!`, 'success');
+        setSettlingSubmitter(null);
+      } else {
+        const err = await res.json();
+        showToast(err.error || 'Failed to save settlement.', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error saving settlement.', 'error');
+    } finally {
+      setSubmittingSettlement(false);
+    }
+  };
+
+  // Reset / Delete Settlement
+  const handleResetSettlement = async (submitterName: string) => {
+    const existing = settlements.find(s => s.submitter && s.submitter.toLowerCase() === submitterName.toLowerCase());
+    if (!existing) return;
+    if (!confirm(`Are you sure you want to reset settlement for "${submitterName}"? Status will revert to Pending.`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/pcu/settlements/${existing.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authToken}` }
+      });
+      if (res.ok) {
+        await fetchSettlements();
+        showToast(`Settlement for "${submitterName}" has been reset.`, 'info');
+        setSettlingSubmitter(null);
+      } else {
+        const err = await res.json();
+        showToast(err.error || 'Failed to reset settlement.', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error resetting settlement.', 'error');
+    }
+  };
+
+  // Print Official Settlement Voucher
+  const handlePrintVoucher = (subName: string, submissionsCount: number, salary: number, amount: number, method: string, notes: string, settledAt?: string) => {
+    const printWindow = window.open('', '_blank', 'width=800,height=750');
+    if (!printWindow) {
+      showToast('Please allow popups to print the settlement voucher.', 'warning');
+      return;
+    }
+    const dateFormatted = settledAt
+      ? new Date(settledAt).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const voucherHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>PCU Settlement Voucher - ${subName}</title>
+        <style>
+          @page { margin: 15mm; size: auto; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #0f172a; margin: 0; background: #fff; }
+          .voucher-container { border: 2px solid #0f172a; padding: 32px; border-radius: 12px; max-width: 680px; margin: 0 auto; box-sizing: border-box; }
+          .header { text-align: center; border-bottom: 2px dashed #94a3b8; padding-bottom: 18px; margin-bottom: 24px; }
+          .clinic-name { font-size: 22px; font-weight: 900; letter-spacing: -0.5px; text-transform: uppercase; color: #047857; margin-bottom: 4px; }
+          .doc-title { font-size: 15px; font-weight: 800; letter-spacing: 1px; color: #0f172a; text-transform: uppercase; margin-bottom: 4px; }
+          .meta-info { font-size: 12px; color: #64748b; font-weight: 500; }
+          .table { width: 100%; border-collapse: collapse; margin-top: 16px; margin-bottom: 24px; }
+          .table td { padding: 12px; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+          .table td.label { font-weight: 600; color: #334155; width: 45%; }
+          .table td.value { font-weight: 700; color: #0f172a; text-align: right; }
+          .highlight-row td { background-color: #ecfdf5; font-size: 15px; color: #065f46; font-weight: 900; border-top: 1px solid #a7f3d0; border-bottom: 1px solid #a7f3d0; }
+          .notes-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; font-size: 12px; color: #475569; margin-bottom: 28px; }
+          .signatures { display: flex; justify-content: space-between; margin-top: 36px; padding-top: 16px; }
+          .sig-block { text-align: center; width: 42%; }
+          .sig-line { border-bottom: 1px solid #0f172a; margin-top: 48px; margin-bottom: 6px; }
+          .sig-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; }
+          .sig-name { font-size: 13px; font-weight: 800; color: #0f172a; }
+          @media print {
+            body { padding: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="voucher-container">
+          <div class="header">
+            <div class="clinic-name">SAINT FRANCIS CLINIC</div>
+            <div class="doc-title">PCU SUBMISSION SALARY SETTLEMENT VOUCHER</div>
+            <div class="meta-info">Date Issued: ${dateFormatted} &bull; Official Payroll Record</div>
+          </div>
+
+          <table class="table">
+            <tr>
+              <td class="label">Submitter / Recipient</td>
+              <td class="value">${subName}</td>
+            </tr>
+            <tr>
+              <td class="label">Total Verified Submissions</td>
+              <td class="value">${submissionsCount} submissions</td>
+            </tr>
+            <tr>
+              <td class="label">Approved Base Rate</td>
+              <td class="value">₱${baseRate.toFixed(2)} / submission</td>
+            </tr>
+            <tr>
+              <td class="label">Computed Total Salary</td>
+              <td class="value">₱${salary.toFixed(2)}</td>
+            </tr>
+            <tr class="highlight-row">
+              <td class="label">Amount Settled & Disbursed</td>
+              <td class="value">₱${amount.toFixed(2)}</td>
+            </tr>
+            <tr>
+              <td class="label">Disbursement Method</td>
+              <td class="value">${method.toUpperCase()}</td>
+            </tr>
+            <tr>
+              <td class="label">Settlement Status</td>
+              <td class="value" style="color: #047857; font-weight: 800;">PAID & SETTLED</td>
+            </tr>
+          </table>
+
+          ${notes ? `<div class="notes-box"><strong>Remarks / Memo:</strong> ${notes}</div>` : ''}
+
+          <div class="signatures">
+            <div class="sig-block">
+              <div class="sig-line"></div>
+              <div class="sig-name">${currentUser?.fullName || currentUser?.username || 'Master Admin'}</div>
+              <div class="sig-title">Disbursing Officer / Master Admin</div>
+            </div>
+            <div class="sig-block">
+              <div class="sig-line"></div>
+              <div class="sig-name">${subName}</div>
+              <div class="sig-title">Received By (Submitter)</div>
+            </div>
+          </div>
+        </div>
+        <script>
+          window.onload = function() { window.print(); }
+        </script>
+      </body>
+      </html>
+    `;
+    printWindow.document.write(voucherHtml);
+    printWindow.document.close();
+  };
+
   useEffect(() => {
     fetchBarangays();
     fetchUploadedRecords();
+    fetchBaseRate();
+    fetchSettlements();
   }, [authToken]);
 
   // Multiple File Selection Handler
@@ -545,11 +854,153 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   };
 
   // =========================================================================
-  // BARANGAY FOLDERS COMPUTATION
+  // BARANGAY NAME NORMALIZATION & CANONICAL MATCHING
+  // =========================================================================
+  const normalizeBarangayNameKey = (name?: string | null): string => {
+    if (!name) return 'unassigned';
+    const clean = name
+      .trim()
+      .toLowerCase()
+      .replace(/^(barangay|brgy\.?)\s+/i, '')
+      .trim();
+    return clean || 'unassigned';
+  };
+
+  const getCanonicalBarangayName = (bgName: string, list: string[]): string => {
+    if (!bgName || !bgName.trim()) return 'General / Unassigned';
+    const key = normalizeBarangayNameKey(bgName);
+    const found = list.find(b => normalizeBarangayNameKey(b) === key);
+    if (found) return found;
+    return bgName
+      .trim()
+      .split(/\s+/)
+      .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+      .join(' ');
+  };
+
+  // =========================================================================
+  // VERIFICATION WORKFLOW: MOVE BETWEEN PENDING AND VERIFIED (Master Admin Only)
+  // =========================================================================
+  const handleVerifyRecord = async (record: UploadedPcuRecord) => {
+    if (!isMasterAdmin) {
+      showToast('Access Denied: Only Master Admin can verify PCU submissions.', 'error');
+      return;
+    }
+    setVerifyingId(record.id);
+    try {
+      const res = await fetch('/api/pcu/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          id: record.id,
+          fullName: record.fullName,
+          status: 'VERIFIED'
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to verify PCU submission.');
+      }
+
+      // Update state locally so record instantly transfers to Verified section
+      setUploadedRecords(prev => prev.map(item => {
+        const isMatch = (item.id && record.id && item.id === record.id) ||
+          (item.fullName && record.fullName && item.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim());
+        if (isMatch) {
+          return { ...item, status: 'VERIFIED' };
+        }
+        return item;
+      }));
+
+      if (selectedRecord && (selectedRecord.id === record.id || selectedRecord.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim())) {
+        setSelectedRecord(prev => prev ? { ...prev, status: 'VERIFIED' } : null);
+      }
+
+      showToast(`PCU submission for "${record.fullName}" has been verified! Moved to Verified section and 1 credit added to submitter.`, 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Error verifying PCU submission', 'error');
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  const executeConfirmVerification = async () => {
+    if (!verifyTarget) return;
+    const target = verifyTarget;
+    await handleVerifyRecord(target);
+    setVerifyTarget(null);
+  };
+
+  const handleUnverifyRecord = async (record: UploadedPcuRecord) => {
+    if (!isMasterAdmin) {
+      showToast('Access Denied: Only Master Admin can modify verification status.', 'error');
+      return;
+    }
+    setVerifyingId(record.id);
+    try {
+      const res = await fetch('/api/pcu/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          id: record.id,
+          fullName: record.fullName,
+          status: 'PENDING'
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update PCU status.');
+      }
+
+      // Update state locally so record transfers back to Pending section
+      setUploadedRecords(prev => prev.map(item => {
+        const isMatch = (item.id && record.id && item.id === record.id) ||
+          (item.fullName && record.fullName && item.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim());
+        if (isMatch) {
+          return { ...item, status: 'PENDING' };
+        }
+        return item;
+      }));
+
+      if (selectedRecord && (selectedRecord.id === record.id || selectedRecord.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim())) {
+        setSelectedRecord(prev => prev ? { ...prev, status: 'PENDING' } : null);
+      }
+
+      showToast(`PCU submission for "${record.fullName}" has been moved back to Pending.`, 'info');
+    } catch (err: any) {
+      showToast(err.message || 'Error moving PCU back to pending', 'error');
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  // Separate uploaded records into Pending and Verified groups
+  const pendingRecords = React.useMemo(() => {
+    return uploadedRecords.filter(r => (r.status || '').toUpperCase() !== 'VERIFIED');
+  }, [uploadedRecords]);
+
+  const verifiedRecords = React.useMemo(() => {
+    return uploadedRecords.filter(r => (r.status || '').toUpperCase() === 'VERIFIED');
+  }, [uploadedRecords]);
+
+  // Current tab records: 'verified' uses verifiedRecords, otherwise pendingRecords
+  const currentTabRecords = activeTab === 'verified' ? verifiedRecords : pendingRecords;
+
+  // =========================================================================
+  // BARANGAY FOLDERS COMPUTATION (ACCURATELY DISPLAYED BASE ON BARANGAY)
   // =========================================================================
   const barangayFolders = React.useMemo(() => {
     const map = new Map<string, {
       name: string;
+      normalizedKey: string;
       records: UploadedPcuRecord[];
       totalSubmissions: number;
       totalFiles: number;
@@ -561,10 +1012,11 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     barangaysList.forEach((bg) => {
       const trimmed = bg.trim();
       if (!trimmed) return;
-      const key = trimmed.toLowerCase();
+      const key = normalizeBarangayNameKey(trimmed);
       if (!map.has(key)) {
         map.set(key, {
           name: trimmed,
+          normalizedKey: key,
           records: [],
           totalSubmissions: 0,
           totalFiles: 0,
@@ -574,13 +1026,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       }
     });
 
-    // 2. Distribute all uploaded PCU files into their respective Barangay folders
-    uploadedRecords.forEach((rec) => {
+    // 2. Distribute records for the current active tab into their respective Barangay folders
+    currentTabRecords.forEach((rec) => {
       const bgName = (rec.barangay || 'General / Unassigned').trim();
-      const key = bgName.toLowerCase();
+      const key = normalizeBarangayNameKey(bgName);
       if (!map.has(key)) {
+        const canonical = getCanonicalBarangayName(bgName, barangaysList);
         map.set(key, {
-          name: bgName,
+          name: canonical,
+          normalizedKey: key,
           records: [],
           totalSubmissions: 0,
           totalFiles: 0,
@@ -607,7 +1061,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       }
       return a.name.localeCompare(b.name);
     });
-  }, [barangaysList, uploadedRecords]);
+  }, [barangaysList, currentTabRecords]);
 
   // Filtered Barangay Folders list based on folder search
   const filteredBarangayFolders = React.useMemo(() => {
@@ -621,11 +1075,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
   // =========================================================================
   // LEDGER: ALL NAMES WHO SUBMITTED PCU FILES WITH THEIR COUNT OF SUBMISSION
+  // RULE: Only verified submissions count as 1 credit in the Ledger.
+  // If the submission is not verified, it is NOT counted towards the ledger.
   // =========================================================================
   const submittersLedger = React.useMemo(() => {
     const map = new Map<string, {
       name: string;
-      submissionsCount: number;
+      submissionsCount: number; // ONLY VERIFIED COUNT = CREDITS
+      pendingCount: number;     // UNVERIFIED
+      totalUploaded: number;
       filesCount: number;
       barangays: Set<string>;
       latestSubmission: string | null;
@@ -639,6 +1097,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         map.set(key, {
           name: submitter,
           submissionsCount: 0,
+          pendingCount: 0,
+          totalUploaded: 0,
           filesCount: 0,
           barangays: new Set<string>(),
           latestSubmission: null,
@@ -647,100 +1107,254 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       }
 
       const item = map.get(key)!;
-      item.submissionsCount += 1;
-      const fCount = rec.filesCount || (rec.uploadedFiles ? rec.uploadedFiles.length : 1);
-      item.filesCount += fCount;
+      item.records.push(rec);
+      item.totalUploaded += 1;
+
+      const isVerified = (rec.status || '').toUpperCase() === 'VERIFIED';
+      if (isVerified) {
+        // Only verified submitted will be count as 1 credit to the submitter in the Ledger!
+        item.submissionsCount += 1;
+        const fCount = rec.filesCount || (rec.uploadedFiles ? rec.uploadedFiles.length : 1);
+        item.filesCount += fCount;
+      } else {
+        item.pendingCount += 1;
+      }
+
       if (rec.barangay) item.barangays.add(rec.barangay);
       if (!item.latestSubmission || new Date(rec.uploadedAt).getTime() > new Date(item.latestSubmission).getTime()) {
         item.latestSubmission = rec.uploadedAt;
       }
-      item.records.push(rec);
     });
 
     return Array.from(map.values()).sort((a, b) => b.submissionsCount - a.submissionsCount);
   }, [uploadedRecords]);
 
-  // Ledger Filtered Detailed Records Table
-  const filteredLedgerRecords = React.useMemo(() => {
-    return uploadedRecords.filter((rec) => {
-      const matchesSearch = !ledgerSearch.trim() ||
-        (rec.uploadedBy || '').toLowerCase().includes(ledgerSearch.toLowerCase().trim()) ||
-        rec.fullName.toLowerCase().includes(ledgerSearch.toLowerCase().trim()) ||
-        rec.barangay.toLowerCase().includes(ledgerSearch.toLowerCase().trim()) ||
-        rec.purok.toLowerCase().includes(ledgerSearch.toLowerCase().trim());
-
-      const matchesSubmitter = ledgerSubmitterFilter === 'ALL' ||
-        (rec.uploadedBy || '').toLowerCase() === ledgerSubmitterFilter.toLowerCase();
-
-      const matchesBarangay = ledgerBarangayFilter === 'ALL' ||
-        rec.barangay.toLowerCase() === ledgerBarangayFilter.toLowerCase();
-
-      return matchesSearch && matchesSubmitter && matchesBarangay;
-    });
-  }, [uploadedRecords, ledgerSearch, ledgerSubmitterFilter, ledgerBarangayFilter]);
-
-  // Export Ledger to CSV Function
+  // Export Submitters Tallies & Payroll Ledger to CSV Function
   const exportLedgerToCsv = () => {
-    if (uploadedRecords.length === 0) {
-      showToast('No records available to export', 'warning');
+    if (submittersLedger.length === 0) {
+      showToast('No submitters available to export', 'warning');
       return;
     }
     const headers = [
       'Submitter Name',
-      'Patient Full Name',
-      'Barangay',
-      'Purok / Address',
-      'Contact Number',
-      'Files Attached Count',
-      'File Names',
-      'Submission Date & Time',
-      'Status'
+      'Total Verified Submissions (Credits)',
+      'Pending Submissions (Uncredited)',
+      'Approved Base Rate (PHP)',
+      'Total Computed Salary (PHP)',
+      'Settlement Status',
+      'Amount Settled / Paid (PHP)',
+      'Disbursement Method',
+      'Settlement Date',
+      'Settled By',
+      'Reference Notes'
     ];
-    const rows = uploadedRecords.map((rec) => [
-      `"${(rec.uploadedBy || 'Staff').replace(/"/g, '""')}"`,
-      `"${(rec.fullName || '').replace(/"/g, '""')}"`,
-      `"${(rec.barangay || '').replace(/"/g, '""')}"`,
-      `"${(rec.purok || '').replace(/"/g, '""')}"`,
-      `"${(rec.contactNumber || '').replace(/"/g, '""')}"`,
-      rec.filesCount || (rec.uploadedFiles ? rec.uploadedFiles.length : 1),
-      `"${(rec.uploadedFiles || []).map(f => f.name).join('; ').replace(/"/g, '""')}"`,
-      `"${formatTimestamp(rec.uploadedAt).replace(/"/g, '""')}"`,
-      `"${(rec.status || 'SUBMITTED').replace(/"/g, '""')}"`
-    ]);
+    const rows = submittersLedger.map((sub) => {
+      const setRec = settlements.find(s => s.submitter && s.submitter.toLowerCase() === sub.name.toLowerCase());
+      const computedSalary = sub.submissionsCount * baseRate;
+      return [
+        `"${sub.name.replace(/"/g, '""')}"`,
+        sub.submissionsCount,
+        sub.pendingCount,
+        baseRate.toFixed(2),
+        computedSalary.toFixed(2),
+        `"${(setRec?.paymentStatus || 'PENDING').replace(/"/g, '""')}"`,
+        setRec ? (setRec.amountPaid ?? setRec.totalSalary).toFixed(2) : '0.00',
+        `"${(setRec?.paymentMethod || 'N/A').replace(/"/g, '""')}"`,
+        setRec?.settledAt ? `"${formatTimestamp(setRec.settledAt).replace(/"/g, '""')}"` : '""',
+        `"${(setRec?.settledBy || '').replace(/"/g, '""')}"`,
+        `"${(setRec?.referenceNotes || '').replace(/"/g, '""')}"`
+      ];
+    });
 
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `pcu_submissions_ledger_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute('download', `pcu_submitters_payroll_ledger_${new Date().toISOString().split('T')[0]}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast('PCU Submissions Ledger exported to CSV successfully', 'success');
+    showToast('Submitters Tallies & Payroll Ledger exported to CSV successfully', 'success');
   };
 
   // Filtered records for Grid when inside a folder or in all-grid mode
   const currentFolderData = React.useMemo(() => {
     if (!selectedFolder) return null;
-    return barangayFolders.find(f => f.name.toLowerCase() === selectedFolder.toLowerCase()) || null;
+    const targetKey = normalizeBarangayNameKey(selectedFolder);
+    return barangayFolders.find(f => 
+      f.normalizedKey === targetKey || 
+      f.name.toLowerCase().trim() === selectedFolder.toLowerCase().trim() ||
+      normalizeBarangayNameKey(f.name) === targetKey
+    ) || null;
   }, [barangayFolders, selectedFolder]);
 
-  // Filtered records for Grid
-  const filteredRecords = (selectedFolder && currentFolderData ? currentFolderData.records : uploadedRecords).filter(rec => {
-    const matchesSearch = !searchQuery.trim() || 
-      rec.fullName.toLowerCase().includes(searchQuery.toLowerCase().trim()) ||
-      rec.barangay.toLowerCase().includes(searchQuery.toLowerCase().trim()) ||
-      rec.purok.toLowerCase().includes(searchQuery.toLowerCase().trim()) ||
-      (rec.contactNumber && rec.contactNumber.includes(searchQuery.trim()));
+  // Records belonging to the currently selected folder (or all current tab records if no folder selected)
+  const folderRecords = React.useMemo(() => {
+    if (!selectedFolder) return currentTabRecords;
+    if (currentFolderData && currentFolderData.records && currentFolderData.records.length > 0) {
+      return currentFolderData.records;
+    }
+    const targetKey = normalizeBarangayNameKey(selectedFolder);
+    return currentTabRecords.filter(r => 
+      normalizeBarangayNameKey(r.barangay) === targetKey ||
+      (r.barangay && r.barangay.toLowerCase().trim() === selectedFolder.toLowerCase().trim())
+    );
+  }, [selectedFolder, currentFolderData, currentTabRecords]);
 
-    const matchesBarangay = !selectedFolder && (filterBarangay === 'ALL' || 
-      rec.barangay.toLowerCase() === filterBarangay.toLowerCase());
+  // Filtered records for Grid (search and barangay filters)
+  const filteredRecords = React.useMemo(() => {
+    const sourceRecords = selectedFolder ? folderRecords : currentTabRecords;
+    const q = searchQuery.toLowerCase().trim();
 
-    return matchesSearch && matchesBarangay;
-  });
+    return sourceRecords.filter((rec) => {
+      const matchesSearch = !q || 
+        Boolean(
+          (rec.fullName && rec.fullName.toLowerCase().includes(q)) ||
+          (rec.barangay && rec.barangay.toLowerCase().includes(q)) ||
+          (rec.purok && rec.purok.toLowerCase().includes(q)) ||
+          (rec.contactNumber && rec.contactNumber.toLowerCase().includes(q)) ||
+          (rec.uploadedBy && rec.uploadedBy.toLowerCase().includes(q)) ||
+          (rec.fileName && rec.fileName.toLowerCase().includes(q))
+        );
+
+      // If inside a folder, barangay filtering is already handled by folderRecords.
+      // If in all-grid mode (!selectedFolder), apply filterBarangay if not 'ALL'
+      const matchesBarangay = selectedFolder 
+        ? true 
+        : (filterBarangay === 'ALL' || normalizeBarangayNameKey(rec.barangay) === normalizeBarangayNameKey(filterBarangay));
+
+      return Boolean(matchesSearch && matchesBarangay);
+    });
+  }, [selectedFolder, folderRecords, currentTabRecords, searchQuery, filterBarangay]);
+
+  // Paginated Slices (6 rows x 5 columns = 30 items per page)
+  const paginatedBarangayFolders = React.useMemo(() => {
+    const start = (folderPage - 1) * ITEMS_PER_PAGE;
+    return filteredBarangayFolders.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredBarangayFolders, folderPage]);
+
+  const paginatedAllGridRecords = React.useMemo(() => {
+    const start = (allGridPage - 1) * ITEMS_PER_PAGE;
+    return filteredRecords.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredRecords, allGridPage]);
+
+  const paginatedInFolderRecords = React.useMemo(() => {
+    const start = (inFolderPage - 1) * ITEMS_PER_PAGE;
+    return filteredRecords.slice(start, start + ITEMS_PER_PAGE);
+  }, [filteredRecords, inFolderPage]);
+
+  // Reusable Pagination component (Display 6 rows, 5 columns = 30 items per page)
+  const renderPaginationControls = (
+    currentPage: number,
+    totalItems: number,
+    pageSize: number,
+    onPageChange: (page: number) => void,
+    itemName: string = 'records'
+  ) => {
+    if (totalItems === 0) return null;
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+
+    const getPageNumbers = () => {
+      const pages: (number | string)[] = [];
+      if (totalPages <= 7) {
+        for (let i = 1; i <= totalPages; i++) pages.push(i);
+      } else {
+        if (currentPage <= 4) {
+          pages.push(1, 2, 3, 4, 5, '...', totalPages);
+        } else if (currentPage >= totalPages - 3) {
+          pages.push(1, '...', totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1, totalPages);
+        } else {
+          pages.push(1, '...', currentPage - 1, currentPage, currentPage + 1, '...', totalPages);
+        }
+      }
+      return pages;
+    };
+
+    const startItem = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+    const endItem = Math.min(currentPage * pageSize, totalItems);
+
+    return (
+      <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-4 mt-6">
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-medium">
+          <span>
+            Showing <strong className="font-black text-slate-900">{startItem}–{endItem}</strong> of{' '}
+            <strong className="font-black text-slate-900">{totalItems}</strong> {itemName}
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-emerald-800 font-bold px-3 py-1 bg-emerald-50 rounded-xl border border-emerald-200 text-[11px] shadow-xs">
+            <Layers className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Page {currentPage} of {totalPages}</span>
+            <span className="text-slate-300">•</span>
+            <span className="text-slate-600 font-semibold">Display: 6 rows &times; 5 columns (30/page)</span>
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              if (currentPage > 1) {
+                onPageChange(currentPage - 1);
+                window.scrollTo({ top: 380, behavior: 'smooth' });
+              }
+            }}
+            disabled={currentPage <= 1}
+            className="p-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
+            title="Previous Page"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+
+          <div className="flex items-center gap-1">
+            {getPageNumbers().map((page, idx) => {
+              if (page === '...') {
+                return (
+                  <span key={`dots-${idx}`} className="px-2 py-1 text-slate-400 text-xs font-bold">
+                    ...
+                  </span>
+                );
+              }
+              const isCurrent = page === currentPage;
+              return (
+                <button
+                  key={`page-${page}`}
+                  type="button"
+                  onClick={() => {
+                    onPageChange(Number(page));
+                    window.scrollTo({ top: 380, behavior: 'smooth' });
+                  }}
+                  className={`min-w-[36px] h-9 px-3 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    isCurrent
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20 font-black'
+                      : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                  }`}
+                >
+                  {page}
+                </button>
+              );
+            })}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (currentPage < totalPages) {
+                onPageChange(currentPage + 1);
+                window.scrollTo({ top: 380, behavior: 'smooth' });
+              }
+            }}
+            disabled={currentPage >= totalPages}
+            className="p-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300 disabled:opacity-30 disabled:pointer-events-none transition-colors cursor-pointer"
+            title="Next Page"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-16">
+    <div className="space-y-6 max-w-7xl 2xl:max-w-[1720px] mx-auto pb-16">
       {/* ========================================================================= */}
       {/* SECTION HEADER WITH MOVED "UPLOAD PCU" BUTTON                             */}
       {/* ========================================================================= */}
@@ -836,34 +1450,56 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
       {/* ========================================================================= */}
       {/* TABS NAVIGATION BAR BELOW THE HEADER                                       */}
-      {/* Tab 1: Barangay Folders (Every file placed into its Barangay folder)      */}
-      {/* Tab 2: Ledger (Master Admin Only - all submitter names & submission counts)*/}
+      {/* Tab 1: Pending (Renamed from Barangay Folders)                             */}
+      {/* Tab 2: Verified (New tab beside Pending for verified PCU submissions)       */}
+      {/* Tab 3: Ledger (Master Admin Only - submitter credits & payroll)           */}
       {/* ========================================================================= */}
       {!isFormOpen && (
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border border-slate-200/80 shadow-xs">
-          <div className="flex items-center gap-2">
-            {/* Tab 1: Barangay Folders */}
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Tab 1: Pending (Renamed from Barangay Folders) */}
             <button
               type="button"
               onClick={() => {
-                setActiveTab('folders');
+                setActiveTab('pending');
               }}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
-                activeTab === 'folders'
+                activeTab === 'pending'
+                  ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md shadow-amber-600/20'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+            >
+              <Clock className="w-4 h-4" />
+              <span>Pending</span>
+              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                activeTab === 'pending' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800'
+              }`}>
+                {pendingRecords.length}
+              </span>
+            </button>
+
+            {/* Tab 2: Verified (New tab beside Pending) */}
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('verified');
+              }}
+              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                activeTab === 'verified'
                   ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/20'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               }`}
             >
-              <Folder className="w-4 h-4" />
-              <span>Barangay Folders</span>
+              <CheckCircle2 className="w-4 h-4" />
+              <span>Verified</span>
               <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                activeTab === 'folders' ? 'bg-white/20 text-white' : 'bg-slate-200/80 text-slate-700'
+                activeTab === 'verified' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'
               }`}>
-                {barangayFolders.length}
+                {verifiedRecords.length}
               </span>
             </button>
 
-            {/* Tab 2: Ledger (Only Master Admin can view) */}
+            {/* Tab 3: Ledger (Only Master Admin can view) */}
             {isMasterAdmin && (
               <button
                 type="button"
@@ -889,7 +1525,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           {/* Quick Info & Refresh */}
           <div className="flex items-center justify-between sm:justify-end gap-3 px-2 sm:px-0">
             <span className="text-xs text-slate-400 font-medium">
-              {uploadedRecords.length} Total Submissions
+              <span className="text-emerald-700 font-bold">{verifiedRecords.length} Verified</span> • <span className="text-amber-700 font-bold">{pendingRecords.length} Pending</span>
             </span>
             <button
               type="button"
@@ -907,12 +1543,12 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       {/* Dynamic View: Toggle between Grid View of Uploaded Data and Upload PCU Form */}
       <AnimatePresence mode="wait">
         {!isFormOpen ? (
-          activeTab === 'folders' ? (
+          activeTab === 'pending' || activeTab === 'verified' ? (
             /* ========================================================================= */
-            /* VIEW A: BARANGAY FOLDERS (EACH FILE PLACED IN ITS BARANGAY FOLDER)         */
+            /* VIEW: PENDING / VERIFIED BARANGAY FOLDERS & ALL GRID                      */
             /* ========================================================================= */
             <motion.div
-              key="folders-view"
+              key={`${activeTab}-view`}
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
@@ -970,7 +1606,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                           }`}
                         >
                           <Layers className="w-3.5 h-3.5" />
-                          <span>All Grid ({uploadedRecords.length})</span>
+                          <span>All Grid ({currentTabRecords.length})</span>
                         </button>
                       </div>
                     </div>
@@ -979,79 +1615,93 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       <span>{barangayFolders.length} Barangay Folders</span>
                       <span>•</span>
                       <span className="text-emerald-700 font-black">
-                        {barangayFolders.reduce((sum, f) => sum + f.totalFiles, 0)} Files Total
+                        {currentTabRecords.length} {activeTab === 'verified' ? 'Verified' : 'Pending'} PCUs
                       </span>
                     </div>
                   </div>
 
                   {/* Mode 1: Display as BARANGAY FOLDERS */}
                   {folderViewMode === 'folders' ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-                      {filteredBarangayFolders.map((folder) => {
-                        const hasFiles = folder.totalSubmissions > 0;
+                    <div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                        {paginatedBarangayFolders.map((folder) => {
+                          const hasFiles = folder.totalSubmissions > 0;
 
-                        return (
-                          <div
-                            key={folder.name}
-                            onClick={() => setSelectedFolder(folder.name)}
-                            className="group relative bg-white rounded-3xl border border-slate-200/90 hover:border-emerald-500/60 shadow-xs hover:shadow-xl transition-all duration-200 cursor-pointer overflow-hidden flex flex-col justify-between"
-                          >
-                            {/* Top Folder Tab Decoration */}
-                            <div className="h-2 bg-gradient-to-r from-emerald-500 via-teal-500 to-slate-800 group-hover:h-2.5 transition-all" />
+                          return (
+                            <div
+                              key={folder.name}
+                              onClick={() => setSelectedFolder(folder.name)}
+                              className="group relative bg-white rounded-3xl border border-slate-200/90 hover:border-emerald-500/60 shadow-xs hover:shadow-xl transition-all duration-200 cursor-pointer overflow-hidden flex flex-col justify-between"
+                            >
+                              {/* Top Folder Tab Decoration */}
+                              <div className={`h-2 bg-gradient-to-r ${activeTab === 'verified' ? 'from-emerald-500 via-teal-500 to-slate-800' : 'from-amber-500 via-orange-500 to-slate-800'} group-hover:h-2.5 transition-all`} />
 
-                            <div className="p-5 space-y-4">
-                              {/* Header: Folder Icon & Files Badge */}
-                              <div className="flex items-start justify-between gap-3">
-                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
-                                  hasFiles
-                                    ? 'bg-emerald-100 text-emerald-700 shadow-md shadow-emerald-500/10 group-hover:scale-105 group-hover:bg-emerald-600 group-hover:text-white'
-                                    : 'bg-slate-100 text-slate-400'
-                                }`}>
-                                  <Folder className="w-6 h-6" />
-                                </div>
-
-                                <div className="text-right space-y-1">
-                                  <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-black ${
-                                    hasFiles 
-                                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200/60' 
+                              <div className="p-5 space-y-4">
+                                {/* Header: Folder Icon & Files Badge */}
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
+                                    hasFiles
+                                      ? activeTab === 'verified' 
+                                        ? 'bg-emerald-100 text-emerald-700 shadow-md shadow-emerald-500/10 group-hover:scale-105 group-hover:bg-emerald-600 group-hover:text-white'
+                                        : 'bg-amber-100 text-amber-700 shadow-md shadow-amber-500/10 group-hover:scale-105 group-hover:bg-amber-600 group-hover:text-white'
                                       : 'bg-slate-100 text-slate-400'
                                   }`}>
-                                    <ImageIcon className="w-3 h-3" />
-                                    <span>{folder.totalFiles} {folder.totalFiles === 1 ? 'file' : 'files'}</span>
-                                  </span>
-                                  <span className="block text-[11px] font-bold text-slate-400">
-                                    {folder.totalSubmissions} {folder.totalSubmissions === 1 ? 'patient' : 'patients'}
-                                  </span>
+                                    <Folder className="w-6 h-6" />
+                                  </div>
+
+                                  <div className="text-right space-y-1">
+                                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-black ${
+                                      hasFiles 
+                                        ? activeTab === 'verified'
+                                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200/60'
+                                          : 'bg-amber-50 text-amber-800 border border-amber-200/60'
+                                        : 'bg-slate-100 text-slate-400'
+                                    }`}>
+                                      <ImageIcon className="w-3 h-3" />
+                                      <span>{folder.totalFiles} {folder.totalFiles === 1 ? 'file' : 'files'}</span>
+                                    </span>
+                                    <span className="block text-[11px] font-bold text-slate-400">
+                                      {folder.totalSubmissions} {folder.totalSubmissions === 1 ? 'patient' : 'patients'}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Barangay Name & Info */}
+                                <div className="space-y-1">
+                                  <h3 className="text-base font-black text-slate-900 group-hover:text-emerald-700 transition-colors flex items-center gap-1.5">
+                                    <span>{folder.name}</span>
+                                  </h3>
+                                  <p className="text-[11px] text-slate-400 line-clamp-1">
+                                    {hasFiles 
+                                      ? `Staff: ${Array.from(folder.submitters).slice(0, 2).join(', ')}${folder.submitters.size > 2 ? '...' : ''}` 
+                                      : `No ${activeTab === 'verified' ? 'verified' : 'pending'} PCU files`}
+                                  </p>
                                 </div>
                               </div>
 
-                              {/* Barangay Name & Info */}
-                              <div className="space-y-1">
-                                <h3 className="text-base font-black text-slate-900 group-hover:text-emerald-700 transition-colors flex items-center gap-1.5">
-                                  <span>{folder.name}</span>
-                                </h3>
-                                <p className="text-[11px] text-slate-400 line-clamp-1">
-                                  {hasFiles 
-                                    ? `Staff: ${Array.from(folder.submitters).slice(0, 2).join(', ')}${folder.submitters.size > 2 ? '...' : ''}` 
-                                    : 'No PCU files uploaded yet'}
-                                </p>
+                              {/* Card Footer: Last Uploaded & Action */}
+                              <div className="px-5 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between text-xs">
+                                <span className="text-[11px] text-slate-400">
+                                  {folder.latestUploadedAt ? `Updated ${formatTimestamp(folder.latestUploadedAt).split(',')[0]}` : 'Empty Folder'}
+                                </span>
+
+                                <div className="flex items-center gap-1.5 font-bold text-emerald-700 group-hover:translate-x-0.5 transition-transform">
+                                  <span>Open Folder</span>
+                                  <ArrowUpRight className="w-3.5 h-3.5" />
+                                </div>
                               </div>
                             </div>
+                          );
+                        })}
+                      </div>
 
-                            {/* Card Footer: Last Uploaded & Action */}
-                            <div className="px-5 py-3 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between text-xs">
-                              <span className="text-[11px] text-slate-400">
-                                {folder.latestUploadedAt ? `Updated ${formatTimestamp(folder.latestUploadedAt).split(',')[0]}` : 'Empty Folder'}
-                              </span>
-
-                              <div className="flex items-center gap-1.5 font-bold text-emerald-700 group-hover:translate-x-0.5 transition-transform">
-                                <span>Open Folder</span>
-                                <ArrowUpRight className="w-3.5 h-3.5" />
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
+                      {renderPaginationControls(
+                        folderPage,
+                        filteredBarangayFolders.length,
+                        ITEMS_PER_PAGE,
+                        setFolderPage,
+                        'folders'
+                      )}
                     </div>
                   ) : (
                     /* Mode 2: Flattened All Grid View */
@@ -1085,9 +1735,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                               onChange={(e) => setFilterBarangay(e.target.value)}
                               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all cursor-pointer"
                             >
-                              <option value="ALL">All Barangays ({uploadedRecords.length})</option>
+                              <option value="ALL">All Barangays ({currentTabRecords.length})</option>
                               {barangaysList.map((bg) => {
-                                const count = uploadedRecords.filter(r => r.barangay.toLowerCase() === bg.toLowerCase()).length;
+                                const count = currentTabRecords.filter(r => normalizeBarangayNameKey(r.barangay) === normalizeBarangayNameKey(bg)).length;
                                 return (
                                   <option key={bg} value={bg}>
                                     {bg} {count > 0 ? `(${count})` : ''}
@@ -1099,7 +1749,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         </div>
 
                         <div className="text-xs font-bold text-slate-500">
-                          Showing <span className="text-slate-900 font-black">{filteredRecords.length}</span> of {uploadedRecords.length}
+                          Showing <span className="text-slate-900 font-black">{filteredRecords.length}</span> of {currentTabRecords.length}
                         </div>
                       </div>
 
@@ -1107,126 +1757,205 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       {filteredRecords.length === 0 ? (
                         <div className="bg-white rounded-3xl p-12 text-center space-y-4 border border-dashed border-slate-200">
                           <FolderOpen className="w-12 h-12 text-slate-300 mx-auto" />
-                          <h4 className="text-base font-bold text-slate-700">No submissions found</h4>
+                          <h4 className="text-base font-bold text-slate-700">
+                            {activeTab === 'verified' ? 'No verified submissions found' : 'No pending submissions found'}
+                          </h4>
                           <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                            No uploaded PCU submissions match your current search criteria.
+                            {activeTab === 'verified'
+                              ? 'Click the Verify button on pending submissions to verify them and credit them to submitters in the Ledger.'
+                              : 'No pending PCU submissions match your current search criteria.'}
                           </p>
                         </div>
                       ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                          {filteredRecords.map((record, index) => {
-                            const firstFile = record.uploadedFiles[0];
-                            const hasImage = firstFile && isImageFile(firstFile.url, firstFile.name);
+                        <div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                            {paginatedAllGridRecords.map((record, index) => {
+                              const firstFile = record.uploadedFiles[0];
+                              const hasImage = firstFile && isImageFile(firstFile.url, firstFile.name);
+                              const isVerified = (record.status || '').toUpperCase() === 'VERIFIED';
 
-                            return (
-                              <div
-                                key={`${record.id}-${record.fullName}-${index}`}
-                                onClick={() => setSelectedRecord(record)}
-                                className="group bg-white rounded-2xl border border-slate-200/80 hover:border-emerald-500/60 shadow-xs hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col cursor-pointer transform hover:-translate-y-1 relative"
-                              >
-                                <div className="relative h-44 sm:h-48 w-full bg-slate-100 overflow-hidden border-b border-slate-100">
-                                  {hasImage && firstFile.url ? (
-                                    <img
-                                      src={firstFile.url}
-                                      alt={record.fullName}
-                                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                      loading="lazy"
-                                      onError={(e) => {
-                                        (e.target as HTMLElement).style.display = 'none';
-                                      }}
-                                    />
-                                  ) : (
-                                    <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 text-slate-400 p-4 space-y-2">
-                                      <div className="w-12 h-12 rounded-2xl bg-white shadow-xs border border-slate-200 flex items-center justify-center text-emerald-600">
-                                        <FileText className="w-6 h-6" />
-                                      </div>
-                                      <span className="text-[11px] font-bold text-slate-500 text-center line-clamp-1">
-                                        {firstFile?.name || 'PCU Document'}
-                                      </span>
-                                    </div>
-                                  )}
-
-                                  <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
-                                    <span className="px-2.5 py-1 rounded-lg bg-emerald-950/80 backdrop-blur-md text-emerald-200 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30 shadow-xs">
-                                      {record.barangay}
-                                    </span>
-
-                                    <div className="flex items-center gap-1.5 pointer-events-auto">
-                                      <span className="px-2 py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-bold flex items-center gap-1 border border-white/10 shadow-xs">
-                                        <ImageIcon className="w-3 h-3 text-emerald-400" />
-                                        <span>{record.filesCount} {record.filesCount === 1 ? 'file' : 'files'}</span>
-                                      </span>
-
-                                      {isMasterAdmin && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => promptDeleteRecord(e, record)}
-                                          className="p-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-600 active:bg-rose-700 text-white shadow-md transition-all cursor-pointer hover:scale-110"
-                                          title="Permanently Delete PCU Record from MySQL (Master Admin Only)"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="absolute inset-0 bg-emerald-950/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center pointer-events-none">
-                                    <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white text-emerald-900 text-xs font-black shadow-lg transform scale-95 group-hover:scale-100 transition-transform">
-                                      <Eye className="w-4 h-4 text-emerald-600" />
-                                      View Whole Data
-                                    </span>
-                                  </div>
-                                </div>
-
-                                <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                                  <div className="space-y-1.5">
-                                    <h3 className="font-bold text-slate-900 text-sm sm:text-base group-hover:text-emerald-700 transition-colors line-clamp-1" title={record.fullName}>
-                                      {record.fullName}
-                                    </h3>
-
-                                    <div className="flex items-center gap-1.5 text-slate-500 text-xs">
-                                      <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                      <span className="truncate">
-                                        {record.purok ? `${record.purok}, ` : ''}{record.barangay}
-                                      </span>
-                                    </div>
-
-                                    {record.contactNumber && (
-                                      <div className="flex items-center gap-1.5 text-slate-500 text-xs font-mono">
-                                        <Phone className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                                        <span className="truncate">{record.contactNumber}</span>
+                              return (
+                                <div
+                                  key={`${record.id}-${record.fullName}-${index}`}
+                                  onClick={() => setSelectedRecord(record)}
+                                  className="group bg-white rounded-2xl border border-slate-200/80 hover:border-emerald-500/60 shadow-xs hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col cursor-pointer transform hover:-translate-y-1 relative"
+                                >
+                                  <div className="relative h-36 sm:h-40 w-full bg-slate-100 overflow-hidden border-b border-slate-100">
+                                    {hasImage && firstFile.url ? (
+                                      <img
+                                        src={firstFile.url}
+                                        alt={record.fullName}
+                                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                                        loading="lazy"
+                                        onError={(e) => {
+                                          (e.target as HTMLElement).style.display = 'none';
+                                        }}
+                                      />
+                                    ) : (
+                                      <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 text-slate-400 p-4 space-y-2">
+                                        <div className="w-12 h-12 rounded-2xl bg-white shadow-xs border border-slate-200 flex items-center justify-center text-emerald-600">
+                                          <FileText className="w-6 h-6" />
+                                        </div>
+                                        <span className="text-[11px] font-bold text-slate-500 text-center line-clamp-1">
+                                          {firstFile?.name || 'PCU Document'}
+                                        </span>
                                       </div>
                                     )}
-                                  </div>
 
-                                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
-                                    <div className="flex items-center gap-1 truncate" title={`Uploaded by ${record.uploadedBy}`}>
-                                      <User className="w-3 h-3 text-slate-400" />
-                                      <span className="truncate font-medium">{record.uploadedBy}</span>
-                                    </div>
-
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex items-center gap-1 shrink-0 font-medium text-slate-400">
-                                        <Clock className="w-3 h-3 text-slate-400" />
-                                        <span>{new Date(record.uploadedAt).toLocaleDateString()}</span>
+                                    <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
+                                      <div className="flex items-center gap-1.5 pointer-events-auto">
+                                        <span className="px-2.5 py-1 rounded-lg bg-emerald-950/80 backdrop-blur-md text-emerald-200 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30 shadow-xs">
+                                          {record.barangay}
+                                        </span>
+                                        {isVerified ? (
+                                          <span className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs">
+                                            <CheckCircle2 className="w-3 h-3 text-white" />
+                                            Verified
+                                          </span>
+                                        ) : (
+                                          <span className="px-2 py-1 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs">
+                                            <Clock className="w-3 h-3 text-white" />
+                                            Pending
+                                          </span>
+                                        )}
                                       </div>
 
-                                      {isMasterAdmin && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => promptDeleteRecord(e, record)}
-                                          className="text-slate-400 hover:text-rose-600 p-1 rounded-md hover:bg-rose-50 transition-colors cursor-pointer"
-                                          title="Permanently Delete from MySQL (Master Admin Only)"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                        </button>
+                                      <div className="flex items-center gap-1.5 pointer-events-auto">
+                                        <span className="px-2 py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-bold flex items-center gap-1 border border-white/10 shadow-xs">
+                                          <ImageIcon className="w-3 h-3 text-emerald-400" />
+                                          <span>{record.filesCount} {record.filesCount === 1 ? 'file' : 'files'}</span>
+                                        </span>
+
+                                        {isMasterAdmin && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => promptDeleteRecord(e, record)}
+                                            className="p-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-600 active:bg-rose-700 text-white shadow-md transition-all cursor-pointer hover:scale-110"
+                                            title="Permanently Delete PCU Record from MySQL (Master Admin Only)"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <div className="absolute inset-0 bg-emerald-950/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center pointer-events-none">
+                                      <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white text-emerald-900 text-xs font-black shadow-lg transform scale-95 group-hover:scale-100 transition-transform">
+                                        <Eye className="w-4 h-4 text-emerald-600" />
+                                        View Whole Data
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                                    <div className="space-y-1.5">
+                                      <h3 className="font-bold text-slate-900 text-sm sm:text-base group-hover:text-emerald-700 transition-colors line-clamp-1" title={record.fullName}>
+                                        {record.fullName}
+                                      </h3>
+
+                                      <div className="flex items-center gap-1.5 text-slate-500 text-xs">
+                                        <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                        <span className="truncate">
+                                          {record.purok ? `${record.purok}, ` : ''}{record.barangay}
+                                        </span>
+                                      </div>
+
+                                      {record.contactNumber && (
+                                        <div className="flex items-center gap-1.5 text-slate-500 text-xs font-mono">
+                                          <Phone className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                                          <span className="truncate">{record.contactNumber}</span>
+                                        </div>
                                       )}
+                                    </div>
+
+                                    {/* Action row: Verify Button */}
+                                    <div className="pt-2">
+                                      {!isVerified ? (
+                                        isMasterAdmin ? (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setVerifyTarget(record);
+                                            }}
+                                            disabled={verifyingId === record.id}
+                                            className="w-full py-2 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                                            title="Verify submission: opens confirmation popup (Master Admin Only)"
+                                          >
+                                            {verifyingId === record.id ? (
+                                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                            ) : (
+                                              <CheckCircle2 className="w-3.5 h-3.5" />
+                                            )}
+                                            <span>Verify</span>
+                                          </button>
+                                        ) : (
+                                          <div className="w-full py-1.5 px-2 bg-amber-50 border border-amber-200/70 text-amber-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 shadow-xs">
+                                            <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                            <span className="truncate">Pending Verification</span>
+                                          </div>
+                                        )
+                                      ) : (
+                                        <div className="flex items-center justify-between gap-2">
+                                          <span className="flex-1 py-1.5 px-2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black flex items-center justify-center gap-1">
+                                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                            <span>Verified</span>
+                                          </span>
+                                          {isMasterAdmin && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleUnverifyRecord(record);
+                                              }}
+                                              disabled={verifyingId === record.id}
+                                              className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                                              title="Move back to Pending (Master Admin Only)"
+                                            >
+                                              <Clock className="w-3.5 h-3.5" />
+                                            </button>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                                      <div className="flex items-center gap-1 truncate" title={`Uploaded by ${record.uploadedBy}`}>
+                                        <User className="w-3 h-3 text-slate-400" />
+                                        <span className="truncate font-medium">{record.uploadedBy}</span>
+                                      </div>
+
+                                      <div className="flex items-center gap-2">
+                                        <div className="flex items-center gap-1 shrink-0 font-medium text-slate-400">
+                                          <Clock className="w-3 h-3 text-slate-400" />
+                                          <span>{new Date(record.uploadedAt).toLocaleDateString()}</span>
+                                        </div>
+
+                                        {isMasterAdmin && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => promptDeleteRecord(e, record)}
+                                            className="text-slate-400 hover:text-rose-600 p-1 rounded-md hover:bg-rose-50 transition-colors cursor-pointer"
+                                            title="Permanently Delete from MySQL (Master Admin Only)"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
-                              </div>
-                            );
-                          })}
+                              );
+                            })}
+                          </div>
+
+                          {renderPaginationControls(
+                            allGridPage,
+                            filteredRecords.length,
+                            ITEMS_PER_PAGE,
+                            setAllGridPage,
+                            'submissions'
+                          )}
                         </div>
                       )}
                     </div>
@@ -1259,10 +1988,13 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                           <span>/</span>
                           <span className="text-emerald-700">Barangay Folder</span>
                         </div>
-                        <h2 className="text-xl sm:text-2xl font-black text-slate-900 flex items-center gap-2">
+                        <h2 className="text-xl sm:text-2xl font-black text-slate-900 flex flex-wrap items-center gap-2">
                           <span>{selectedFolder}</span>
                           <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
-                            {currentFolderData?.totalFiles || 0} Files
+                            {currentFolderData?.totalFiles || folderRecords.reduce((sum, r) => sum + (r.filesCount || (r.uploadedFiles ? r.uploadedFiles.length : 1)), 0)} Files
+                          </span>
+                          <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                            {folderRecords.length} {folderRecords.length === 1 ? 'Patient Record' : 'Patient Records'}
                           </span>
                         </h2>
                       </div>
@@ -1327,147 +2059,243 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
                   {/* Submissions Grid for this folder */}
                   {filteredRecords.length === 0 ? (
-                    <div className="bg-white rounded-3xl p-12 text-center space-y-4 border border-dashed border-slate-200">
-                      <FolderOpen className="w-14 h-14 text-emerald-400/60 mx-auto" />
-                      <div className="space-y-1">
-                        <h4 className="text-base font-bold text-slate-800">
-                          No PCU files in {selectedFolder} yet
-                        </h4>
-                        <p className="text-xs text-slate-400 max-w-md mx-auto">
-                          Be the first to submit Patient Care Unit documentation for this Barangay. All submitted files will be securely organized in this folder.
-                        </p>
+                    folderRecords.length > 0 && searchQuery ? (
+                      <div className="bg-white rounded-3xl p-12 text-center space-y-4 border border-dashed border-slate-200">
+                        <Search className="w-12 h-12 text-slate-300 mx-auto" />
+                        <div className="space-y-1">
+                          <h4 className="text-base font-bold text-slate-800">
+                            No records match &quot;{searchQuery}&quot;
+                          </h4>
+                          <p className="text-xs text-slate-400 max-w-md mx-auto">
+                            There are {folderRecords.length} records in this folder, but none match your search keyword.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSearchQuery('')}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-all cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                          <span>Clear Search Filter</span>
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setBarangay(selectedFolder);
-                          setFullName('');
-                          setPurok('');
-                          setContactNumber('');
-                          setStagedFiles([]);
-                          setIsFormOpen(true);
-                        }}
-                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
-                      >
-                        <UploadCloud className="w-4 h-4" />
-                        <span>Upload PCU for {selectedFolder}</span>
-                      </button>
-                    </div>
+                    ) : (
+                      <div className="bg-white rounded-3xl p-12 text-center space-y-4 border border-dashed border-slate-200">
+                        <FolderOpen className="w-14 h-14 text-emerald-400/60 mx-auto" />
+                        <div className="space-y-1">
+                          <h4 className="text-base font-bold text-slate-800">
+                            No PCU files in {selectedFolder} yet
+                          </h4>
+                          <p className="text-xs text-slate-400 max-w-md mx-auto">
+                            Be the first to submit Patient Care Unit documentation for this Barangay. All submitted files will be securely organized in this folder.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBarangay(selectedFolder);
+                            setFullName('');
+                            setPurok('');
+                            setContactNumber('');
+                            setStagedFiles([]);
+                            setIsFormOpen(true);
+                          }}
+                          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+                        >
+                          <UploadCloud className="w-4 h-4" />
+                          <span>Upload PCU for {selectedFolder}</span>
+                        </button>
+                      </div>
+                    )
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
-                      {filteredRecords.map((record, index) => {
-                        const firstFile = record.uploadedFiles[0];
-                        const hasImage = firstFile && isImageFile(firstFile.url, firstFile.name);
+                    <div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                        {paginatedInFolderRecords.map((record, index) => {
+                          const firstFile = record.uploadedFiles[0];
+                          const hasImage = firstFile && isImageFile(firstFile.url, firstFile.name);
 
-                        return (
-                          <div
-                            key={`${record.id}-${record.fullName}-${index}`}
-                            onClick={() => setSelectedRecord(record)}
-                            className="group bg-white rounded-2xl border border-slate-200/80 hover:border-emerald-500/60 shadow-xs hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col cursor-pointer transform hover:-translate-y-1 relative"
-                          >
-                            <div className="relative h-44 sm:h-48 w-full bg-slate-100 overflow-hidden border-b border-slate-100">
-                              {hasImage && firstFile.url ? (
-                                <img
-                                  src={firstFile.url}
-                                  alt={record.fullName}
-                                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                  loading="lazy"
-                                  onError={(e) => {
-                                    (e.target as HTMLElement).style.display = 'none';
-                                  }}
-                                />
-                              ) : (
-                                <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 text-slate-400 p-4 space-y-2">
-                                  <div className="w-12 h-12 rounded-2xl bg-white shadow-xs border border-slate-200 flex items-center justify-center text-emerald-600">
-                                    <FileText className="w-6 h-6" />
-                                  </div>
-                                  <span className="text-[11px] font-bold text-slate-500 text-center line-clamp-1">
-                                    {firstFile?.name || 'PCU Document'}
-                                  </span>
-                                </div>
-                              )}
-
-                              <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
-                                <span className="px-2.5 py-1 rounded-lg bg-emerald-950/80 backdrop-blur-md text-emerald-200 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30 shadow-xs">
-                                  {record.barangay}
-                                </span>
-
-                                <div className="flex items-center gap-1.5 pointer-events-auto">
-                                  <span className="px-2 py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-bold flex items-center gap-1 border border-white/10 shadow-xs">
-                                    <ImageIcon className="w-3 h-3 text-emerald-400" />
-                                    <span>{record.filesCount} {record.filesCount === 1 ? 'file' : 'files'}</span>
-                                  </span>
-
-                                  {isMasterAdmin && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => promptDeleteRecord(e, record)}
-                                      className="p-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-600 active:bg-rose-700 text-white shadow-md transition-all cursor-pointer hover:scale-110"
-                                      title="Permanently Delete PCU Record from MySQL (Master Admin Only)"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
-                                </div>
-                              </div>
-
-                              <div className="absolute inset-0 bg-emerald-950/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center pointer-events-none">
-                                <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white text-emerald-900 text-xs font-black shadow-lg transform scale-95 group-hover:scale-100 transition-transform">
-                                  <Eye className="w-4 h-4 text-emerald-600" />
-                                  View Whole Data
-                                </span>
-                              </div>
-                            </div>
-
-                            <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                              <div className="space-y-1.5">
-                                <h3 className="font-bold text-slate-900 text-sm sm:text-base group-hover:text-emerald-700 transition-colors line-clamp-1" title={record.fullName}>
-                                  {record.fullName}
-                                </h3>
-
-                                <div className="flex items-center gap-1.5 text-slate-500 text-xs">
-                                  <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                  <span className="truncate">
-                                    {record.purok ? `${record.purok}, ` : ''}{record.barangay}
-                                  </span>
-                                </div>
-
-                                {record.contactNumber && (
-                                  <div className="flex items-center gap-1.5 text-slate-500 text-xs font-mono">
-                                    <Phone className="w-3.5 h-3.5 text-teal-600 shrink-0" />
-                                    <span className="truncate">{record.contactNumber}</span>
+                          return (
+                            <div
+                              key={`${record.id}-${record.fullName}-${index}`}
+                              onClick={() => setSelectedRecord(record)}
+                              className="group bg-white rounded-2xl border border-slate-200/80 hover:border-emerald-500/60 shadow-xs hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col cursor-pointer transform hover:-translate-y-1 relative"
+                            >
+                              <div className="relative h-36 sm:h-40 w-full bg-slate-100 overflow-hidden border-b border-slate-100">
+                                {hasImage && firstFile.url ? (
+                                  <img
+                                    src={firstFile.url}
+                                    alt={record.fullName}
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                                    loading="lazy"
+                                    onError={(e) => {
+                                      (e.target as HTMLElement).style.display = 'none';
+                                    }}
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 text-slate-400 p-4 space-y-2">
+                                    <div className="w-12 h-12 rounded-2xl bg-white shadow-xs border border-slate-200 flex items-center justify-center text-emerald-600">
+                                      <FileText className="w-6 h-6" />
+                                    </div>
+                                    <span className="text-[11px] font-bold text-slate-500 text-center line-clamp-1">
+                                      {firstFile?.name || 'PCU Document'}
+                                    </span>
                                   </div>
                                 )}
-                              </div>
 
-                              <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
-                                <div className="flex items-center gap-1 truncate" title={`Uploaded by ${record.uploadedBy}`}>
-                                  <User className="w-3 h-3 text-slate-400" />
-                                  <span className="truncate font-medium">{record.uploadedBy}</span>
-                                </div>
-
-                                <div className="flex items-center gap-2">
-                                  <div className="flex items-center gap-1 shrink-0 font-medium text-slate-400">
-                                    <Clock className="w-3 h-3 text-slate-400" />
-                                    <span>{new Date(record.uploadedAt).toLocaleDateString()}</span>
+                                <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
+                                  <div className="flex items-center gap-1.5 pointer-events-auto">
+                                    <span className="px-2.5 py-1 rounded-lg bg-emerald-950/80 backdrop-blur-md text-emerald-200 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30 shadow-xs">
+                                      {record.barangay}
+                                    </span>
+                                    {(record.status || '').toUpperCase() === 'VERIFIED' ? (
+                                      <span className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs">
+                                        <CheckCircle2 className="w-3 h-3 text-white" />
+                                        Verified
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-1 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs">
+                                        <Clock className="w-3 h-3 text-white" />
+                                        Pending
+                                      </span>
+                                    )}
                                   </div>
 
-                                  {isMasterAdmin && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => promptDeleteRecord(e, record)}
-                                      className="text-slate-400 hover:text-rose-600 p-1 rounded-md hover:bg-rose-50 transition-colors cursor-pointer"
-                                      title="Permanently Delete from MySQL (Master Admin Only)"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
+                                  <div className="flex items-center gap-1.5 pointer-events-auto">
+                                    <span className="px-2 py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-bold flex items-center gap-1 border border-white/10 shadow-xs">
+                                      <ImageIcon className="w-3 h-3 text-emerald-400" />
+                                      <span>{record.filesCount} {record.filesCount === 1 ? 'file' : 'files'}</span>
+                                    </span>
+
+                                    {isMasterAdmin && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => promptDeleteRecord(e, record)}
+                                        className="p-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-600 active:bg-rose-700 text-white shadow-md transition-all cursor-pointer hover:scale-110"
+                                        title="Permanently Delete PCU Record from MySQL (Master Admin Only)"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="absolute inset-0 bg-emerald-950/60 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center pointer-events-none">
+                                  <span className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white text-emerald-900 text-xs font-black shadow-lg transform scale-95 group-hover:scale-100 transition-transform">
+                                    <Eye className="w-4 h-4 text-emerald-600" />
+                                    View Whole Data
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                                <div className="space-y-1.5">
+                                  <h3 className="font-bold text-slate-900 text-sm sm:text-base group-hover:text-emerald-700 transition-colors line-clamp-1" title={record.fullName}>
+                                    {record.fullName}
+                                  </h3>
+
+                                  <div className="flex items-center gap-1.5 text-slate-500 text-xs">
+                                    <MapPin className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                    <span className="truncate">
+                                      {record.purok ? `${record.purok}, ` : ''}{record.barangay}
+                                    </span>
+                                  </div>
+
+                                  {record.contactNumber && (
+                                    <div className="flex items-center gap-1.5 text-slate-500 text-xs font-mono">
+                                      <Phone className="w-3.5 h-3.5 text-teal-600 shrink-0" />
+                                      <span className="truncate">{record.contactNumber}</span>
+                                    </div>
                                   )}
+                                </div>
+
+                                {/* Action row: Verify Button */}
+                                <div className="pt-2">
+                                  {(record.status || '').toUpperCase() !== 'VERIFIED' ? (
+                                    isMasterAdmin ? (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setVerifyTarget(record);
+                                        }}
+                                        disabled={verifyingId === record.id}
+                                        className="w-full py-2 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                                        title="Verify submission: opens confirmation popup (Master Admin Only)"
+                                      >
+                                        {verifyingId === record.id ? (
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                        ) : (
+                                          <CheckCircle2 className="w-3.5 h-3.5" />
+                                        )}
+                                        <span>Verify</span>
+                                      </button>
+                                    ) : (
+                                      <div className="w-full py-1.5 px-2 bg-amber-50 border border-amber-200/70 text-amber-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 shadow-xs">
+                                        <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                        <span className="truncate">Pending Verification</span>
+                                      </div>
+                                    )
+                                  ) : (
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="flex-1 py-1.5 px-2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black flex items-center justify-center gap-1">
+                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                                        <span>Verified</span>
+                                      </span>
+                                      {isMasterAdmin && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleUnverifyRecord(record);
+                                          }}
+                                          disabled={verifyingId === record.id}
+                                          className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                                          title="Move back to Pending (Master Admin Only)"
+                                        >
+                                          <Clock className="w-3.5 h-3.5" />
+                                        </button>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+
+                                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
+                                  <div className="flex items-center gap-1 truncate" title={`Uploaded by ${record.uploadedBy}`}>
+                                    <User className="w-3 h-3 text-slate-400" />
+                                    <span className="truncate font-medium">{record.uploadedBy}</span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-1 shrink-0 font-medium text-slate-400">
+                                      <Clock className="w-3 h-3 text-slate-400" />
+                                      <span>{new Date(record.uploadedAt).toLocaleDateString()}</span>
+                                    </div>
+
+                                    {isMasterAdmin && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => promptDeleteRecord(e, record)}
+                                        className="text-slate-400 hover:text-rose-600 p-1 rounded-md hover:bg-rose-50 transition-colors cursor-pointer"
+                                        title="Permanently Delete from MySQL (Master Admin Only)"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
+
+                      {renderPaginationControls(
+                        inFolderPage,
+                        filteredRecords.length,
+                        ITEMS_PER_PAGE,
+                        setInFolderPage,
+                        'records'
+                      )}
                     </div>
                   )}
                 </div>
@@ -1492,16 +2320,16 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   <div className="space-y-2">
                     <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-400/20 text-amber-300 text-xs font-bold border border-amber-300/30">
                       <ShieldCheck className="w-4 h-4 text-amber-400" />
-                      <span>Master Admin Audit Portal</span>
+                      <span>Master Admin Audit & Payroll Portal</span>
                     </div>
                     <h2 className="text-2xl sm:text-3xl font-black font-display tracking-tight text-white flex items-center gap-3">
-                      <span>PCU Submissions Ledger</span>
+                      <span>PCU Submissions & Payroll Ledger</span>
                       <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/10 text-emerald-300">
                         {submittersLedger.length} Contributors
                       </span>
                     </h2>
                     <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
-                      Official record listing all staff and submitters who uploaded PCU files, complete with their submission tallies, attached file counts, and breakdown by Barangay.
+                      Official submitter tallies, dynamic salary calculation powered by MySQL base rate, and permanent settlement records.
                     </p>
                   </div>
 
@@ -1512,41 +2340,120 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
                     >
                       <Download className="w-4 h-4" />
-                      <span>Export CSV</span>
+                      <span>Export Payroll CSV</span>
                     </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Base Rate Configuration Card (Saved Permanently to MySQL) */}
+              <div className="bg-gradient-to-br from-amber-500/10 via-emerald-500/5 to-teal-500/10 rounded-3xl p-6 sm:p-8 border border-amber-200/80 shadow-xs space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                  <div className="space-y-1.5 max-w-xl">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-[11px] font-black border border-amber-300">
+                      <Database className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Saved Permanently in MySQL (`site_settings`)</span>
+                    </div>
+                    <h3 className="text-xl font-black text-slate-900 flex items-center gap-2.5">
+                      <Banknote className="w-5 h-5 text-emerald-700" />
+                      <span>PCU Submission Base Rate</span>
+                    </h3>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Set the approved salary or stipend rate per verified submission. Changing this rate automatically recalculates all submitters' Total Salary tallies below and persists permanently to the MySQL database.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                    <div className="relative flex-1 sm:w-48">
+                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-black text-slate-500 text-sm">
+                        ₱
+                      </span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={baseRateInput}
+                        onChange={(e) => setBaseRateInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSaveBaseRate();
+                          }
+                        }}
+                        placeholder="50.00"
+                        className="w-full pl-8 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600 transition-all font-mono shadow-xs"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleSaveBaseRate()}
+                      disabled={savingBaseRate}
+                      className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-300 text-white font-bold text-xs uppercase tracking-wider shadow-md shadow-emerald-700/20 transition-all cursor-pointer shrink-0"
+                    >
+                      {savingBaseRate ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Saving to MySQL...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="w-4 h-4" />
+                          <span>Save Base Rate</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Quick Preset Buttons & Active Rate Indicator */}
+                <div className="pt-4 border-t border-amber-200/60 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] font-bold text-slate-500">Quick Rates:</span>
+                    {[25, 50, 75, 100, 150].map((rate) => (
+                      <button
+                        key={rate}
+                        type="button"
+                        onClick={() => {
+                          setBaseRateInput(String(rate));
+                          handleSaveBaseRate(rate);
+                        }}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          baseRate === rate
+                            ? 'bg-emerald-700 text-white shadow-xs'
+                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        ₱{rate}.00
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-white/70 px-3 py-1.5 rounded-xl border border-emerald-200">
+                    <span>Active Rate:</span>
+                    <span className="font-mono text-emerald-950 font-black">₱{baseRate.toFixed(2)}</span>
+                    <span className="text-slate-400 font-normal">/ verified submission</span>
                   </div>
                 </div>
               </div>
 
               {/* 4 KPI Metrics Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* 1. Total Submissions */}
+                {/* 1. Total Verified Credits */}
                 <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Submissions</span>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Verified Credits</span>
                     <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
-                      <FileText className="w-4 h-4" />
+                      <CheckCircle2 className="w-4 h-4" />
                     </div>
                   </div>
-                  <div className="text-2xl font-black text-slate-900">{uploadedRecords.length}</div>
-                  <span className="text-[11px] text-slate-400 block">Verified patient records</span>
+                  <div className="text-2xl font-black text-slate-900">{verifiedRecords.length}</div>
+                  <span className="text-[11px] text-emerald-700 font-bold block">
+                    {pendingRecords.length} pending (uncredited)
+                  </span>
                 </div>
 
-                {/* 2. Total Files Attached */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Files Attached</span>
-                    <div className="p-2 rounded-xl bg-teal-50 text-teal-700">
-                      <ImageIcon className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <div className="text-2xl font-black text-slate-900">
-                    {uploadedRecords.reduce((acc, r) => acc + (r.filesCount || 1), 0)}
-                  </div>
-                  <span className="text-[11px] text-slate-400 block">Images & documents stored</span>
-                </div>
-
-                {/* 3. Active Submitters Count */}
+                {/* 2. Active Submitters */}
                 <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Active Submitters</span>
@@ -1555,27 +2462,40 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     </div>
                   </div>
                   <div className="text-2xl font-black text-slate-900">{submittersLedger.length}</div>
-                  <span className="text-[11px] text-slate-400 block">Staff & administrators</span>
+                  <span className="text-[11px] text-slate-400 block">Registered staff accounts</span>
                 </div>
 
-                {/* 4. Top Barangay */}
+                {/* 3. Current Base Rate */}
                 <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Leading Barangay</span>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Current Base Rate</span>
                     <div className="p-2 rounded-xl bg-amber-50 text-amber-700">
-                      <Building2 className="w-4 h-4" />
+                      <Coins className="w-4 h-4" />
                     </div>
                   </div>
-                  <div className="text-lg font-black text-slate-900 truncate" title={barangayFolders[0]?.name || 'None'}>
-                    {barangayFolders[0]?.name || 'Central'}
+                  <div className="text-2xl font-black text-slate-900 font-mono">₱{baseRate.toFixed(2)}</div>
+                  <span className="text-[11px] text-emerald-600 font-semibold block">Per verified submission</span>
+                </div>
+
+                {/* 4. Total Payroll Pool */}
+                <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Salary Pool</span>
+                    <div className="p-2 rounded-xl bg-teal-50 text-teal-700">
+                      <Wallet className="w-4 h-4" />
+                    </div>
+                  </div>
+                  <div className="text-xl font-black text-slate-900 font-mono">
+                    ₱{(verifiedRecords.length * baseRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   <span className="text-[11px] text-slate-400 block">
-                    {barangayFolders[0]?.totalSubmissions || 0} submissions
+                    {verifiedRecords.length} verified &times; ₱{baseRate.toFixed(2)}
                   </span>
                 </div>
               </div>
 
-              {/* SECTION 1: ALL THE NAMES WHO SUBMITTED PCU FILES WITH THEIR COUNT OF SUBMISSION */}
+              {/* SUBMITTERS & CONTRIBUTOR TALLIES TABLE */}
+              {/* Displays only: Submitter, Verified Credits, Pending, Total Salary, Action (Settlement) */}
               <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/80 shadow-sm space-y-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-2">
                   <div className="flex items-center gap-2.5">
@@ -1587,237 +2507,307 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         Submitters & Contributor Tallies
                       </h3>
                       <p className="text-xs text-slate-400">
-                        All staff and user accounts who submitted PCU records with their exact submission counts
+                        Only verified PCU submissions earn 1 credit (₱{baseRate.toFixed(2)}) towards submitter salary. Pending submissions earn 0 credits until verified.
                       </p>
                     </div>
                   </div>
 
-                  <span className="text-xs font-bold text-slate-400">
+                  <span className="text-xs font-bold text-slate-500">
                     {submittersLedger.length} Registered Submitters
                   </span>
                 </div>
 
-                {/* Submitter Cards Grid */}
-                {submittersLedger.length === 0 ? (
-                  <div className="p-8 text-center text-slate-400 text-xs font-medium">
-                    No submitters recorded yet.
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {submittersLedger.map((sub, idx) => {
-                      const isSelected = ledgerSubmitterFilter.toLowerCase() === sub.name.toLowerCase();
-
-                      return (
-                        <div
-                          key={sub.name}
-                          onClick={() => {
-                            setLedgerSubmitterFilter(isSelected ? 'ALL' : sub.name);
-                          }}
-                          className={`p-5 rounded-2xl border transition-all cursor-pointer space-y-4 ${
-                            isSelected
-                              ? 'bg-emerald-50/70 border-emerald-500 shadow-md ring-2 ring-emerald-500/20'
-                              : 'bg-slate-50/60 border-slate-200/80 hover:bg-slate-50 hover:border-slate-300'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white font-black text-sm flex items-center justify-center shadow-xs">
-                                {sub.name.charAt(0).toUpperCase()}
-                              </div>
-                              <div>
-                                <h4 className="font-black text-slate-900 text-sm">{sub.name}</h4>
-                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                                  Rank #{idx + 1}
-                                </span>
-                              </div>
-                            </div>
-
-                            <span className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-black text-xs shadow-xs">
-                              {sub.submissionsCount} {sub.submissionsCount === 1 ? 'submission' : 'submissions'}
-                            </span>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-200/60">
-                            <div>
-                              <span className="text-[10px] text-slate-400 block font-semibold">Total Attached Files</span>
-                              <span className="font-bold text-slate-800">{sub.filesCount} files</span>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-slate-400 block font-semibold">Barangays Covered</span>
-                              <span className="font-bold text-slate-800">{sub.barangays.size} barangays</span>
-                            </div>
-                          </div>
-
-                          <div className="flex items-center justify-between text-[11px] text-slate-400 pt-1">
-                            <span>
-                              {sub.latestSubmission ? `Latest: ${formatTimestamp(sub.latestSubmission).split(',')[0]}` : ''}
-                            </span>
-                            <span className="text-emerald-700 font-bold hover:underline">
-                              {isSelected ? 'Reset Filter' : 'Filter Ledger →'}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* SECTION 2: DETAILED SUBMISSIONS AUDIT LOG TABLE */}
-              <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/80 shadow-sm space-y-6">
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-teal-50 text-teal-700">
-                      <FileSpreadsheet className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-black text-slate-900">
-                        Detailed Submissions Ledger Table
-                      </h3>
-                      <p className="text-xs text-slate-400">
-                        Full verifiable audit trail of every patient submission record in MySQL
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="text-xs font-bold text-slate-500">
-                    Showing <span className="text-slate-900 font-black">{filteredLedgerRecords.length}</span> of {uploadedRecords.length} records
-                  </div>
-                </div>
-
-                {/* Filters Bar for Ledger Table */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {/* Search Input */}
-                  <div className="relative">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      value={ledgerSearch}
-                      onChange={(e) => setLedgerSearch(e.target.value)}
-                      placeholder="Search submitter, patient, or purok..."
-                      className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all"
-                    />
-                    {ledgerSearch && (
-                      <button
-                        type="button"
-                        onClick={() => setLedgerSearch('')}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                      >
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Filter Submitter */}
-                  <div>
-                    <select
-                      value={ledgerSubmitterFilter}
-                      onChange={(e) => setLedgerSubmitterFilter(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all cursor-pointer"
-                    >
-                      <option value="ALL">All Submitters ({submittersLedger.length})</option>
-                      {submittersLedger.map((s) => (
-                        <option key={s.name} value={s.name}>
-                          {s.name} ({s.submissionsCount} submissions)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Filter Barangay */}
-                  <div>
-                    <select
-                      value={ledgerBarangayFilter}
-                      onChange={(e) => setLedgerBarangayFilter(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all cursor-pointer"
-                    >
-                      <option value="ALL">All Barangays</option>
-                      {barangaysList.map((bg) => (
-                        <option key={bg} value={bg}>
-                          {bg}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Table */}
+                {/* Tallies Table */}
                 <div className="overflow-x-auto border border-slate-200 rounded-2xl">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[10px]">
+                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
                       <tr>
-                        <th className="py-3 px-4">#</th>
-                        <th className="py-3 px-4">Submitter Name</th>
-                        <th className="py-3 px-4">Patient Name</th>
-                        <th className="py-3 px-4">Barangay & Address</th>
-                        <th className="py-3 px-4">Files Attached</th>
-                        <th className="py-3 px-4">Submitted At</th>
-                        <th className="py-3 px-4 text-right">Actions</th>
+                        <th className="py-3.5 px-6">Submitter</th>
+                        <th className="py-3.5 px-6 text-center">Verified Submissions (1 Credit Each)</th>
+                        <th className="py-3.5 px-6 text-center">Pending (0 Credits)</th>
+                        <th className="py-3.5 px-6 text-right">Total Salary</th>
+                        <th className="py-3.5 px-6 text-center">Action (Settlement)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredLedgerRecords.length === 0 ? (
+                      {submittersLedger.length === 0 ? (
                         <tr>
-                          <td colSpan={7} className="py-8 text-center text-slate-400 font-medium">
-                            No matching submissions found in ledger.
+                          <td colSpan={5} className="py-12 text-center text-slate-400 font-medium">
+                            No submitters recorded yet.
                           </td>
                         </tr>
                       ) : (
-                        filteredLedgerRecords.map((record, index) => (
-                          <tr key={record.id} className="hover:bg-slate-50/70 transition-colors">
-                            <td className="py-3.5 px-4 font-mono text-slate-400">{index + 1}</td>
-                            <td className="py-3.5 px-4 font-bold text-slate-900">
-                              <div className="flex items-center gap-1.5">
-                                <User className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                <span>{record.uploadedBy}</span>
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-4 font-bold text-slate-800">
-                              {record.fullName}
-                            </td>
-                            <td className="py-3.5 px-4 text-slate-600">
-                              <span className="font-semibold text-slate-800">{record.barangay}</span>
-                              {record.purok ? <span className="text-slate-400"> ({record.purok})</span> : ''}
-                            </td>
-                            <td className="py-3.5 px-4">
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 font-bold border border-emerald-200/60 text-[11px]">
-                                <ImageIcon className="w-3 h-3 text-emerald-600" />
-                                <span>{record.filesCount} {record.filesCount === 1 ? 'file' : 'files'}</span>
-                              </span>
-                            </td>
-                            <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px]">
-                              {formatTimestamp(record.uploadedAt)}
-                            </td>
-                            <td className="py-3.5 px-4 text-right">
-                              <div className="inline-flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setSelectedRecord(record)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-[11px] transition-colors cursor-pointer"
-                                  title="View Whole Data"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                  <span>View</span>
-                                </button>
-                                {isMasterAdmin && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => promptDeleteRecord(e, record)}
-                                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                                    title="Permanently Delete Submission from MySQL (Master Admin Only)"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))
+                        submittersLedger.map((sub, idx) => {
+                          const computedSalary = sub.submissionsCount * baseRate;
+                          const settlementRec = settlements.find(
+                            s => s.submitter && s.submitter.toLowerCase() === sub.name.toLowerCase()
+                          );
+                          const isSettled = settlementRec && (settlementRec.paymentStatus === 'SETTLED' || settlementRec.paymentStatus === 'PAID');
+
+                          return (
+                            <tr key={sub.name} className="hover:bg-slate-50/70 transition-colors">
+                              {/* 1. Submitter */}
+                              <td className="py-4 px-6">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white font-black text-sm flex items-center justify-center shadow-xs shrink-0">
+                                    {sub.name.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div>
+                                    <div className="font-black text-slate-900 text-sm flex items-center gap-2">
+                                      <span>{sub.name}</span>
+                                      {isSettled ? (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                          Settled
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                          <Clock className="w-3 h-3 text-amber-600" />
+                                          Pending
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="text-[11px] font-semibold text-slate-400 block">
+                                      Rank #{idx + 1} Contributor
+                                    </span>
+                                  </div>
+                                </div>
+                              </td>
+
+                              {/* 2. Verified Submissions (1 Credit Each) */}
+                              <td className="py-4 px-6 text-center">
+                                <span className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 font-black text-sm border border-emerald-200 shadow-xs">
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                  <span>{sub.submissionsCount} Credits</span>
+                                </span>
+                              </td>
+
+                              {/* 3. Pending Submissions (0 Credits) */}
+                              <td className="py-4 px-6 text-center">
+                                <span className={`inline-flex items-center justify-center gap-1 px-3 py-1 rounded-xl text-xs font-bold ${
+                                  (sub.pendingCount || 0) > 0 
+                                    ? 'bg-amber-50 text-amber-800 border border-amber-200' 
+                                    : 'bg-slate-50 text-slate-400'
+                                }`}>
+                                  <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                  <span>{sub.pendingCount || 0} Pending</span>
+                                </span>
+                              </td>
+
+                              {/* 4. Total Salary */}
+                              <td className="py-4 px-6 text-right">
+                                <div className="font-black text-base text-emerald-700 font-mono">
+                                  ₱{computedSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </div>
+                                <div className="text-[11px] font-medium text-slate-400">
+                                  {sub.submissionsCount} verified &times; ₱{baseRate.toFixed(2)}
+                                </div>
+                              </td>
+
+                              {/* 5. Action (Settlement) */}
+                              <td className="py-4 px-6 text-center">
+                                <div className="inline-flex items-center gap-2 justify-center">
+                                  {isSettled ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => openSettlementModal(sub)}
+                                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs border border-emerald-300 transition-all cursor-pointer shadow-xs"
+                                      title="View or update settlement voucher"
+                                    >
+                                      <Receipt className="w-3.5 h-3.5 text-emerald-600" />
+                                      <span>Settled (₱{(settlementRec.amountPaid ?? settlementRec.totalSalary).toFixed(2)})</span>
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => openSettlementModal(sub)}
+                                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                                      title="Process salary settlement for submitter"
+                                    >
+                                      <Wallet className="w-3.5 h-3.5" />
+                                      <span>Settlement</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })
                       )}
                     </tbody>
                   </table>
                 </div>
               </div>
+
+              {/* Settlement Modal Dialog */}
+              {settlingSubmitter && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full border border-slate-200 shadow-2xl space-y-6"
+                  >
+                    {/* Modal Header */}
+                    <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2.5 rounded-2xl bg-emerald-50 text-emerald-700">
+                          <Wallet className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-black text-slate-900">
+                            Submitter Salary Settlement
+                          </h3>
+                          <p className="text-xs text-slate-500">
+                            Official PCU submission payout & settlement record
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSettlingSubmitter(null)}
+                        className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    {/* Submitter & Computation Summary Box */}
+                    <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-2.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-500">Submitter:</span>
+                        <span className="font-black text-slate-900 text-sm">{settlingSubmitter.name}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-500">Total Submissions:</span>
+                        <span className="font-bold text-slate-900">{settlingSubmitter.totalSubmissions}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-500">Current Base Rate:</span>
+                        <span className="font-bold text-slate-900">₱{baseRate.toFixed(2)} / record</span>
+                      </div>
+                      <div className="pt-2 border-t border-slate-200 flex items-center justify-between">
+                        <span className="font-black text-slate-700 text-xs uppercase tracking-wider">Computed Total Salary:</span>
+                        <span className="font-mono font-black text-emerald-700 text-base">
+                          ₱{settlingSubmitter.totalSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Settlement Form Fields */}
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          Settlement Payout Amount (₱)
+                        </label>
+                        <div className="relative">
+                          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">₱</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={settlementAmount}
+                            onChange={(e) => setSettlementAmount(e.target.value)}
+                            className="w-full pl-8 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all font-mono"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          Disbursement Method
+                        </label>
+                        <select
+                          value={settlementMethod}
+                          onChange={(e) => setSettlementMethod(e.target.value)}
+                          className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all cursor-pointer"
+                        >
+                          <option value="Cash">Cash (Petty Cash Fund)</option>
+                          <option value="GCash">GCash / Digital Wallet</option>
+                          <option value="Bank Transfer">Bank Transfer</option>
+                          <option value="Check">Check Payout</option>
+                          <option value="Clinic Payroll">Clinic Payroll Batch</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 mb-1">
+                          Voucher Reference / Memo (Optional)
+                        </label>
+                        <input
+                          type="text"
+                          value={settlementNotes}
+                          onChange={(e) => setSettlementNotes(e.target.value)}
+                          placeholder="e.g. Voucher #104, Paid on 2026-09-22"
+                          className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Modal Actions */}
+                    <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handlePrintVoucher(
+                            settlingSubmitter.name,
+                            settlingSubmitter.totalSubmissions,
+                            settlingSubmitter.totalSalary,
+                            parseFloat(settlementAmount) || settlingSubmitter.totalSalary,
+                            settlementMethod,
+                            settlementNotes
+                          )}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer"
+                          title="Print official voucher"
+                        >
+                          <Printer className="w-3.5 h-3.5" />
+                          <span>Print Voucher</span>
+                        </button>
+
+                        {settlements.some(s => s.submitter && s.submitter.toLowerCase() === settlingSubmitter.name.toLowerCase()) && (
+                          <button
+                            type="button"
+                            onClick={() => handleResetSettlement(settlingSubmitter.name)}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-rose-600 hover:bg-rose-50 font-bold text-xs transition-colors cursor-pointer"
+                            title="Reset settlement status"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span>Reset</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSettlingSubmitter(null)}
+                          className="px-4 py-2 rounded-xl text-slate-500 hover:bg-slate-100 font-bold text-xs transition-colors cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleConfirmSettlement}
+                          disabled={submittingSettlement}
+                          className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-300 text-white font-bold text-xs uppercase tracking-wider shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                        >
+                          {submittingSettlement ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              <span>Saving...</span>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="w-4 h-4" />
+                              <span>Confirm Settlement</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </motion.div>
+                </div>
+              )}
             </motion.div>
           )
         ) : (
@@ -2119,18 +3109,66 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Header */}
-              <div className="p-6 bg-gradient-to-r from-emerald-900 to-teal-900 text-white flex items-center justify-between">
+              <div className="p-6 bg-gradient-to-r from-emerald-900 to-teal-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="space-y-1">
-                  <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold uppercase tracking-wider border border-emerald-400/30">
-                    <ShieldCheck className="w-3 h-3" />
-                    Whole Data Uploaded
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold uppercase tracking-wider border border-emerald-400/30">
+                      <ShieldCheck className="w-3 h-3" />
+                      Whole Data Uploaded
+                    </div>
+                    {(selectedRecord.status || '').toUpperCase() === 'VERIFIED' ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-400 text-emerald-950 text-[10px] font-black uppercase tracking-wider shadow-xs">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Verified
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-400 text-amber-950 text-[10px] font-black uppercase tracking-wider shadow-xs">
+                        <Clock className="w-3 h-3" />
+                        Pending
+                      </span>
+                    )}
                   </div>
                   <h2 className="text-xl sm:text-2xl font-black font-display tracking-tight text-white">
                     {selectedRecord.fullName}
                   </h2>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {/* Verify / Unverify Button (Master Admin Only) */}
+                  {isMasterAdmin && (
+                    (selectedRecord.status || '').toUpperCase() !== 'VERIFIED' ? (
+                      <button
+                        type="button"
+                        onClick={() => setVerifyTarget(selectedRecord)}
+                        disabled={verifyingId === selectedRecord.id}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-white rounded-xl text-xs font-black transition-all shadow-md cursor-pointer disabled:opacity-50"
+                        title="Verify submission: opens confirmation popup (Master Admin Only)"
+                      >
+                        {verifyingId === selectedRecord.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                        )}
+                        <span>Verify Submission</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleUnverifyRecord(selectedRecord)}
+                        disabled={verifyingId === selectedRecord.id}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all border border-white/20 cursor-pointer"
+                        title="Move back to Pending (Master Admin Only)"
+                      >
+                        {verifyingId === selectedRecord.id ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Clock className="w-3.5 h-3.5 text-amber-300" />
+                        )}
+                        <span>Move to Pending</span>
+                      </button>
+                    )
+                  )}
+
                   {/* Delete Entire Submission Button (Master Admin only) */}
                   {isMasterAdmin && (
                     <button
@@ -2140,7 +3178,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       title="Permanently Delete Entire Submission from MySQL (Master Admin Only)"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Delete Submission</span>
+                      <span className="hidden sm:inline">Delete</span>
                     </button>
                   )}
 
@@ -2154,6 +3192,40 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Status Notice Banner */}
+              {(selectedRecord.status || '').toUpperCase() === 'VERIFIED' ? (
+                <div className="px-6 py-3 bg-emerald-50 border-b border-emerald-200/80 flex items-center justify-between text-xs text-emerald-900 font-bold">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>This PCU record is <strong>VERIFIED</strong>. It counts as <strong>1 Credit</strong> for <u>{selectedRecord.uploadedBy}</u> in the Ledger.</span>
+                  </div>
+                  <span className="text-[11px] font-black text-emerald-700 bg-emerald-100 px-2.5 py-0.5 rounded-full border border-emerald-300">
+                    Verified
+                  </span>
+                </div>
+              ) : (
+                <div className="px-6 py-3 bg-amber-50 border-b border-amber-200/80 flex items-center justify-between text-xs text-amber-900 font-bold">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>This submission is <strong>PENDING</strong>. It is <strong>NOT counted</strong> in the Ledger until verified.</span>
+                  </div>
+                  {isMasterAdmin ? (
+                    <button
+                      type="button"
+                      onClick={() => setVerifyTarget(selectedRecord)}
+                      disabled={verifyingId === selectedRecord.id}
+                      className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-black rounded-lg cursor-pointer transition-all shadow-xs"
+                    >
+                      Verify Now
+                    </button>
+                  ) : (
+                    <span className="text-[11px] font-black text-amber-700 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300">
+                      Pending Master Admin Review
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Modal Content - Scrollable */}
               <div className="p-6 sm:p-8 overflow-y-auto space-y-6">
@@ -2332,6 +3404,111 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   className="px-6 py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-colors cursor-pointer"
                 >
                   Close Details
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* VERIFICATION CONFIRMATION POPUP CARD IN THE CENTER OF THE SCREEN          */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {verifyTarget && (
+          <div 
+            className="fixed inset-0 z-[100] bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6"
+            onClick={() => !verifyingId && setVerifyTarget(null)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 15 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-200 space-y-5 text-center relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Center Verify Icon Badge with pulsing ring */}
+              <div className="w-16 h-16 mx-auto rounded-3xl bg-emerald-100 text-emerald-600 flex items-center justify-center shadow-lg shadow-emerald-600/15 ring-8 ring-emerald-50">
+                <CheckCircle2 className="w-8 h-8" />
+              </div>
+
+              {/* Title & Description Text */}
+              <div className="space-y-2">
+                <h3 className="text-xl font-black text-slate-900 tracking-tight">
+                  Verify PCU Submission?
+                </h3>
+                <p className="text-xs text-slate-500 leading-relaxed">
+                  Are you sure you want to verify this PCU record? It will be moved from{' '}
+                  <strong className="text-amber-700">Pending</strong> to{' '}
+                  <strong className="text-emerald-700">Verified</strong> and recorded in{' '}
+                  <strong className="text-slate-800">cPanel MySQL</strong>.
+                </p>
+              </div>
+
+              {/* Information Summary Box */}
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200/80 text-left space-y-2 text-xs">
+                <div className="flex justify-between items-center pb-1.5 border-b border-slate-200/60">
+                  <span className="text-slate-400 font-semibold">Patient:</span>
+                  <span className="font-bold text-slate-800">{verifyTarget.fullName}</span>
+                </div>
+                <div className="flex justify-between items-center pb-1.5 border-b border-slate-200/60">
+                  <span className="text-slate-400 font-semibold">Barangay:</span>
+                  <span className="font-semibold text-slate-700">{verifyTarget.barangay}</span>
+                </div>
+                {verifyTarget.purok && (
+                  <div className="flex justify-between items-center pb-1.5 border-b border-slate-200/60">
+                    <span className="text-slate-400 font-semibold">Purok / Address:</span>
+                    <span className="font-semibold text-slate-700">{verifyTarget.purok}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-center pb-1.5 border-b border-slate-200/60">
+                  <span className="text-slate-400 font-semibold">Submitted By:</span>
+                  <span className="font-bold text-slate-800">{verifyTarget.uploadedBy}</span>
+                </div>
+                <div className="flex justify-between items-center pb-1.5 border-b border-slate-200/60">
+                  <span className="text-slate-400 font-semibold">Attached Files:</span>
+                  <span className="font-semibold text-slate-700">
+                    {verifyTarget.filesCount || (verifyTarget.uploadedFiles ? verifyTarget.uploadedFiles.length : 1)} file(s)
+                  </span>
+                </div>
+                <div className="flex justify-between items-center pt-0.5">
+                  <span className="text-slate-400 font-semibold flex items-center gap-1">
+                    <Database className="w-3 h-3 text-emerald-600" /> Target Database:
+                  </span>
+                  <span className="font-bold text-emerald-800 bg-emerald-100/70 px-2 py-0.5 rounded-md text-[11px]">
+                    cPanel MySQL (pcu_submissions)
+                  </span>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setVerifyTarget(null)}
+                  disabled={verifyingId !== null}
+                  className="w-1/2 py-3 px-4 rounded-xl border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={executeConfirmVerification}
+                  disabled={verifyingId !== null}
+                  className="w-1/2 py-3 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:from-emerald-700 active:to-teal-700 text-white font-black text-xs shadow-lg shadow-emerald-600/25 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {verifyingId === verifyTarget.id ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Verifying...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Confirm & Verify</span>
+                    </>
+                  )}
                 </button>
               </div>
             </motion.div>

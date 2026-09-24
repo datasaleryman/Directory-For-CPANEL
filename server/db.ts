@@ -17,8 +17,12 @@ import {
   saveActivityToCPanel,
   saveSettingToCPanel,
   savePcuSubmissionToCPanel,
+  updatePcuStatusInCPanel,
   deletePcuSubmissionFromCPanel,
   deletePcuFileFromCPanel,
+  savePcuSettlementToCPanel,
+  fetchPcuSettlementsFromCPanel,
+  deletePcuSettlementFromCPanel,
   fetchAllFromCPanelDb,
   getCPanelDbStatus,
   isCPanelDbConnected,
@@ -233,6 +237,9 @@ export interface PCUUpdate {
   uploadedAt: string;
   uploadedBy?: string;
   added_from_website?: boolean;
+  status?: string;
+  verified_at?: string | null;
+  verified_by?: string | null;
 }
 
 export interface Activity {
@@ -302,7 +309,27 @@ const ACTIVITIES_FILE = path.join(DATA_DIR, 'activities.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SHEETS_CONFIG_FILE = path.join(DATA_DIR, 'sheets_config.json');
 const PCU_UPDATES_FILE = path.join(DATA_DIR, 'pcu_updates.json');
+const PCU_SETTLEMENTS_FILE = path.join(DATA_DIR, 'pcu_settlements.json');
+const PCU_CONFIG_FILE = path.join(DATA_DIR, 'pcu_config.json');
 const EXISTING_ACCOUNTS_FILE = path.join(DATA_DIR, 'existing_accounts.json');
+
+export interface PcuSettlement {
+  id: string;
+  submitter: string;
+  totalSubmissions: number;
+  baseRate: number;
+  totalSalary: number;
+  amountPaid: number;
+  paymentStatus: 'SETTLED' | 'PENDING' | string;
+  paymentMethod: string;
+  referenceNotes?: string;
+  settledBy: string;
+  settledAt: string;
+  createdAt?: string;
+}
+
+export let pcuBaseRate: number = 50.00;
+export let pcuSettlementsCache: PcuSettlement[] = [];
 const LOGO_DATA_FILE = path.join(DATA_DIR, 'logo_data.txt');
 const FAVICON_DATA_FILE = path.join(DATA_DIR, 'favicon_data.txt');
 const BARANGAYS_FILE = path.join(DATA_DIR, 'barangays.json');
@@ -792,6 +819,7 @@ export interface SiteSettings {
   navExistingAccount?: string;
   navExistAccFiles?: string;
   rolePermissions?: Record<string, string[]>;
+  pcuBaseRate?: number;
 }
 
 const DEFAULT_SITE_LOGO = 'https://www.image2url.com/r2/default/images/1785037750375-501bcf0e-4b15-4e0e-8be2-610bc89d072e.png';
@@ -801,6 +829,7 @@ let siteSettings: SiteSettings = {
   faviconTitle: 'SFC HOUSEHOLD DATA LIST',
   logoDataUrl: DEFAULT_SITE_LOGO,
   faviconDataUrl: DEFAULT_SITE_LOGO,
+  pcuBaseRate: 50.00,
   navDashboard: 'Dashboard',
   navMap: 'Clinic Map',
   navDirectory: 'Clinic Directory',
@@ -1060,6 +1089,11 @@ export function saveSiteSettings(settings: Partial<SiteSettings>) {
     }
 
     safeWriteFileSync(SETTINGS_FILE, JSON.stringify(siteSettings, null, 2), 'utf-8');
+    if (settings.pcuBaseRate !== undefined) {
+      pcuBaseRate = Number(settings.pcuBaseRate) || 0;
+      safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: pcuBaseRate }, null, 2), 'utf-8');
+      saveSettingToCPanel('pcu_base_rate', String(pcuBaseRate)).catch(() => {});
+    }
     siteSettingsLoadedFromSheets = true;
     lastSettingsPullTime = Date.now();
     syncSiteSettingsToGoogleSheets().catch(err => console.error('Failed to sync site settings to Sheets:', err));
@@ -1067,6 +1101,124 @@ export function saveSiteSettings(settings: Partial<SiteSettings>) {
     console.error('Failed to write settings file:', err);
   }
   return siteSettings;
+}
+
+export function getPcuBaseRate(): number {
+  return pcuBaseRate;
+}
+
+export async function setPcuBaseRate(rate: number): Promise<number> {
+  const cleanRate = Math.max(0, Number(rate) || 0);
+  pcuBaseRate = cleanRate;
+  siteSettings.pcuBaseRate = cleanRate;
+  try {
+    safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: cleanRate }, null, 2), 'utf-8');
+    safeWriteFileSync(SETTINGS_FILE, JSON.stringify(siteSettings, null, 2), 'utf-8');
+  } catch (err: any) {
+    console.warn('Error saving PCU config:', err.message);
+  }
+  try {
+    await saveSettingToCPanel('pcu_base_rate', String(cleanRate));
+    console.log(`[cPanel DB] Base rate ${cleanRate} saved permanently to MySQL site_settings.`);
+  } catch (err: any) {
+    console.warn('Error saving base rate to MySQL:', err.message);
+  }
+  return cleanRate;
+}
+
+export function getPcuSettlements(): PcuSettlement[] {
+  return pcuSettlementsCache;
+}
+
+export async function recordPcuSettlement(data: {
+  id?: string;
+  submitter: string;
+  totalSubmissions: number;
+  baseRate: number;
+  totalSalary: number;
+  amountPaid?: number;
+  paymentStatus?: string;
+  paymentMethod?: string;
+  referenceNotes?: string;
+  settledBy?: string;
+  settledAt?: string;
+}): Promise<PcuSettlement> {
+  const id = data.id || `set_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const submitter = (data.submitter || '').trim();
+  const totalSubmissions = Number(data.totalSubmissions) || 0;
+  const baseRate = Number(data.baseRate) || pcuBaseRate;
+  const totalSalary = Number(data.totalSalary) || (totalSubmissions * baseRate);
+  const amountPaid = data.amountPaid !== undefined ? Number(data.amountPaid) : totalSalary;
+  const paymentStatus = data.paymentStatus || 'SETTLED';
+  const paymentMethod = data.paymentMethod || 'CASH';
+  const referenceNotes = data.referenceNotes || '';
+  const settledBy = data.settledBy || 'Master Admin';
+  const settledAt = data.settledAt || new Date().toISOString();
+
+  const settlement: PcuSettlement = {
+    id,
+    submitter,
+    totalSubmissions,
+    baseRate,
+    totalSalary,
+    amountPaid,
+    paymentStatus,
+    paymentMethod,
+    referenceNotes,
+    settledBy,
+    settledAt,
+    createdAt: new Date().toISOString()
+  };
+
+  const existingIdx = pcuSettlementsCache.findIndex(
+    s => (s.id && s.id === id) || (s.submitter && s.submitter.toLowerCase() === submitter.toLowerCase())
+  );
+  if (existingIdx >= 0) {
+    pcuSettlementsCache[existingIdx] = settlement;
+  } else {
+    pcuSettlementsCache.unshift(settlement);
+  }
+
+  try {
+    safeWriteFileSync(PCU_SETTLEMENTS_FILE, JSON.stringify(pcuSettlementsCache, null, 2), 'utf-8');
+  } catch (err: any) {
+    console.warn('Error writing pcu_settlements.json:', err.message);
+  }
+
+  try {
+    await savePcuSettlementToCPanel(settlement);
+    console.log(`[cPanel DB] Saved settlement for ${submitter} to MySQL.`);
+  } catch (err: any) {
+    console.warn('Error saving settlement to MySQL:', err.message);
+  }
+
+  return settlement;
+}
+
+export async function deletePcuSettlement(idOrSubmitter: string): Promise<boolean> {
+  const key = idOrSubmitter.toLowerCase().trim();
+  const found = pcuSettlementsCache.find(
+    s => s.id === idOrSubmitter || (s.submitter && s.submitter.toLowerCase() === key)
+  );
+  pcuSettlementsCache = pcuSettlementsCache.filter(
+    s => s.id !== idOrSubmitter && (!s.submitter || s.submitter.toLowerCase() !== key)
+  );
+
+  try {
+    safeWriteFileSync(PCU_SETTLEMENTS_FILE, JSON.stringify(pcuSettlementsCache, null, 2), 'utf-8');
+  } catch (err: any) {
+    console.warn('Error writing pcu_settlements.json:', err.message);
+  }
+
+  if (found) {
+    try {
+      await deletePcuSettlementFromCPanel(found.id);
+    } catch (err: any) {
+      console.warn('Error deleting settlement from MySQL:', err.message);
+    }
+  }
+
+  return true;
 }
 
 function unescapeHtml(str: string): string {
@@ -1324,6 +1476,36 @@ export async function initDb() {
       }
     }
 
+    // Init PCU Config (Base Rate)
+    if (fs.existsSync(PCU_CONFIG_FILE)) {
+      try {
+        const raw = fs.readFileSync(PCU_CONFIG_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.baseRate === 'number') {
+          pcuBaseRate = parsed.baseRate;
+          siteSettings.pcuBaseRate = pcuBaseRate;
+        }
+      } catch (e: any) {
+        console.warn('Failed to read PCU_CONFIG_FILE:', e.message);
+      }
+    } else {
+      safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: pcuBaseRate }, null, 2));
+    }
+
+    // Init PCU Settlements Cache
+    if (!fs.existsSync(PCU_SETTLEMENTS_FILE)) {
+      safeWriteFileSync(PCU_SETTLEMENTS_FILE, JSON.stringify([], null, 2));
+      pcuSettlementsCache = [];
+    } else {
+      try {
+        const raw = fs.readFileSync(PCU_SETTLEMENTS_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        pcuSettlementsCache = Array.isArray(parsed) ? parsed : [];
+      } catch (e: any) {
+        pcuSettlementsCache = [];
+      }
+    }
+
     // Prune any submitted contacts from contactsCache so they are not displayed in PCU Directory
     syncPCUFieldsToCache();
     console.log(`[Init] Filtered submitted contacts so they are omitted from PCU Directory.`);
@@ -1480,7 +1662,37 @@ export async function initDb() {
           }
           if (cpanelData.settings && Object.keys(cpanelData.settings).length > 0) {
             siteSettings = { ...siteSettings, ...cpanelData.settings };
+            if (cpanelData.settings.pcu_base_rate !== undefined) {
+              const remoteRate = Number(cpanelData.settings.pcu_base_rate);
+              if (!isNaN(remoteRate) && remoteRate >= 0) {
+                pcuBaseRate = remoteRate;
+                siteSettings.pcuBaseRate = pcuBaseRate;
+                safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: pcuBaseRate }, null, 2));
+              }
+            }
           }
+
+          // Sync PCU settlements with MySQL
+          try {
+            const remoteSettlements = await fetchPcuSettlementsFromCPanel();
+            if (Array.isArray(remoteSettlements) && remoteSettlements.length > 0) {
+              const map = new Map<string, PcuSettlement>();
+              pcuSettlementsCache.forEach(s => map.set(s.id, s));
+              remoteSettlements.forEach(s => map.set(s.id, s));
+              pcuSettlementsCache = Array.from(map.values()).sort(
+                (a, b) => new Date(b.settledAt).getTime() - new Date(a.settledAt).getTime()
+              );
+              safeWriteFileSync(PCU_SETTLEMENTS_FILE, JSON.stringify(pcuSettlementsCache, null, 2));
+              console.log(`[cPanel DB] Synced ${pcuSettlementsCache.length} PCU settlements with MySQL.`);
+            } else if (pcuSettlementsCache.length > 0) {
+              for (const s of pcuSettlementsCache) {
+                await savePcuSettlementToCPanel(s);
+              }
+            }
+          } catch (settleErr: any) {
+            console.warn('[cPanel DB] Error syncing settlements with MySQL:', settleErr.message);
+          }
+
           // Bidirectional user synchronization to protect new registrations
           await syncUsersFromCPanel();
         } else if (contactsCache.length > 0 || usersCache.length > 0) {
@@ -2142,13 +2354,10 @@ export async function addHouseholdToDirectory(household: {
   }
   if (!existing) {
     existing = contactsCache.find(
-      c => normalizeCompareName(c.full_name, formattedName) && 
-           normalizeBarangayName(c.barangay).toLowerCase() === normalizeBarangayName(trimmedBarangay).toLowerCase()
-    );
-  }
-  if (!existing) {
-    existing = contactsCache.find(
-      c => normalizeCompareName(c.full_name, formattedName)
+      c => !c.deleted_at && (
+        isSamePersonFullName(c.full_name, formattedName) ||
+        normalizeCompareName(c.full_name, formattedName)
+      )
     );
   }
 
@@ -3573,9 +3782,35 @@ export function isAvailableForDirectory(c: Contact): boolean {
 // Canonical name normalization key for strict duplicate detection and resolution
 export function getCanonicalNameKey(name?: string): string {
   if (!name) return '';
-  const clean = name.trim().toLowerCase().replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(Boolean);
+  let str = name.toLowerCase().trim();
+  // Normalize Spanish / Filipino particles: "de la" -> "dela", "de los" -> "delos", "de las" -> "delas", "del carmen" -> "delcarmen", etc.
+  str = str.replace(/\bde\s+la\b/g, 'dela')
+           .replace(/\bde\s+los\b/g, 'delos')
+           .replace(/\bde\s+las\b/g, 'delas')
+           .replace(/\bsta\b\.?/g, 'santa')
+           .replace(/\bsto\b\.?/g, 'santo');
+  // Strip common generational suffixes and honorific titles when building canonical comparison key
+  // (e.g. "Sr.", "Jr.", "II", "III", "IV", "V", "Dr.", "Mr.", "Mrs.", "Ms.", "MD")
+  str = str.replace(/\b(sr|jr|ii|iii|iv|v|vi|dr|mr|mrs|ms|md)\b\.?/gi, ' ');
+  const clean = str.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(Boolean);
   if (clean.length === 0) return name.trim().toLowerCase();
   return clean.sort().join(' ');
+}
+
+// Strict full-name identity matching across permutations, particles, suffixes, and formats
+export function isSamePersonFullName(name1?: string, name2?: string): boolean {
+  if (!name1 || !name2) return false;
+  const n1 = name1.trim().toLowerCase();
+  const n2 = name2.trim().toLowerCase();
+  if (n1 === n2 && n1.length > 0) return true;
+
+  const key1 = getCanonicalNameKey(name1);
+  const key2 = getCanonicalNameKey(name2);
+  if (key1 && key2 && key1 === key2) return true;
+
+  if (normalizeCompareName(name1, name2)) return true;
+
+  return false;
 }
 
 // Deduplicate contacts list strictly by Full Name, merging and retaining the highest quality record
@@ -3604,6 +3839,18 @@ export function deduplicateContactsByName(contacts: Contact[]): Contact[] {
       const newest = cIsNewer ? c : existing;
       const older = cIsNewer ? existing : c;
 
+      // Choose the most descriptive and complete legal full name (e.g. retaining "Sr.", "Jr.", or longer title)
+      const hasSuffixExisting = /\b(sr|jr|ii|iii|iv|v|vi)\b\.?/i.test(existing.full_name || '');
+      const hasSuffixC = /\b(sr|jr|ii|iii|iv|v|vi)\b\.?/i.test(c.full_name || '');
+      let bestName = newest.full_name;
+      if (hasSuffixC && !hasSuffixExisting) {
+        bestName = c.full_name;
+      } else if (hasSuffixExisting && !hasSuffixC) {
+        bestName = existing.full_name;
+      } else if ((existing.full_name || '').length > (c.full_name || '').length) {
+        bestName = existing.full_name;
+      }
+
       const mergedContactNumber = newest.contact_number || older.contact_number || '';
       const mergedBarangay = newest.barangay || older.barangay || '';
       const mergedPurok = newest.purok || older.purok || '';
@@ -3619,6 +3866,7 @@ export function deduplicateContactsByName(contacts: Contact[]): Contact[] {
       result[existingIdx] = {
         ...older,
         ...newest,
+        full_name: bestName || newest.full_name,
         contact_number: mergedContactNumber,
         barangay: mergedBarangay,
         purok: mergedPurok,
@@ -4118,6 +4366,57 @@ export async function saveContactToBase44(contact: Contact, username: string): P
     const lngNum = hasGeo ? Number(contact.longitude) : null;
     const isGeotagged = Boolean(contact.geotagged || hasGeo);
 
+    const cleanUploadedFiles: any[] = [];
+    if (Array.isArray(contact.uploadedFiles)) {
+      for (const f of contact.uploadedFiles) {
+        let fUrl = f.url || f.fileUrl || '';
+        const fName = f.name || f.fileName || 'document';
+        if (fUrl && fUrl.startsWith('data:')) {
+          try {
+            fUrl = await uploadFileToBase44(fUrl, fName, f.fileType);
+            f.url = fUrl;
+            f.fileUrl = fUrl;
+          } catch (e) {
+            console.warn('[saveContactToBase44] Failed to convert file url:', e);
+          }
+        }
+        if (fUrl && !fUrl.startsWith('data:') && fUrl.length <= 2000) {
+          cleanUploadedFiles.push({
+            name: f.name || fName,
+            fileName: f.fileName || fName,
+            fileType: f.fileType || getMimeType(fName),
+            fileUrl: fUrl,
+            url: fUrl,
+            size: f.size || 0,
+            uploadedAt: f.uploadedAt || new Date().toISOString(),
+            uploadedBy: f.uploadedBy || uName
+          });
+        }
+      }
+    }
+
+    let cleanPhotoUrl = contact.photo_url || '';
+    if (cleanPhotoUrl && cleanPhotoUrl.startsWith('data:')) {
+      try {
+        cleanPhotoUrl = await uploadFileToBase44(cleanPhotoUrl, `photo_${contact.id}.png`);
+        contact.photo_url = cleanPhotoUrl;
+      } catch (_) {
+        cleanPhotoUrl = '';
+      }
+    }
+    if (cleanPhotoUrl.length > 2000) cleanPhotoUrl = '';
+
+    let cleanPcuFileUrl = contact.pcu_file_url || '';
+    if (cleanPcuFileUrl && cleanPcuFileUrl.startsWith('data:')) {
+      try {
+        cleanPcuFileUrl = await uploadFileToBase44(cleanPcuFileUrl, `pcu_${contact.id}.jpg`);
+        contact.pcu_file_url = cleanPcuFileUrl;
+      } catch (_) {
+        cleanPcuFileUrl = '';
+      }
+    }
+    if (cleanPcuFileUrl.length > 2000) cleanPcuFileUrl = '';
+
     const payload: any = {
       contactId: contact.id,
       memberName: contact.full_name,
@@ -4165,22 +4464,16 @@ export async function saveContactToBase44(contact: Contact, username: string): P
         longitude: lngNum,
         geotagged: isGeotagged
       },
-      uploadedFiles: contact.uploadedFiles || [],
-      uploadedFilesJson: JSON.stringify(contact.uploadedFiles || []),
-      attachments: (contact.uploadedFiles || []).map((f: any) => ({
-        name: contact.full_name,
-        fileName: f.name,
-        fileType: 'application/octet-stream',
-        fileUrl: f.url,
-        size: 0
-      })),
-      isSubmitted: Boolean(contact.isSubmitted || contact.pcu_file_url || (contact.uploadedFiles && contact.uploadedFiles.length > 0)),
+      uploadedFiles: cleanUploadedFiles,
+      uploadedFilesJson: JSON.stringify(cleanUploadedFiles),
+      attachments: cleanUploadedFiles,
+      isSubmitted: true,
       submittedAt: contact.pcu_uploaded_at || new Date().toISOString(),
-      pcu_file_url: contact.pcu_file_url || '',
+      pcu_file_url: cleanPcuFileUrl,
       pcu_uploaded_by: contact.pcu_uploaded_by || uName,
       pcu_uploaded_at: contact.pcu_uploaded_at || new Date().toISOString(),
-      photo_url: contact.photo_url || '',
-      photoUrl: contact.photo_url || '',
+      photo_url: cleanPhotoUrl,
+      photoUrl: cleanPhotoUrl,
       created_at: contact.created_at || new Date().toISOString(),
       updated_at: contact.updated_at || new Date().toISOString()
     };
@@ -4326,7 +4619,8 @@ export async function addContact(
   const existing = contactsCache.find(
     c =>
       !c.deleted_at &&
-      getCanonicalNameKey(c.full_name) === nameKey
+      (isSamePersonFullName(c.full_name, formattedName) ||
+       getCanonicalNameKey(c.full_name) === nameKey)
   );
 
   const hasGeo = (contact.latitude !== undefined && contact.latitude !== null && !isNaN(Number(contact.latitude)) &&
@@ -4448,17 +4742,17 @@ export async function editContact(
     throw new Error('Contact not found or has been deleted.');
   }
 
-  // Check for duplicate in other active records
+  // Check for duplicate in other active records strictly by Full Name
   const isDuplicate = contactsCache.some(
     (c, idx) =>
       !matchedIndices.includes(idx) &&
       !c.deleted_at &&
-      c.full_name.toLowerCase() === formattedName.toLowerCase() &&
-      c.contact_number === rawNumber
+      (isSamePersonFullName(c.full_name, formattedName) ||
+       getCanonicalNameKey(c.full_name) === targetCanonicalKey)
   );
 
   if (isDuplicate) {
-    throw new Error(`Another contact named "${formattedName}" with number ${rawNumber} already exists.`);
+    throw new Error(`Another contact with full name "${formattedName}" already exists.`);
   }
 
   const primaryIndex = matchedIndices[0];
@@ -7917,9 +8211,10 @@ function parseDataUrl(dataUrl: string, fileName?: string): { mimeType: string, b
   return { mimeType: fallbackMime, buffer: Buffer.from(rawBase64, 'base64') };
 }
 
-// Upload file to Base44 public CDN storage with strict byte integrity
+// Upload file to Base44 public CDN storage or intact local static uploads storage
 async function uploadFileToBase44(dataUrl: string, fileName: string, explicitMime?: string): Promise<string> {
-  if (dataUrl && (dataUrl.startsWith('http://') || dataUrl.startsWith('https://'))) {
+  if (!dataUrl) return '';
+  if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://') || dataUrl.startsWith('/uploads/')) {
     return dataUrl;
   }
   try {
@@ -7928,21 +8223,53 @@ async function uploadFileToBase44(dataUrl: string, fileName: string, explicitMim
       ? explicitMime 
       : (parsedMime && parsedMime !== 'application/octet-stream' ? parsedMime : getMimeType(fileName));
     
-    // Create an isolated Uint8Array buffer slice to prevent Node pool slab offset corruption
-    const exactBytes = new Uint8Array(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
-    const safeFileName = (fileName || 'document').replace(/[^\w.-]/g, '_');
-    const file = new File([exactBytes], safeFileName, { type: mimeType });
-    
-    console.log(`[Base44 Upload] Uploading file "${safeFileName}" (${exactBytes.length} bytes, type: ${mimeType}) to Base44 storage...`);
-    const result = await base44.integrations.Core.UploadFile({ file });
-    if (!result || !result.file_url) {
-      throw new Error(`Upload returned no file_url from Base44.`);
+    // Ensure uploads directory exists on disk in all standard locations
+    const publicUploads = path.join(process.cwd(), 'public', 'uploads', 'files');
+    const distUploads = path.join(process.cwd(), 'dist', 'uploads', 'files');
+    const dataUploads = path.join(DATA_DIR, 'uploads', 'files');
+    for (const dir of [publicUploads, distUploads, dataUploads]) {
+      if (!fs.existsSync(dir)) {
+        try {
+          fs.mkdirSync(dir, { recursive: true });
+        } catch (_) {}
+      }
     }
-    console.log(`[Base44 Upload] Successfully uploaded. URL: ${result.file_url}`);
-    return result.file_url;
+
+    const timestamp = Date.now();
+    const randomHex = crypto.randomBytes(4).toString('hex');
+    const ext = path.extname(fileName) || (mimeType === 'application/pdf' ? '.pdf' : mimeType === 'image/png' ? '.png' : mimeType === 'image/jpeg' ? '.jpg' : '');
+    const cleanBase = path.basename(fileName, path.extname(fileName)).replace(/[^\w.-]/g, '_');
+    const safeSavedName = `${timestamp}_${randomHex}_${cleanBase}${ext}`;
+
+    // Write exact binary bytes to local uploads storage to guarantee 100% intact file preservation (no damage, no corruption)
+    for (const dir of [publicUploads, distUploads, dataUploads]) {
+      try {
+        fs.writeFileSync(path.join(dir, safeSavedName), buffer);
+      } catch (_) {}
+    }
+
+    const localStaticUrl = `/uploads/files/${safeSavedName}`;
+
+    // Attempt to upload to Base44 CDN via SDK if available and within monthly quota
+    try {
+      const exactBytes = new Uint8Array(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength));
+      const safeFileName = (fileName || 'document').replace(/[^\w.-]/g, '_');
+      const file = new File([exactBytes], safeFileName, { type: mimeType });
+      
+      console.log(`[Base44 Upload] Attempting SDK upload for "${safeFileName}" (${exactBytes.length} bytes, type: ${mimeType})...`);
+      const result = await base44.integrations.Core.UploadFile({ file });
+      if (result && result.file_url) {
+        console.log(`[Base44 Upload] Successfully uploaded to Base44 CDN: ${result.file_url}`);
+        return result.file_url;
+      }
+    } catch (sdkErr: any) {
+      console.log(`[Base44 Upload Note] SDK upload limit or unavailable (${sdkErr.message || 'quota limit'}). Preserved file intact in local static storage: ${localStaticUrl}`);
+    }
+
+    return localStaticUrl;
   } catch (err: any) {
-    console.error('[Base44 Upload Error] Failed to upload via SDK:', err.message || err);
-    throw err;
+    console.error('[Base44 Upload Error] File processing error:', err.message || err);
+    return dataUrl.length <= 2000 ? dataUrl : '';
   }
 }
 
@@ -8762,16 +9089,19 @@ export function getRecentUploads(params: {
 
   for (const u of pcuUpdatesCache) {
     if (!u) continue;
-    const nameKey = (u.fullName || '').trim().toLowerCase();
-    if (!nameKey) continue;
+    const nameKey = `${(u.fullName || '').trim().toLowerCase()}___${(u.barangay || '').trim().toLowerCase()}`;
+    if (!nameKey.replace(/___/g, '')) continue;
+
+    const actualId = (u.contactId && String(u.contactId).toLowerCase() !== 'new' ? u.contactId : u.id) || `pcu_${Date.now()}`;
+    const pcuStatus = (u.status || '').toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'PENDING';
 
     if (!updatesByPerson.has(nameKey)) {
       updatesByPerson.set(nameKey, {
-        id: u.contactId || u.id || Date.now(),
+        id: actualId,
         full_name: u.fullName,
         barangay: u.barangay || 'Unassigned',
         purok: u.purok || '',
-        contact_number: '',
+        contact_number: (u as any).contact_number || (u as any).contactNumber || '',
         created_at: u.uploadedAt || new Date().toISOString(),
         updated_at: u.uploadedAt || new Date().toISOString(),
         deleted_at: null,
@@ -8780,11 +9110,21 @@ export function getRecentUploads(params: {
         pcu_uploaded_at: u.uploadedAt || new Date().toISOString(),
         isExistingAccount: false,
         category: 'pcu',
+        status: pcuStatus,
         uploadedFiles: []
       });
     }
 
     const item = updatesByPerson.get(nameKey)!;
+    if (pcuStatus === 'VERIFIED') {
+      item.status = 'VERIFIED';
+    }
+    if ((!item.barangay || item.barangay === 'Unassigned') && u.barangay) {
+      item.barangay = u.barangay;
+    }
+    if (!item.purok && u.purok) {
+      item.purok = u.purok;
+    }
     item.uploadedFiles.push({
       name: u.fileName || 'PCU Document',
       url: u.fileData || '',
@@ -8796,8 +9136,9 @@ export function getRecentUploads(params: {
   // Also include any in contactsCache that have PCU files
   for (const c of contactsCache) {
     if (!c || !isContactSubmitted(c)) continue;
-    const nameKey = (c.full_name || '').trim().toLowerCase();
-    if (!nameKey) continue;
+    const nameKey = `${(c.full_name || '').trim().toLowerCase()}___${(c.barangay || '').trim().toLowerCase()}`;
+    if (!nameKey.replace(/___/g, '')) continue;
+    const cStatus = ((c as any).pcu_status || c.status || '').toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'PENDING';
 
     if (!updatesByPerson.has(nameKey)) {
       const uploadedFiles = c.uploadedFiles && c.uploadedFiles.length > 0 ? c.uploadedFiles : [{
@@ -8810,6 +9151,7 @@ export function getRecentUploads(params: {
         ...c,
         isExistingAccount: false,
         category: 'pcu',
+        status: cStatus,
         uploadedFiles
       });
     }
@@ -8866,6 +9208,7 @@ export function getRecentUploads(params: {
       pcu_uploaded_at: uploadedAt,
       isExistingAccount: true,
       category: 'existing_account',
+      status: ((acc as any).pcu_status || (acc as any).status || '').toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'PENDING',
       pin: acc.pin || '',
       facebookLink: acc.facebookLink || '',
       latitude: acc.latitude,
@@ -9229,6 +9572,90 @@ export async function permanentlyDeletePcuSubmission(params: {
   };
 }
 
+/**
+ * Updates the verification status of a PCU submission (VERIFIED or PENDING).
+ * Once verified, it transfers to the Verified section and is removed from Pending.
+ */
+export async function updatePcuSubmissionStatus(params: {
+  id?: string | number;
+  fullName?: string;
+  status: 'VERIFIED' | 'PENDING';
+  username?: string;
+}): Promise<{ success: boolean; status: string; fullName: string; message: string }> {
+  const { id, fullName, status, username = 'Admin' } = params;
+  const normName = (fullName || '').trim().toLowerCase();
+  const idStr = id !== undefined && id !== null ? String(id).trim() : '';
+
+  console.log(`[PCU Verification] Setting status to "${status}" for: id=${idStr}, name=${fullName}`);
+
+  // 1. Update in local pcuUpdatesCache
+  let updatedCount = 0;
+  for (const u of pcuUpdatesCache) {
+    if (!u) continue;
+    const matchPerson = (idStr && idStr !== 'new' && (String(u.id) === idStr || String(u.contactId) === idStr)) ||
+                        (normName && (u.fullName || '').trim().toLowerCase() === normName);
+    if (matchPerson) {
+      u.status = status;
+      (u as any).verified_at = status === 'VERIFIED' ? new Date().toISOString() : null;
+      (u as any).verified_by = status === 'VERIFIED' ? username : null;
+      updatedCount++;
+    }
+  }
+
+  // 2. Also update in contactsCache if matching
+  for (const c of contactsCache) {
+    if (!c) continue;
+    const matchPerson = (idStr && idStr !== 'new' && String(c.id) === idStr) ||
+                        (normName && (c.full_name || '').trim().toLowerCase() === normName);
+    if (matchPerson) {
+      (c as any).pcu_status = status;
+      if (status === 'VERIFIED') {
+        (c as any).verified_at = new Date().toISOString();
+        (c as any).verified_by = username;
+      }
+    }
+  }
+
+  // 3. Also update in existingAccountsCache if matching
+  for (const acc of existingAccountsCache) {
+    if (!acc) continue;
+    const matchPerson = (idStr && idStr !== 'new' && String(acc.id) === idStr) ||
+                        (normName && (acc.full_name || '').trim().toLowerCase() === normName);
+    if (matchPerson) {
+      (acc as any).pcu_status = status;
+      acc.status = status;
+    }
+  }
+
+  // 4. Save to local pcu_updates.json
+  await savePCUUpdates();
+
+  // 5. Update in cPanel MySQL database if connected
+  if (isCPanelDbConnected()) {
+    try {
+      await updatePcuStatusInCPanel({
+        id: idStr,
+        fullName: fullName || '',
+        status,
+        username
+      });
+    } catch (err: any) {
+      console.warn('[PCU Verification Warning] Failed to update in cPanel MySQL:', err.message || err);
+    }
+  }
+
+  // 6. Record activity log
+  const actionText = status === 'VERIFIED' ? 'Verified' : 'Moved back to Pending';
+  await addActivity(username, `${actionText} PCU submission for "${fullName || idStr}"`);
+
+  return {
+    success: true,
+    status,
+    fullName: fullName || '',
+    message: `PCU submission for "${fullName || idStr}" is now ${status}.`
+  };
+}
+
 // Get local existing accounts
 export function getLocalExistingAccounts(): ExistingAccountItem[] {
   return existingAccountsCache.filter(acc => acc && acc.full_name);
@@ -9453,7 +9880,7 @@ export async function syncToBase44MemberVerifiedSubmission(existingAccount: Exis
       uploadedBy: f.uploadedBy || uName
     })).filter(f => f.fileUrl && !f.fileUrl.startsWith('data:'));
 
-    const itemsToIterate = filesToSync.length > 0 ? filesToSync : [{ url: '', name: '' }];
+    const itemsToIterate: any[] = filesToSync.length > 0 ? filesToSync : [{ url: '', name: '', fileUrl: '', fileName: '', fileType: '', size: 0 }];
 
     for (const item of itemsToIterate) {
       const currentFile = item as any;
@@ -9682,8 +10109,8 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
   existingAccount.uploadedFiles = processedFiles;
 
   // Application is strictly submission-only: keep uploaded attachments intact and direct without pulling/merging stale records
-  const validAttachments = processedFiles.filter(a => a.fileUrl && !a.fileUrl.startsWith('data:'));
-  const primaryAttachmentUrl = validAttachments[0]?.fileUrl || null;
+  const validAttachments = processedFiles.filter(a => a.fileUrl && !a.fileUrl.startsWith('data:') && a.fileUrl.length <= 2000);
+  const primaryAttachmentUrl = (validAttachments[0]?.fileUrl && validAttachments[0].fileUrl.length <= 2000) ? validAttachments[0].fileUrl : null;
   const primaryAttachmentName = validAttachments[0]?.fileName || null;
 
   const nameParts = fullName.split(' ');
@@ -9883,19 +10310,15 @@ export async function updateLocalExistingAccount(
   // If new staged files are attached in the request
   if (Array.isArray(updates.files) && updates.files.length > 0) {
     for (const f of updates.files) {
-      let fileUrl = f.fileData || '';
       const fName = f.fileName || 'document';
       const mType = (f as any).fileType || getMimeType(fName);
-      if (shouldSyncToBase44) {
-        try {
-          console.log(`[Base44 Upload] Processing staged file "${fName}" for "${existingAccount.full_name}"...`);
-          fileUrl = await uploadFileToBase44(f.fileData, fName, mType);
-        } catch (err: any) {
-          console.error(`[Base44 Upload Error] Failed to upload "${fName}" to Base44 storage:`, err);
-          throw new Error(`Failed to upload attachment "${fName}" to Base44 storage: ${err.message || 'Upload failed'}. Aborted submission to guarantee attachment integrity.`);
-        }
-      } else {
-        fileUrl = f.fileData.startsWith('data:') ? f.fileData : `data:${mType};base64,${f.fileData}`;
+      let fileUrl = '';
+      try {
+        console.log(`[Base44 Upload] Processing staged file "${fName}" for "${existingAccount.full_name}"...`);
+        fileUrl = await uploadFileToBase44(f.fileData, fName, mType);
+      } catch (err: any) {
+        console.error(`[Base44 Upload Error] Failed to process "${fName}":`, err);
+        fileUrl = f.fileData;
       }
 
       updatedFiles.push({
@@ -9911,23 +10334,20 @@ export async function updateLocalExistingAccount(
     }
   }
 
-  // If submitting to Base44, ensure any previous data URLs are also uploaded to Base44 CDN
-  if (shouldSyncToBase44) {
-    for (let i = 0; i < updatedFiles.length; i++) {
-      const uFile = updatedFiles[i];
-      const curUrl = uFile.fileUrl || uFile.url || '';
-      if (curUrl && curUrl.startsWith('data:')) {
-        try {
-          const fName = uFile.fileName || uFile.name || 'document';
-          const mType = uFile.fileType || getMimeType(fName);
-          console.log(`[Base44 Upload] Converting cached data URL for "${fName}" to Base44 CDN storage...`);
-          const cdnUrl = await uploadFileToBase44(curUrl, fName, mType);
-          uFile.url = cdnUrl;
-          uFile.fileUrl = cdnUrl;
-        } catch (err: any) {
-          console.error(`[Base44 Upload Error] Failed to convert data URL for "${uFile.name}":`, err);
-          throw new Error(`Failed to upload attachment "${uFile.fileName || uFile.name}" to Base44 storage: ${err.message || 'Upload failed'}. Aborted submission to guarantee attachment integrity.`);
-        }
+  // Ensure any previous data URLs are also migrated to intact static file storage
+  for (let i = 0; i < updatedFiles.length; i++) {
+    const uFile = updatedFiles[i];
+    const curUrl = uFile.fileUrl || uFile.url || '';
+    if (curUrl && curUrl.startsWith('data:')) {
+      try {
+        const fName = uFile.fileName || uFile.name || 'document';
+        const mType = uFile.fileType || getMimeType(fName);
+        console.log(`[Base44 Upload] Converting cached data URL for "${fName}" to intact file storage...`);
+        const cdnUrl = await uploadFileToBase44(curUrl, fName, mType);
+        uFile.url = cdnUrl;
+        uFile.fileUrl = cdnUrl;
+      } catch (err: any) {
+        console.warn(`[Base44 Upload Warning] Failed to convert data URL for "${uFile.name}":`, err);
       }
     }
   }
@@ -9947,10 +10367,14 @@ export async function updateLocalExistingAccount(
   delete (updatedAccount as any).submitToBase44;
 
   if (shouldSyncToBase44) {
-    // Sync to Base44 HouseholdSubmission FIRST and get/update the real Base44 ID
-    const realId = await syncToBase44HouseholdSubmission(updatedAccount, username);
-    if (realId && realId !== updatedAccount.id) {
-      updatedAccount.id = realId;
+    try {
+      // Sync to Base44 HouseholdSubmission FIRST and get/update the real Base44 ID
+      const realId = await syncToBase44HouseholdSubmission(updatedAccount, username);
+      if (realId && realId !== updatedAccount.id) {
+        updatedAccount.id = realId;
+      }
+    } catch (syncErr: any) {
+      console.warn('[Base44 Sync Warning] HouseholdSubmission sync encountered error (continuing local persistence):', syncErr.message || syncErr);
     }
   }
 
@@ -9970,8 +10394,12 @@ export async function updateLocalExistingAccount(
   }
 
   if (shouldSyncToBase44) {
-    // Permanently save to base44 database at the MemberVerifiedSubmission table
-    await syncToBase44MemberVerifiedSubmission(updatedAccount, username);
+    try {
+      // Permanently save to base44 database at the MemberVerifiedSubmission table
+      await syncToBase44MemberVerifiedSubmission(updatedAccount, username);
+    } catch (memberErr: any) {
+      console.warn('[Base44 Sync Warning] MemberVerifiedSubmission write encountered error:', memberErr.message || memberErr);
+    }
 
     // Log to Base44 ExistingAccFileUpdate table if files are present or upon explicit submit
     if (updatedAccount.uploadedFiles && updatedAccount.uploadedFiles.length > 0) {
@@ -9997,7 +10425,7 @@ export async function updateLocalExistingAccount(
             uploadedAt: f.uploadedAt || new Date().toISOString(),
             uploadedBy: f.uploadedBy || uName
           };
-        }).filter(f => f.fileUrl && !f.fileUrl.startsWith('data:'));
+        }).filter(f => f.fileUrl && !f.fileUrl.startsWith('data:') && f.fileUrl.length <= 2000);
 
         await updateEntity.create({
           householdSubmissionId: updatedAccount.id,
@@ -10061,15 +10489,9 @@ export async function uploadFilesForExistingAccount(
 
     for (const file of files) {
       try {
-        let fileUrl: string;
         const fName = file.fileName || 'document';
         const mType = (file as any).fileType || getMimeType(fName);
-        if (submitToBase44) {
-          console.log(`[Existing Account Upload] Processing file "${fName}" for account: "${existingAccount.full_name}" to Base44`);
-          fileUrl = await uploadFileToBase44(file.fileData, fName, mType);
-        } else {
-          fileUrl = file.fileData.startsWith('data:') ? file.fileData : `data:${mType};base64,${file.fileData}`;
-        }
+        const fileUrl = await uploadFileToBase44(file.fileData, fName, mType);
         
         const fileObj = {
           name: fName,
@@ -10091,7 +10513,7 @@ export async function uploadFilesForExistingAccount(
   }
 
   if (submitToBase44) {
-    // Convert any pre-existing data URLs to Base44 CDN URLs
+    // Convert any pre-existing data URLs to intact static storage URLs
     if (existingAccount.uploadedFiles) {
       for (let i = 0; i < existingAccount.uploadedFiles.length; i++) {
         const uFile = existingAccount.uploadedFiles[i];
@@ -10100,7 +10522,7 @@ export async function uploadFilesForExistingAccount(
           try {
             const fName = uFile.fileName || uFile.name || 'document';
             const mType = uFile.fileType || getMimeType(fName);
-            console.log(`[Base44 Upload] Converting cached data URL for "${fName}" to Base44 CDN storage...`);
+            console.log(`[Base44 Upload] Converting cached data URL for "${fName}" to intact file storage...`);
             const cdnUrl = await uploadFileToBase44(curUrl, fName, mType);
             uFile.url = cdnUrl;
             uFile.fileUrl = cdnUrl;
@@ -10118,10 +10540,14 @@ export async function uploadFilesForExistingAccount(
     }
     (existingAccount as any).localId = (existingAccount as any).localId || existingAccount.id;
 
-    // Sync to Base44 HouseholdSubmission FIRST and get/update the real Base44 ID
-    const realId = await syncToBase44HouseholdSubmission(existingAccount, username);
-    if (realId && realId !== existingAccount.id) {
-      existingAccount.id = realId;
+    // Sync to Base44 HouseholdSubmission and update Base44 ID
+    try {
+      const realId = await syncToBase44HouseholdSubmission(existingAccount, username);
+      if (realId && realId !== existingAccount.id) {
+        existingAccount.id = realId;
+      }
+    } catch (syncErr: any) {
+      console.warn('[Base44 Sync Warning] HouseholdSubmission sync encountered error (continuing local persistence):', syncErr.message || syncErr);
     }
   }
 

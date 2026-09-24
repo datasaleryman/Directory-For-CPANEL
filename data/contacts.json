@@ -16993,13 +16993,13 @@
     "submittedToBase44": false
   },
   {
-    "id": 1784789559188,
-    "full_name": "Duga, Welfrido Locero",
+    "id": 1784789559665,
+    "full_name": "Duga Sr., Welfrido Locero",
     "barangay": "Balangasan",
     "purok": "Acasia",
     "contact_number": "9530449333",
-    "created_at": "2026-08-27T09:01:25.605Z",
-    "updated_at": "2026-08-27T09:01:25.605Z",
+    "created_at": "2026-09-02T00:40:27.471Z",
+    "updated_at": "2026-09-22T02:48:18.781Z",
     "deleted_at": null,
     "geotagged": false,
     "added_locally": false,
@@ -17007,7 +17007,9 @@
     "isSubmitted": false,
     "status": "AVAILABLE",
     "locked": false,
-    "submittedToBase44": false
+    "submittedToBase44": false,
+    "maintenance": "None",
+    "maintenance_medicine": ""
   },
   {
     "id": 1784789559893,
@@ -22557,23 +22559,6 @@
     "barangay": "Bulatok",
     "purok": "Zone 0 Makiangayon",
     "contact_number": "9555605119",
-    "created_at": "2026-09-02T00:40:27.471Z",
-    "updated_at": "2026-09-02T00:40:27.471Z",
-    "deleted_at": null,
-    "geotagged": false,
-    "added_locally": false,
-    "added_from_print_list": true,
-    "isSubmitted": false,
-    "status": "AVAILABLE",
-    "locked": false,
-    "submittedToBase44": false
-  },
-  {
-    "id": 1784789559665,
-    "full_name": "Duga Sr., Welfrido Locero",
-    "barangay": "Balangasan",
-    "purok": "Acasia",
-    "contact_number": "9530449333",
     "created_at": "2026-09-02T00:40:27.471Z",
     "updated_at": "2026-09-02T00:40:27.471Z",
     "deleted_at": null,

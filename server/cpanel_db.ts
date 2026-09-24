@@ -255,6 +255,25 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       INDEX idx_pcu_del_action (action_type),
       INDEX idx_pcu_del_by (deleted_by),
       INDEX idx_pcu_del_at (deleted_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    // 11. PCU Submissions Settlement Table (Master Admin Ledger Payroll)
+    `CREATE TABLE IF NOT EXISTS pcu_settlements (
+      id VARCHAR(100) PRIMARY KEY,
+      submitter VARCHAR(255) NOT NULL,
+      total_submissions INT DEFAULT 0,
+      base_rate DECIMAL(10,2) DEFAULT 0.00,
+      total_salary DECIMAL(12,2) DEFAULT 0.00,
+      amount_paid DECIMAL(12,2) DEFAULT 0.00,
+      payment_status VARCHAR(50) DEFAULT 'SETTLED',
+      payment_method VARCHAR(100) DEFAULT 'CASH',
+      reference_notes TEXT,
+      settled_by VARCHAR(100) DEFAULT 'Master Admin',
+      settled_at VARCHAR(100) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_settle_submitter (submitter),
+      INDEX idx_settle_status (payment_status),
+      INDEX idx_settle_at (settled_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
   ];
 
@@ -2392,6 +2411,149 @@ export async function deletePcuFileFromCPanel(params: {
     return false;
   }
 }
+
+/**
+ * Updates the verification status of a PCU submission in cPanel MySQL.
+ */
+export async function updatePcuStatusInCPanel(params: {
+  id?: string;
+  fullName?: string;
+  status: string;
+  username: string;
+}): Promise<boolean> {
+  if (!pool) return false;
+  try {
+    const { id, fullName, status, username } = params;
+    const verifiedAt = status === 'VERIFIED' ? new Date().toISOString() : null;
+    const verifiedBy = status === 'VERIFIED' ? username : null;
+
+    if (id && id !== 'new') {
+      await pool.query(
+        'UPDATE pcu_submissions SET status = ?, verified_at = ?, verified_by = ? WHERE id = ? OR contact_id = ?',
+        [status, verifiedAt, verifiedBy, id, id]
+      ).catch(() => {
+        // Fallback in case verified_at/verified_by columns don't exist yet
+        return pool?.query(
+          'UPDATE pcu_submissions SET status = ? WHERE id = ? OR contact_id = ?',
+          [status, id, id]
+        );
+      });
+    }
+
+    if (fullName && fullName.trim()) {
+      await pool.query(
+        'UPDATE pcu_submissions SET status = ?, verified_at = ?, verified_by = ? WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))',
+        [status, verifiedAt, verifiedBy, fullName.trim()]
+      ).catch(() => {
+        return pool?.query(
+          'UPDATE pcu_submissions SET status = ? WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))',
+          [status, fullName.trim()]
+        );
+      });
+    }
+
+    console.log(`[cPanel DB] Updated status to "${status}" for PCU submission: ${fullName || id}`);
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error updating PCU status in MySQL:', err.message || err);
+    return false;
+  }
+}
+
+/**
+ * Saves or updates a PCU salary settlement record in MySQL.
+ */
+export async function savePcuSettlementToCPanel(settlement: {
+  id: string;
+  submitter: string;
+  totalSubmissions: number;
+  baseRate: number;
+  totalSalary: number;
+  amountPaid?: number;
+  paymentStatus?: string;
+  paymentMethod?: string;
+  referenceNotes?: string;
+  settledBy?: string;
+  settledAt: string;
+}): Promise<void> {
+  if (!pool || !currentStatus.connected) return;
+  try {
+    const id = settlement.id || crypto.randomUUID();
+    const submitter = (settlement.submitter || '').trim();
+    const totalSubmissions = Number(settlement.totalSubmissions) || 0;
+    const baseRate = Number(settlement.baseRate) || 0;
+    const totalSalary = Number(settlement.totalSalary) || (totalSubmissions * baseRate);
+    const amountPaid = settlement.amountPaid !== undefined ? Number(settlement.amountPaid) : totalSalary;
+    const paymentStatus = settlement.paymentStatus || 'SETTLED';
+    const paymentMethod = settlement.paymentMethod || 'CASH';
+    const referenceNotes = settlement.referenceNotes || '';
+    const settledBy = settlement.settledBy || 'Master Admin';
+    const settledAt = settlement.settledAt || new Date().toISOString();
+
+    await pool.query(
+      `INSERT INTO pcu_settlements
+        (id, submitter, total_submissions, base_rate, total_salary, amount_paid, payment_status, payment_method, reference_notes, settled_by, settled_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        total_submissions = VALUES(total_submissions),
+        base_rate = VALUES(base_rate),
+        total_salary = VALUES(total_salary),
+        amount_paid = VALUES(amount_paid),
+        payment_status = VALUES(payment_status),
+        payment_method = VALUES(payment_method),
+        reference_notes = VALUES(reference_notes),
+        settled_by = VALUES(settled_by),
+        settled_at = VALUES(settled_at)`,
+      [id, submitter, totalSubmissions, baseRate, totalSalary, amountPaid, paymentStatus, paymentMethod, referenceNotes, settledBy, settledAt]
+    );
+    console.log(`[cPanel DB] Saved PCU settlement ${id} for "${submitter}" to MySQL database.`);
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error saving PCU settlement to MySQL:', err.message || err);
+  }
+}
+
+/**
+ * Fetches all PCU salary settlement records from MySQL.
+ */
+export async function fetchPcuSettlementsFromCPanel(): Promise<any[]> {
+  if (!pool || !currentStatus.connected) return [];
+  try {
+    const [rows]: any = await pool.query('SELECT * FROM pcu_settlements ORDER BY settled_at DESC');
+    return (rows || []).map((r: any) => ({
+      id: String(r.id),
+      submitter: r.submitter,
+      totalSubmissions: Number(r.total_submissions) || 0,
+      baseRate: Number(r.base_rate) || 0,
+      totalSalary: Number(r.total_salary) || 0,
+      amountPaid: Number(r.amount_paid) || 0,
+      paymentStatus: r.payment_status || 'SETTLED',
+      paymentMethod: r.payment_method || 'CASH',
+      referenceNotes: r.reference_notes || '',
+      settledBy: r.settled_by || 'Master Admin',
+      settledAt: r.settled_at || (r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()),
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()
+    }));
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error fetching PCU settlements from MySQL:', err.message || err);
+    return [];
+  }
+}
+
+/**
+ * Deletes a PCU salary settlement record from MySQL.
+ */
+export async function deletePcuSettlementFromCPanel(id: string): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    await pool.query('DELETE FROM pcu_settlements WHERE id = ?', [String(id)]);
+    console.log(`[cPanel DB] Deleted PCU settlement ${id} from MySQL.`);
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error deleting PCU settlement from MySQL:', err.message || err);
+    return false;
+  }
+}
+
 
 
 

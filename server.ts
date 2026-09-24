@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
+import fs from 'fs';
 import http from 'http';
 import {
   initDb,
@@ -82,7 +83,13 @@ import {
   syncWithCPanelDb,
   syncUsersFromCPanel,
   submitContactToBase44,
-  permanentlyDeletePcuSubmission
+  permanentlyDeletePcuSubmission,
+  updatePcuSubmissionStatus,
+  getPcuBaseRate,
+  setPcuBaseRate,
+  getPcuSettlements,
+  recordPcuSettlement,
+  deletePcuSettlement
 } from './server/db.js';
 import {
   loadCPanelDbConfig,
@@ -1004,6 +1011,136 @@ export async function getApp(httpServer?: http.Server) {
     }
   });
 
+  // Verify or update status of a PCU Submission (transfers between Pending and Verified - Master Admin only)
+  app.post('/api/pcu/verify', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const role = (req.user?.role || '').toUpperCase().trim();
+      const isMasterAdmin = role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username.toLowerCase() === 'admin';
+
+      if (!isMasterAdmin) {
+        return res.status(403).json({ error: 'Access Denied: Only Master Admin can verify PCU submissions or modify verification status.' });
+      }
+
+      const { id, fullName, status = 'VERIFIED' } = req.body;
+
+      if (!id && !fullName) {
+        return res.status(400).json({ error: 'Identification (id or fullName) is required to update verification status.' });
+      }
+
+      const result = await updatePcuSubmissionStatus({
+        id,
+        fullName,
+        status: status === 'PENDING' ? 'PENDING' : 'VERIFIED',
+        username
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('[Verify PCU Submission API Error]:', err);
+      res.status(400).json({ error: err.message || 'Failed to update PCU verification status.' });
+    }
+  });
+
+  // Get current PCU Submission Base Rate (saved in MySQL)
+  app.get('/api/pcu/base-rate', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const baseRate = getPcuBaseRate();
+      res.json({ baseRate });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch base rate.' });
+    }
+  });
+
+  // Update PCU Submission Base Rate (saved permanently to MySQL)
+  app.post('/api/pcu/base-rate', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const { baseRate } = req.body;
+      const rateNum = Number(baseRate);
+
+      if (isNaN(rateNum) || rateNum < 0) {
+        return res.status(400).json({ error: 'Valid base rate greater than or equal to 0 is required.' });
+      }
+
+      const updatedRate = await setPcuBaseRate(rateNum);
+      addActivity(username, `Updated PCU base rate to ₱${updatedRate.toFixed(2)} (saved permanently to MySQL).`);
+
+      res.json({
+        success: true,
+        baseRate: updatedRate,
+        message: `Base rate updated to ₱${updatedRate.toFixed(2)} and saved permanently to MySQL.`
+      });
+    } catch (err: any) {
+      console.error('[PCU Base Rate Update Error]:', err);
+      res.status(400).json({ error: err.message || 'Failed to update base rate.' });
+    }
+  });
+
+  // Get all PCU Submissions Settlements
+  app.get('/api/pcu/settlements', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const settlements = getPcuSettlements();
+      res.json({ settlements });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch settlements.' });
+    }
+  });
+
+  // Record or update a salary settlement for a submitter (saved to MySQL)
+  app.post('/api/pcu/settlements', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const { submitter, totalSubmissions, baseRate, totalSalary, amountPaid, paymentStatus, paymentMethod, referenceNotes } = req.body;
+
+      if (!submitter || typeof submitter !== 'string' || !submitter.trim()) {
+        return res.status(400).json({ error: 'Submitter name is required for settlement.' });
+      }
+
+      const settlement = await recordPcuSettlement({
+        id: req.body.id,
+        submitter: submitter.trim(),
+        totalSubmissions: Number(totalSubmissions) || 0,
+        baseRate: Number(baseRate) || getPcuBaseRate(),
+        totalSalary: Number(totalSalary) || 0,
+        amountPaid: amountPaid !== undefined ? Number(amountPaid) : (Number(totalSalary) || 0),
+        paymentStatus: paymentStatus || 'SETTLED',
+        paymentMethod: paymentMethod || 'CASH',
+        referenceNotes: referenceNotes || '',
+        settledBy: username,
+        settledAt: req.body.settledAt || new Date().toISOString()
+      });
+
+      addActivity(username, `Recorded salary settlement for ${submitter}: ₱${(settlement.amountPaid || settlement.totalSalary).toFixed(2)} (${settlement.paymentStatus})`);
+
+      res.json({ success: true, settlement, message: `Settlement for ${submitter} saved permanently to MySQL.` });
+    } catch (err: any) {
+      console.error('[PCU Settlement Record Error]:', err);
+      res.status(400).json({ error: err.message || 'Failed to record settlement.' });
+    }
+  });
+
+  // Delete a settlement record (Master Admin only)
+  app.delete('/api/pcu/settlements/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const role = (req.user?.role || '').toUpperCase().trim();
+      const isMasterAdmin = role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username.toLowerCase() === 'admin';
+
+      if (!isMasterAdmin) {
+        return res.status(403).json({ error: 'Access Denied: Only Master Admin can remove settlement records.' });
+      }
+
+      const { id } = req.params;
+      await deletePcuSettlement(id);
+      addActivity(username, `Deleted salary settlement record #${id}`);
+
+      res.json({ success: true, message: 'Settlement record removed successfully.' });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to delete settlement.' });
+    }
+  });
+
   // Authenticated route for barangays
   app.get('/api/barangays', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     try {
@@ -1634,11 +1771,45 @@ export async function getApp(httpServer?: http.Server) {
     }
   });
 
-  // --- Serve Static Uploads Directory ---
+  // --- Serve Static Uploads Directory with byte integrity and caching ---
   const publicUploads = path.join(process.cwd(), 'public', 'uploads');
   const distUploads = path.join(process.cwd(), 'dist', 'uploads');
-  app.use('/uploads', express.static(publicUploads));
-  app.use('/uploads', express.static(distUploads));
+  const dataUploads = path.join(process.cwd(), 'data', 'uploads');
+
+  for (const dir of [publicUploads, distUploads, dataUploads]) {
+    if (!fs.existsSync(dir)) {
+      try { fs.mkdirSync(dir, { recursive: true }); } catch (_) {}
+    }
+  }
+
+  app.use('/uploads', express.static(publicUploads, { maxAge: '30d' }));
+  app.use('/uploads', express.static(distUploads, { maxAge: '30d' }));
+  app.use('/uploads', express.static(dataUploads, { maxAge: '30d' }));
+
+  // Explicit route for uploaded files to guarantee reliable delivery across all runtimes
+  app.get('/uploads/files/:filename', (req: Request, res: Response) => {
+    const filename = path.basename(req.params.filename);
+    for (const dir of [publicUploads, distUploads, dataUploads]) {
+      const filePath = path.join(dir, 'files', filename);
+      if (fs.existsSync(filePath)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        return res.sendFile(filePath);
+      }
+    }
+    res.status(404).json({ error: 'Uploaded file not found.' });
+  });
+
+  // Dedicated file download endpoint
+  app.get('/api/files/download/:filename', (req: Request, res: Response) => {
+    const filename = path.basename(req.params.filename);
+    for (const dir of [publicUploads, distUploads, dataUploads]) {
+      const filePath = path.join(dir, 'files', filename);
+      if (fs.existsSync(filePath)) {
+        return res.download(filePath, filename);
+      }
+    }
+    res.status(404).json({ error: 'File not found.' });
+  });
 
   // --- Catch-all 404 for unmatched /api/* routes to prevent serving HTML ---
   app.all('/api/*', (req: Request, res: Response) => {
