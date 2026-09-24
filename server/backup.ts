@@ -294,12 +294,12 @@ export function formatBackupAsSql(backupData: BackupResult): string {
     lines.push(`-- -------------------------------------------------------------------------`);
     lines.push(`-- Table: ${tableName} (${table.displayName})`);
     lines.push(`-- Total Records: ${rowCount}`);
+    lines.push(`-- Safe non-destructive creation (preserves existing data upon restore/import)`);
     lines.push(`-- -------------------------------------------------------------------------`);
-    lines.push(`DROP TABLE IF EXISTS \`${tableName}\`;`);
 
-    // DDL definition
+    // DDL definition - always safe IF NOT EXISTS (never DROP TABLE)
     if (tableName === 'contacts') {
-      lines.push(`CREATE TABLE \`contacts\` (
+      lines.push(`CREATE TABLE IF NOT EXISTS \`contacts\` (
   \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
   \`full_name\` VARCHAR(255) NOT NULL,
   \`barangay\` VARCHAR(255) NOT NULL DEFAULT '',
@@ -321,7 +321,7 @@ export function formatBackupAsSql(backupData: BackupResult): string {
   INDEX \`idx_status\` (\`status\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
     } else if (tableName === 'users') {
-      lines.push(`CREATE TABLE \`users\` (
+      lines.push(`CREATE TABLE IF NOT EXISTS \`users\` (
   \`username\` VARCHAR(100) PRIMARY KEY,
   \`password_hash\` VARCHAR(255) NOT NULL,
   \`role\` VARCHAR(50) NOT NULL DEFAULT 'STAFF',
@@ -335,7 +335,7 @@ export function formatBackupAsSql(backupData: BackupResult): string {
   INDEX \`idx_role\` (\`role\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
     } else if (tableName === 'existing_accounts') {
-      lines.push(`CREATE TABLE \`existing_accounts\` (
+      lines.push(`CREATE TABLE IF NOT EXISTS \`existing_accounts\` (
   \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
   \`full_name\` VARCHAR(255) NOT NULL,
   \`barangay\` VARCHAR(255) DEFAULT '',
@@ -350,18 +350,18 @@ export function formatBackupAsSql(backupData: BackupResult): string {
   INDEX \`idx_exist_barangay\` (\`barangay\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
     } else if (tableName === 'barangays') {
-      lines.push(`CREATE TABLE \`barangays\` (
+      lines.push(`CREATE TABLE IF NOT EXISTS \`barangays\` (
   \`id\` INT AUTO_INCREMENT PRIMARY KEY,
   \`name\` VARCHAR(255) UNIQUE NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
     } else if (tableName === 'site_settings') {
-      lines.push(`CREATE TABLE \`site_settings\` (
+      lines.push(`CREATE TABLE IF NOT EXISTS \`site_settings\` (
   \`setting_key\` VARCHAR(100) PRIMARY KEY,
   \`setting_value\` LONGTEXT,
   \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
     } else if (tableName === 'activities') {
-      lines.push(`CREATE TABLE \`activities\` (
+      lines.push(`CREATE TABLE IF NOT EXISTS \`activities\` (
   \`id\` VARCHAR(100) PRIMARY KEY,
   \`timestamp\` VARCHAR(100) NOT NULL,
   \`username\` VARCHAR(100) NOT NULL,
@@ -369,7 +369,7 @@ export function formatBackupAsSql(backupData: BackupResult): string {
   INDEX \`idx_timestamp\` (\`timestamp\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
     } else {
-      lines.push(`CREATE TABLE \`${tableName}\` (
+      lines.push(`CREATE TABLE IF NOT EXISTS \`${tableName}\` (
   \`id\` VARCHAR(100) PRIMARY KEY,
   \`col1\` TEXT,
   \`col2\` TEXT,
@@ -381,7 +381,7 @@ export function formatBackupAsSql(backupData: BackupResult): string {
       const BATCH_SIZE = 100;
       for (let i = 0; i < table.rows.length; i += BATCH_SIZE) {
         const batch = table.rows.slice(i, i + BATCH_SIZE);
-        lines.push(`INSERT INTO \`${tableName}\` (${headers.join(', ')}) VALUES`);
+        lines.push(`INSERT IGNORE INTO \`${tableName}\` (${headers.join(', ')}) VALUES`);
         const valueTuples = batch.map(row => {
           const escapedValues = row.map(val => escapeSqlValue(val));
           return `  (${escapedValues.join(', ')})`;

@@ -20,27 +20,152 @@
   --color-indigo-950: #052e16;   /* Extremely dark forest green */
 }
 
-/* Minimalist Architecture Theme */
+/* ========================================================================= */
+/* NEUMORPHISM DESIGN SYSTEM: Green, Dark Green, White, Black               */
+/* ========================================================================= */
+body {
+  background-color: #f1f5f2;
+  color: #0a0f0d;
+}
+
+/* 1. Neumorphic Flat / Soft Surfaces */
+.neu-flat {
+  background: #f1f5f2;
+  box-shadow: 6px 6px 14px rgba(6, 78, 59, 0.07), -6px -6px 14px #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+}
+
+/* 2. Neumorphic Raised Panels & Cards (White Base) */
+.neu-raised {
+  background: #ffffff;
+  box-shadow: 8px 8px 18px rgba(6, 78, 59, 0.08), -6px -6px 16px #ffffff;
+  border: 1px solid rgba(6, 78, 59, 0.05);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.neu-raised:hover {
+  box-shadow: 10px 10px 22px rgba(6, 78, 59, 0.12), -8px -8px 20px #ffffff;
+  transform: translateY(-1px);
+}
+
+/* 3. Neumorphic Sunken / Inset Well (Inputs, Search Boxes, Depressed Wells) */
+.neu-inset {
+  background: #edf3ef;
+  box-shadow: inset 3px 3px 6px rgba(6, 78, 59, 0.1), inset -3px -3px 6px #ffffff;
+  border: 1px solid rgba(6, 78, 59, 0.08);
+  transition: all 0.2s ease;
+}
+
+.neu-inset:focus-within, .neu-inset:focus {
+  border-color: #10b981;
+  box-shadow: inset 3px 3px 6px rgba(16, 185, 129, 0.15), inset -3px -3px 6px #ffffff, 0 0 0 2px rgba(16, 185, 129, 0.15);
+}
+
+/* 4. Neumorphic Primary Green Buttons */
+.neu-btn-green {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #ffffff;
+  font-weight: 700;
+  box-shadow: 4px 4px 10px rgba(5, 150, 105, 0.35), -3px -3px 8px rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  transition: all 0.15s ease;
+}
+
+.neu-btn-green:hover {
+  background: linear-gradient(135deg, #059669, #047857);
+  box-shadow: 5px 5px 14px rgba(4, 120, 87, 0.4), -4px -4px 10px rgba(255, 255, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+.neu-btn-green:active {
+  box-shadow: inset 3px 3px 6px rgba(2, 44, 34, 0.4), inset -2px -2px 4px rgba(255, 255, 255, 0.2);
+  transform: translateY(1px);
+}
+
+/* 5. Neumorphic Dark Green / Black Hero & Headers */
+.neu-dark-green {
+  background: linear-gradient(145deg, #064e3b, #022c22);
+  color: #ffffff;
+  box-shadow: 8px 8px 20px rgba(2, 44, 34, 0.45), -4px -4px 12px rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.neu-black {
+  background: linear-gradient(145deg, #111827, #030712);
+  color: #f8fafc;
+  box-shadow: 8px 8px 20px rgba(0, 0, 0, 0.55), -4px -4px 12px rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* 6. Neumorphic White Interactive Buttons */
+.neu-btn-white {
+  background: #ffffff;
+  color: #064e3b;
+  font-weight: 700;
+  box-shadow: 4px 4px 10px rgba(6, 78, 59, 0.08), -4px -4px 10px #ffffff;
+  border: 1px solid rgba(6, 78, 59, 0.06);
+  transition: all 0.15s ease;
+}
+
+.neu-btn-white:hover {
+  box-shadow: 6px 6px 14px rgba(6, 78, 59, 0.12), -5px -5px 12px #ffffff;
+  color: #047857;
+  transform: translateY(-1px);
+}
+
+.neu-btn-white:active {
+  box-shadow: inset 2px 2px 5px rgba(6, 78, 59, 0.1), inset -2px -2px 5px #ffffff;
+  transform: translateY(1px);
+}
+
+/* 7. Neumorphic Active Tab Pill */
+.neu-tab-active-green {
+  background: linear-gradient(135deg, #059669, #047857);
+  color: #ffffff;
+  box-shadow: 3px 3px 8px rgba(4, 120, 87, 0.35), -2px -2px 6px rgba(255, 255, 255, 0.3);
+}
+
+.neu-tab-active-dark {
+  background: linear-gradient(135deg, #064e3b, #022c22);
+  color: #ffffff;
+  box-shadow: 3px 3px 8px rgba(2, 44, 34, 0.4), -2px -2px 6px rgba(52, 211, 153, 0.15);
+}
+
+.neu-tab-inactive {
+  background: #f1f5f2;
+  color: #334155;
+  box-shadow: 2px 2px 5px rgba(6, 78, 59, 0.05), -2px -2px 5px #ffffff;
+}
+
+.neu-tab-inactive:hover {
+  background: #ffffff;
+  color: #064e3b;
+  box-shadow: 3px 3px 8px rgba(6, 78, 59, 0.08), -3px -3px 8px #ffffff;
+}
+
+/* Minimalist Architecture Theme - Enhanced with Neumorphic subtle shadows */
 .glass-panel {
   background: #ffffff;
-  border: 1px solid #e2e8f0;
+  border: 1px solid rgba(6, 78, 59, 0.08);
+  box-shadow: 6px 6px 16px rgba(6, 78, 59, 0.06), -4px -4px 12px #ffffff;
 }
 
 .glass-panel-dark {
-  background: #0f172a;
-  border: 1px solid #1e293b;
+  background: #064e3b;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  box-shadow: 8px 8px 20px rgba(2, 44, 34, 0.5), -4px -4px 10px rgba(16, 185, 129, 0.1);
 }
 
 .card-luxury {
   background: #ffffff;
-  border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  border: 1px solid rgba(6, 78, 59, 0.06);
+  box-shadow: 6px 6px 16px rgba(6, 78, 59, 0.06), -6px -6px 16px #ffffff;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .card-luxury:hover {
-  border-color: #cbd5e1;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+  border-color: rgba(16, 185, 129, 0.3);
+  box-shadow: 8px 8px 22px rgba(6, 78, 59, 0.1), -8px -8px 20px #ffffff;
 }
 
 /* Minimalist Scrollbar */

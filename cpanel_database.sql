@@ -192,4 +192,25 @@ CREATE TABLE IF NOT EXISTS `pcu_deletion_audit` (
   INDEX `idx_pcu_del_at` (`deleted_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- -------------------------------------------------------------------------
+-- 11. Table: pcu_settlements (Master Admin Ledger Payroll Settlements)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `pcu_settlements` (
+  `id` VARCHAR(100) NOT NULL PRIMARY KEY,
+  `submitter` VARCHAR(255) NOT NULL,
+  `total_submissions` INT DEFAULT 0,
+  `base_rate` DECIMAL(10,2) DEFAULT 0.00,
+  `total_salary` DECIMAL(12,2) DEFAULT 0.00,
+  `amount_paid` DECIMAL(12,2) DEFAULT 0.00,
+  `payment_status` VARCHAR(50) DEFAULT 'SETTLED',
+  `payment_method` VARCHAR(100) DEFAULT 'CASH',
+  `reference_notes` TEXT,
+  `settled_by` VARCHAR(100) DEFAULT 'Master Admin',
+  `settled_at` VARCHAR(100) NOT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_settle_submitter` (`submitter`),
+  INDEX `idx_settle_status` (`payment_status`),
+  INDEX `idx_settle_at` (`settled_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;

@@ -1358,18 +1358,18 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       {/* ========================================================================= */}
       {/* SECTION HEADER WITH MOVED "UPLOAD PCU" BUTTON                             */}
       {/* ========================================================================= */}
-      <div className="bg-gradient-to-r from-emerald-950 via-teal-950 to-slate-900 rounded-3xl p-6 sm:p-8 text-white shadow-2xl relative overflow-hidden border border-emerald-800/40">
+      <div className="neu-dark-green rounded-3xl p-4 sm:p-6 md:p-8 text-white relative overflow-hidden">
         <div className="absolute top-0 right-0 -mr-20 -mt-20 w-80 h-80 bg-emerald-500/15 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute bottom-0 left-1/4 -mb-20 w-96 h-96 bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
 
-        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+        <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6">
           {/* Header Title & Subtitle */}
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-xs font-bold tracking-wider uppercase">
+          <div className="space-y-1.5 sm:space-y-2">
+            <div className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 text-emerald-300 text-[11px] sm:text-xs font-bold tracking-wider uppercase">
               <Sparkles className="w-3.5 h-3.5" />
               Patient Care Unit (PCU)
             </div>
-            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-black font-display tracking-tight text-white flex items-center gap-3">
+            <h1 className="text-xl sm:text-3xl lg:text-4xl font-black font-display tracking-tight text-white flex items-center gap-2.5 sm:gap-3 flex-wrap">
               <span>Submit PCU</span>
               <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/10 text-emerald-200 border border-white/10">
                 {uploadedRecords.length} Records
@@ -1381,15 +1381,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           </div>
 
           {/* RIGHT SIDE OF HEADER: THE MOVED "UPLOAD PCU" BUTTON & USER BADGES */}
-          <div className="flex flex-wrap items-center gap-3 shrink-0">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 shrink-0 w-full sm:w-auto">
             {/* User Info Badges */}
-            <div className="hidden sm:flex items-center gap-2">
-              <div className="px-3.5 py-2 bg-white/10 backdrop-blur-md rounded-2xl border border-white/15 text-right">
+            <div className="flex items-center justify-between sm:justify-end gap-2">
+              <div className="px-3 py-1.5 sm:px-3.5 sm:py-2 bg-white/10 backdrop-blur-md rounded-xl sm:rounded-2xl border border-white/15 text-left sm:text-right">
                 <span className="text-[10px] text-emerald-300 font-bold uppercase tracking-wider block">Logged In</span>
                 <span className="text-xs font-black text-white">{currentUser?.username || 'Staff'}</span>
               </div>
               {currentUser?.barangay && (
-                <div className="px-3.5 py-2 bg-emerald-800/50 backdrop-blur-md rounded-2xl border border-emerald-500/30 text-right">
+                <div className="px-3 py-1.5 sm:px-3.5 sm:py-2 bg-emerald-800/50 backdrop-blur-md rounded-xl sm:rounded-2xl border border-emerald-500/30 text-right">
                   <span className="text-[10px] text-emerald-300 font-bold uppercase tracking-wider block">Barangay</span>
                   <span className="text-xs font-black text-white">{currentUser.barangay}</span>
                 </div>
@@ -1405,16 +1405,16 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   setSubmitSuccess(null);
                   setIsFormOpen(true);
                 }}
-                className="inline-flex items-center justify-center gap-2.5 px-6 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 active:from-emerald-600 active:to-teal-500 text-slate-950 font-black text-xs sm:text-sm uppercase tracking-wider rounded-2xl shadow-xl shadow-emerald-500/25 hover:shadow-2xl hover:shadow-emerald-400/30 transform hover:-translate-y-0.5 active:translate-y-0 transition-all cursor-pointer focus:outline-none"
+                className="neu-btn-green inline-flex items-center justify-center gap-2.5 px-5 sm:px-6 py-3 sm:py-3.5 text-white font-black text-xs sm:text-sm uppercase tracking-wider rounded-xl sm:rounded-2xl cursor-pointer focus:outline-none w-full sm:w-auto min-h-[44px]"
               >
-                <UploadCloud className="w-5 h-5 text-slate-950 stroke-[2.5]" />
+                <UploadCloud className="w-5 h-5 text-white stroke-[2.5]" />
                 <span>Upload PCU</span>
               </button>
             ) : (
               <button
                 type="button"
                 onClick={() => setIsFormOpen(false)}
-                className="inline-flex items-center justify-center gap-2 px-5 py-3.5 bg-white/15 hover:bg-white/25 text-white font-bold text-xs uppercase tracking-wider rounded-2xl border border-white/20 transition-all cursor-pointer"
+                className="neu-btn-white inline-flex items-center justify-center gap-2 px-5 py-3 sm:py-3.5 text-emerald-900 font-bold text-xs uppercase tracking-wider rounded-xl sm:rounded-2xl transition-all cursor-pointer w-full sm:w-auto min-h-[44px]"
               >
                 <ArrowLeft className="w-4 h-4" />
                 <span>Back to Grid</span>
@@ -1440,7 +1440,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
             <button
               type="button"
               onClick={() => setSubmitSuccess(null)}
-              className="text-emerald-700 hover:text-emerald-900 cursor-pointer"
+              className="text-emerald-700 hover:text-emerald-900 cursor-pointer p-1"
             >
               <X className="w-4 h-4" />
             </button>
@@ -1455,24 +1455,24 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       {/* Tab 3: Ledger (Master Admin Only - submitter credits & payroll)           */}
       {/* ========================================================================= */}
       {!isFormOpen && (
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-white p-2.5 rounded-2xl border border-slate-200/80 shadow-xs">
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 neu-raised p-2 sm:p-3 rounded-2xl">
+          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar py-0.5 max-w-full">
             {/* Tab 1: Pending (Renamed from Barangay Folders) */}
             <button
               type="button"
               onClick={() => {
                 setActiveTab('pending');
               }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+              className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
                 activeTab === 'pending'
-                  ? 'bg-gradient-to-r from-amber-600 to-orange-600 text-white shadow-md shadow-amber-600/20'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  ? 'neu-btn-white text-emerald-950 border border-emerald-500/30'
+                  : 'neu-tab-inactive'
               }`}
             >
-              <Clock className="w-4 h-4" />
+              <Clock className="w-4 h-4 text-emerald-700 shrink-0" />
               <span>Pending</span>
               <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                activeTab === 'pending' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-800'
+                activeTab === 'pending' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
               }`}>
                 {pendingRecords.length}
               </span>
@@ -1484,13 +1484,13 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               onClick={() => {
                 setActiveTab('verified');
               }}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+              className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
                 activeTab === 'verified'
-                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-600/20'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                  ? 'neu-tab-active-green'
+                  : 'neu-tab-inactive'
               }`}
             >
-              <CheckCircle2 className="w-4 h-4" />
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
               <span>Verified</span>
               <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
                 activeTab === 'verified' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'
@@ -1506,16 +1506,16 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 onClick={() => {
                   setActiveTab('ledger');
                 }}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
                   activeTab === 'ledger'
-                    ? 'bg-slate-900 text-white shadow-md shadow-slate-900/20'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                    ? 'neu-black text-white'
+                    : 'neu-tab-inactive'
                 }`}
               >
-                <BookOpen className="w-4 h-4 text-emerald-400" />
+                <BookOpen className="w-4 h-4 text-emerald-400 shrink-0" />
                 <span>Ledger</span>
-                <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-400/20 text-amber-700 border border-amber-300/40">
-                  <ShieldCheck className="w-3 h-3 text-amber-600" />
+                <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-400/30">
+                  <ShieldCheck className="w-3 h-3 text-emerald-400" />
                   Master Admin
                 </span>
               </button>
@@ -1523,18 +1523,18 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           </div>
 
           {/* Quick Info & Refresh */}
-          <div className="flex items-center justify-between sm:justify-end gap-3 px-2 sm:px-0">
-            <span className="text-xs text-slate-400 font-medium">
-              <span className="text-emerald-700 font-bold">{verifiedRecords.length} Verified</span> • <span className="text-amber-700 font-bold">{pendingRecords.length} Pending</span>
+          <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 px-1 sm:px-0 shrink-0">
+            <span className="text-[11px] sm:text-xs text-slate-500 font-medium truncate">
+              <span className="text-emerald-700 font-bold">{verifiedRecords.length} Verified</span> • <span className="text-slate-700 font-bold">{pendingRecords.length} Pending</span>
             </span>
             <button
               type="button"
               onClick={fetchUploadedRecords}
               disabled={loadingRecords}
-              className="p-2 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition-colors cursor-pointer"
+              className="p-2 neu-btn-white rounded-xl transition-colors cursor-pointer min-h-[38px] min-w-[38px] flex items-center justify-center shrink-0"
               title="Refresh Records"
             >
-              <RefreshCw className={`w-4 h-4 ${loadingRecords ? 'animate-spin text-emerald-600' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${loadingRecords ? 'animate-spin text-emerald-600' : 'text-emerald-700'}`} />
             </button>
           </div>
         </div>
@@ -1559,23 +1559,23 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               {selectedFolder === null ? (
                 <div className="space-y-6">
                   {/* Folder Sub-Bar: Search & View Mode Switcher */}
-                  <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <div className="neu-raised rounded-2xl p-3 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4">
+                    <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3">
                       {/* Search Folders or Patients */}
-                      <div className="relative flex-1">
-                        <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                      <div className="relative flex-1 min-w-0">
+                        <Search className="w-4 h-4 text-emerald-800 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                         <input
                           type="text"
                           value={folderSearch}
                           onChange={(e) => setFolderSearch(e.target.value)}
                           placeholder="Search Barangay folders, patient names, or purok..."
-                          className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all"
+                          className="w-full pl-10 pr-8 py-2.5 neu-inset rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none transition-all"
                         />
                         {folderSearch && (
                           <button
                             type="button"
                             onClick={() => setFolderSearch('')}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1"
                           >
                             <X className="w-3.5 h-3.5" />
                           </button>
@@ -1583,14 +1583,14 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       </div>
 
                       {/* View Switcher: Browse by Folders vs Flattened All Grid */}
-                      <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200/80">
+                      <div className="inline-flex rounded-xl p-1 neu-flat w-full sm:w-auto">
                         <button
                           type="button"
                           onClick={() => setFolderViewMode('folders')}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          className={`flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[38px] ${
                             folderViewMode === 'folders'
-                              ? 'bg-white text-emerald-800 shadow-xs'
-                              : 'text-slate-500 hover:text-slate-900'
+                              ? 'neu-tab-active-green'
+                              : 'text-slate-600 hover:text-emerald-900'
                           }`}
                         >
                           <Folder className="w-3.5 h-3.5" />
@@ -1599,10 +1599,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         <button
                           type="button"
                           onClick={() => setFolderViewMode('all')}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          className={`flex-1 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[38px] ${
                             folderViewMode === 'all'
-                              ? 'bg-white text-emerald-800 shadow-xs'
-                              : 'text-slate-500 hover:text-slate-900'
+                              ? 'neu-tab-active-green'
+                              : 'text-slate-600 hover:text-emerald-900'
                           }`}
                         >
                           <Layers className="w-3.5 h-3.5" />
@@ -1611,8 +1611,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between sm:justify-end gap-3 text-xs font-bold text-slate-500">
-                      <span>{barangayFolders.length} Barangay Folders</span>
+                    <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 text-xs font-bold text-slate-500">
+                      <span>{barangayFolders.length} Folders</span>
                       <span>•</span>
                       <span className="text-emerald-700 font-black">
                         {currentTabRecords.length} {activeTab === 'verified' ? 'Verified' : 'Pending'} PCUs
@@ -1623,7 +1623,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   {/* Mode 1: Display as BARANGAY FOLDERS */}
                   {folderViewMode === 'folders' ? (
                     <div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
                         {paginatedBarangayFolders.map((folder) => {
                           const hasFiles = folder.totalSubmissions > 0;
 
@@ -1631,7 +1631,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                             <div
                               key={folder.name}
                               onClick={() => setSelectedFolder(folder.name)}
-                              className="group relative bg-white rounded-3xl border border-slate-200/90 hover:border-emerald-500/60 shadow-xs hover:shadow-xl transition-all duration-200 cursor-pointer overflow-hidden flex flex-col justify-between"
+                              className="group relative neu-raised rounded-3xl cursor-pointer overflow-hidden flex flex-col justify-between"
                             >
                               {/* Top Folder Tab Decoration */}
                               <div className={`h-2 bg-gradient-to-r ${activeTab === 'verified' ? 'from-emerald-500 via-teal-500 to-slate-800' : 'from-amber-500 via-orange-500 to-slate-800'} group-hover:h-2.5 transition-all`} />
@@ -1707,16 +1707,16 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     /* Mode 2: Flattened All Grid View */
                     <div className="space-y-4">
                       {/* Search & Filter Bar for All Grid */}
-                      <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="neu-raised rounded-2xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                         <div className="flex flex-1 flex-col sm:flex-row items-stretch sm:items-center gap-3">
                           <div className="relative flex-1">
-                            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                            <Search className="w-4 h-4 text-emerald-800 absolute left-3.5 top-1/2 -translate-y-1/2" />
                             <input
                               type="text"
                               value={searchQuery}
                               onChange={(e) => setSearchQuery(e.target.value)}
                               placeholder="Search by patient name, purok, or contact #..."
-                              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all"
+                              className="w-full pl-10 pr-4 py-2.5 neu-inset rounded-xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none transition-all"
                             />
                             {searchQuery && (
                               <button
@@ -1733,7 +1733,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                             <select
                               value={filterBarangay}
                               onChange={(e) => setFilterBarangay(e.target.value)}
-                              className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all cursor-pointer"
+                              className="w-full px-3.5 py-2.5 neu-inset rounded-xl text-xs font-bold text-slate-800 focus:outline-none transition-all cursor-pointer"
                             >
                               <option value="ALL">All Barangays ({currentTabRecords.length})</option>
                               {barangaysList.map((bg) => {
@@ -1768,7 +1768,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         </div>
                       ) : (
                         <div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
                             {paginatedAllGridRecords.map((record, index) => {
                               const firstFile = record.uploadedFiles[0];
                               const hasImage = firstFile && isImageFile(firstFile.url, firstFile.name);
@@ -1778,7 +1778,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                 <div
                                   key={`${record.id}-${record.fullName}-${index}`}
                                   onClick={() => setSelectedRecord(record)}
-                                  className="group bg-white rounded-2xl border border-slate-200/80 hover:border-emerald-500/60 shadow-xs hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col cursor-pointer transform hover:-translate-y-1 relative"
+                                  className="group neu-raised rounded-2xl overflow-hidden flex flex-col cursor-pointer relative"
                                 >
                                   <div className="relative h-36 sm:h-40 w-full bg-slate-100 overflow-hidden border-b border-slate-100">
                                     {hasImage && firstFile.url ? (
@@ -1802,35 +1802,35 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                       </div>
                                     )}
 
-                                    <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
-                                      <div className="flex items-center gap-1.5 pointer-events-auto">
-                                        <span className="px-2.5 py-1 rounded-lg bg-emerald-950/80 backdrop-blur-md text-emerald-200 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30 shadow-xs">
+                                    <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none gap-1">
+                                      <div className="flex items-center gap-1.5 pointer-events-auto min-w-0">
+                                        <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-emerald-950/80 backdrop-blur-md text-emerald-200 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30 shadow-xs truncate max-w-[100px] sm:max-w-none">
                                           {record.barangay}
                                         </span>
                                         {isVerified ? (
-                                          <span className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs">
+                                          <span className="px-2 py-0.5 sm:px-2 sm:py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
                                             <CheckCircle2 className="w-3 h-3 text-white" />
                                             Verified
                                           </span>
                                         ) : (
-                                          <span className="px-2 py-1 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs">
+                                          <span className="px-2 py-0.5 sm:px-2 sm:py-1 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
                                             <Clock className="w-3 h-3 text-white" />
                                             Pending
                                           </span>
                                         )}
                                       </div>
 
-                                      <div className="flex items-center gap-1.5 pointer-events-auto">
-                                        <span className="px-2 py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-bold flex items-center gap-1 border border-white/10 shadow-xs">
+                                      <div className="flex items-center gap-1 pointer-events-auto shrink-0">
+                                        <span className="px-2 py-0.5 sm:px-2 sm:py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-bold flex items-center gap-1 border border-white/10 shadow-xs">
                                           <ImageIcon className="w-3 h-3 text-emerald-400" />
-                                          <span>{record.filesCount} {record.filesCount === 1 ? 'file' : 'files'}</span>
+                                          <span>{record.filesCount}</span>
                                         </span>
 
                                         {isMasterAdmin && (
                                           <button
                                             type="button"
                                             onClick={(e) => promptDeleteRecord(e, record)}
-                                            className="p-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-600 active:bg-rose-700 text-white shadow-md transition-all cursor-pointer hover:scale-110"
+                                            className="p-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-rose-600/90 hover:bg-rose-600 active:bg-rose-700 text-white shadow-md transition-all cursor-pointer hover:scale-110"
                                             title="Permanently Delete PCU Record from MySQL (Master Admin Only)"
                                           >
                                             <Trash2 className="w-3.5 h-3.5" />
@@ -1847,7 +1847,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                     </div>
                                   </div>
 
-                                  <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                                  <div className="p-3.5 sm:p-4 flex-1 flex flex-col justify-between space-y-3">
                                     <div className="space-y-1.5">
                                       <h3 className="font-bold text-slate-900 text-sm sm:text-base group-hover:text-emerald-700 transition-colors line-clamp-1" title={record.fullName}>
                                         {record.fullName}
@@ -1866,6 +1866,13 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                           <span className="truncate">{record.contactNumber}</span>
                                         </div>
                                       )}
+
+                                      {/* Mobile Tap Affordance */}
+                                      <div className="flex items-center justify-between text-[11px] text-emerald-700 font-semibold sm:hidden pt-0.5">
+                                        <span className="flex items-center gap-1">
+                                          <Eye className="w-3.5 h-3.5 text-emerald-600" /> Tap to view whole data
+                                        </span>
+                                      </div>
                                     </div>
 
                                     {/* Action row: Verify Button */}
@@ -1879,7 +1886,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                               setVerifyTarget(record);
                                             }}
                                             disabled={verifyingId === record.id}
-                                            className="w-full py-2 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                                            className="w-full py-2.5 px-3 min-h-[42px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
                                             title="Verify submission: opens confirmation popup (Master Admin Only)"
                                           >
                                             {verifyingId === record.id ? (
@@ -1890,14 +1897,14 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                             <span>Verify</span>
                                           </button>
                                         ) : (
-                                          <div className="w-full py-1.5 px-2 bg-amber-50 border border-amber-200/70 text-amber-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 shadow-xs">
+                                          <div className="w-full py-2 px-2 min-h-[38px] bg-amber-50 border border-amber-200/70 text-amber-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 shadow-xs">
                                             <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                                             <span className="truncate">Pending Verification</span>
                                           </div>
                                         )
                                       ) : (
                                         <div className="flex items-center justify-between gap-2">
-                                          <span className="flex-1 py-1.5 px-2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black flex items-center justify-center gap-1">
+                                          <span className="flex-1 py-2 px-2 min-h-[38px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black flex items-center justify-center gap-1">
                                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                                             <span>Verified</span>
                                           </span>
@@ -1909,7 +1916,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                                 handleUnverifyRecord(record);
                                               }}
                                               disabled={verifyingId === record.id}
-                                              className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                                              className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-colors cursor-pointer"
                                               title="Move back to Pending (Master Admin Only)"
                                             >
                                               <Clock className="w-3.5 h-3.5" />
@@ -1965,18 +1972,18 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 /* INSIDE A SPECIFIC BARANGAY FOLDER */
                 <div className="space-y-6">
                   {/* Folder Breadcrumbs & Controls Banner */}
-                  <div className="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
+                  <div className="neu-raised rounded-3xl p-4 sm:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="flex items-start sm:items-center gap-3">
                       <button
                         type="button"
                         onClick={() => setSelectedFolder(null)}
-                        className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                        className="p-2.5 rounded-xl neu-btn-white text-emerald-950 transition-colors cursor-pointer shrink-0 min-h-[40px] min-w-[40px] flex items-center justify-center"
                         title="Back to All Barangay Folders"
                       >
                         <ArrowLeft className="w-5 h-5" />
                       </button>
 
-                      <div className="space-y-0.5">
+                      <div className="space-y-1">
                         <div className="flex items-center gap-2 text-xs font-bold text-slate-400">
                           <span 
                             onClick={() => setSelectedFolder(null)}
@@ -1988,26 +1995,26 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                           <span>/</span>
                           <span className="text-emerald-700">Barangay Folder</span>
                         </div>
-                        <h2 className="text-xl sm:text-2xl font-black text-slate-900 flex flex-wrap items-center gap-2">
+                        <h2 className="text-lg sm:text-2xl font-black text-slate-900 flex flex-wrap items-center gap-2">
                           <span>{selectedFolder}</span>
-                          <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
+                          <span className="text-[11px] sm:text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
                             {currentFolderData?.totalFiles || folderRecords.reduce((sum, r) => sum + (r.filesCount || (r.uploadedFiles ? r.uploadedFiles.length : 1)), 0)} Files
                           </span>
-                          <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                            {folderRecords.length} {folderRecords.length === 1 ? 'Patient Record' : 'Patient Records'}
+                          <span className="text-[11px] sm:text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                            {folderRecords.length} {folderRecords.length === 1 ? 'Record' : 'Records'}
                           </span>
                         </h2>
                       </div>
                     </div>
 
                     {/* Right side: Switch folder dropdown & Upload shortcut */}
-                    <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 w-full sm:w-auto">
                       {/* Jump to Another Barangay Folder Dropdown */}
-                      <div className="relative">
+                      <div className="relative w-full sm:w-auto">
                         <select
                           value={selectedFolder}
                           onChange={(e) => setSelectedFolder(e.target.value)}
-                          className="px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all cursor-pointer"
+                          className="w-full sm:w-auto px-3.5 py-2.5 neu-inset rounded-xl text-xs font-bold text-slate-800 focus:outline-none transition-all cursor-pointer min-h-[42px]"
                         >
                           {barangayFolders.map((f) => (
                             <option key={f.name} value={f.name}>
@@ -2028,7 +2035,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                           setStagedFiles([]);
                           setIsFormOpen(true);
                         }}
-                        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs uppercase tracking-wider shadow-md shadow-emerald-600/20 cursor-pointer transition-all"
+                        className="neu-btn-green inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-white font-black text-xs uppercase tracking-wider cursor-pointer transition-all min-h-[42px] w-full sm:w-auto"
                       >
                         <Plus className="w-4 h-4" />
                         <span>Upload to {selectedFolder}</span>
@@ -2038,13 +2045,13 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
                   {/* Search within this folder */}
                   <div className="relative">
-                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <Search className="w-4 h-4 text-emerald-800 absolute left-3.5 top-1/2 -translate-y-1/2" />
                     <input
                       type="text"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder={`Search patient records within ${selectedFolder}...`}
-                      className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-2xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all shadow-xs"
+                      className="w-full pl-10 pr-4 py-3 neu-inset rounded-2xl text-xs font-semibold text-slate-800 placeholder-slate-400 focus:outline-none transition-all"
                     />
                     {searchQuery && (
                       <button
@@ -2118,7 +2125,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                             <div
                               key={`${record.id}-${record.fullName}-${index}`}
                               onClick={() => setSelectedRecord(record)}
-                              className="group bg-white rounded-2xl border border-slate-200/80 hover:border-emerald-500/60 shadow-xs hover:shadow-xl transition-all duration-300 overflow-hidden flex flex-col cursor-pointer transform hover:-translate-y-1 relative"
+                              className="group neu-raised rounded-2xl overflow-hidden flex flex-col cursor-pointer relative"
                             >
                               <div className="relative h-36 sm:h-40 w-full bg-slate-100 overflow-hidden border-b border-slate-100">
                                 {hasImage && firstFile.url ? (
@@ -2142,35 +2149,35 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                   </div>
                                 )}
 
-                                <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between pointer-events-none">
-                                  <div className="flex items-center gap-1.5 pointer-events-auto">
-                                    <span className="px-2.5 py-1 rounded-lg bg-emerald-950/80 backdrop-blur-md text-emerald-200 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30 shadow-xs">
+                                <div className="absolute top-2 left-2 right-2 flex items-center justify-between pointer-events-none gap-1">
+                                  <div className="flex items-center gap-1.5 pointer-events-auto min-w-0">
+                                    <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-emerald-950/80 backdrop-blur-md text-emerald-200 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30 shadow-xs truncate max-w-[100px] sm:max-w-none">
                                       {record.barangay}
                                     </span>
                                     {(record.status || '').toUpperCase() === 'VERIFIED' ? (
-                                      <span className="px-2 py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs">
+                                      <span className="px-2 py-0.5 sm:px-2 sm:py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
                                         <CheckCircle2 className="w-3 h-3 text-white" />
                                         Verified
                                       </span>
                                     ) : (
-                                      <span className="px-2 py-1 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs">
+                                      <span className="px-2 py-0.5 sm:px-2 sm:py-1 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
                                         <Clock className="w-3 h-3 text-white" />
                                         Pending
                                       </span>
                                     )}
                                   </div>
 
-                                  <div className="flex items-center gap-1.5 pointer-events-auto">
-                                    <span className="px-2 py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-bold flex items-center gap-1 border border-white/10 shadow-xs">
+                                  <div className="flex items-center gap-1 pointer-events-auto shrink-0">
+                                    <span className="px-2 py-0.5 sm:px-2 sm:py-1 rounded-lg bg-slate-900/80 backdrop-blur-md text-white text-[10px] font-bold flex items-center gap-1 border border-white/10 shadow-xs">
                                       <ImageIcon className="w-3 h-3 text-emerald-400" />
-                                      <span>{record.filesCount} {record.filesCount === 1 ? 'file' : 'files'}</span>
+                                      <span>{record.filesCount}</span>
                                     </span>
 
                                     {isMasterAdmin && (
                                       <button
                                         type="button"
                                         onClick={(e) => promptDeleteRecord(e, record)}
-                                        className="p-1.5 rounded-lg bg-rose-600/90 hover:bg-rose-600 active:bg-rose-700 text-white shadow-md transition-all cursor-pointer hover:scale-110"
+                                        className="p-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center rounded-lg bg-rose-600/90 hover:bg-rose-600 active:bg-rose-700 text-white shadow-md transition-all cursor-pointer hover:scale-110"
                                         title="Permanently Delete PCU Record from MySQL (Master Admin Only)"
                                       >
                                         <Trash2 className="w-3.5 h-3.5" />
@@ -2187,7 +2194,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                 </div>
                               </div>
 
-                              <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                              <div className="p-3.5 sm:p-4 flex-1 flex flex-col justify-between space-y-3">
                                 <div className="space-y-1.5">
                                   <h3 className="font-bold text-slate-900 text-sm sm:text-base group-hover:text-emerald-700 transition-colors line-clamp-1" title={record.fullName}>
                                     {record.fullName}
@@ -2206,6 +2213,13 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                       <span className="truncate">{record.contactNumber}</span>
                                     </div>
                                   )}
+
+                                  {/* Mobile Tap Affordance */}
+                                  <div className="flex items-center justify-between text-[11px] text-emerald-700 font-semibold sm:hidden pt-0.5">
+                                    <span className="flex items-center gap-1">
+                                      <Eye className="w-3.5 h-3.5 text-emerald-600" /> Tap to view whole data
+                                    </span>
+                                  </div>
                                 </div>
 
                                 {/* Action row: Verify Button */}
@@ -2219,7 +2233,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                           setVerifyTarget(record);
                                         }}
                                         disabled={verifyingId === record.id}
-                                        className="w-full py-2 px-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                                        className="w-full py-2.5 px-3 min-h-[42px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
                                         title="Verify submission: opens confirmation popup (Master Admin Only)"
                                       >
                                         {verifyingId === record.id ? (
@@ -2230,14 +2244,14 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                         <span>Verify</span>
                                       </button>
                                     ) : (
-                                      <div className="w-full py-1.5 px-2 bg-amber-50 border border-amber-200/70 text-amber-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 shadow-xs">
+                                      <div className="w-full py-2 px-2 min-h-[38px] bg-amber-50 border border-amber-200/70 text-amber-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 shadow-xs">
                                         <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                                         <span className="truncate">Pending Verification</span>
                                       </div>
                                     )
                                   ) : (
                                     <div className="flex items-center justify-between gap-2">
-                                      <span className="flex-1 py-1.5 px-2 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black flex items-center justify-center gap-1">
+                                      <span className="flex-1 py-2 px-2 min-h-[38px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black flex items-center justify-center gap-1">
                                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                                         <span>Verified</span>
                                       </span>
@@ -2249,7 +2263,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                             handleUnverifyRecord(record);
                                           }}
                                           disabled={verifyingId === record.id}
-                                          className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                                          className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-colors cursor-pointer"
                                           title="Move back to Pending (Master Admin Only)"
                                         >
                                           <Clock className="w-3.5 h-3.5" />
@@ -2315,14 +2329,14 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               className="space-y-6"
             >
               {/* Ledger Header & Export Controls */}
-              <div className="bg-slate-900 text-white rounded-3xl p-6 sm:p-8 shadow-xl relative overflow-hidden border border-slate-800">
-                <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
+              <div className="neu-black text-white rounded-3xl p-5 sm:p-8 relative overflow-hidden">
+                <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
                   <div className="space-y-2">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-400/20 text-amber-300 text-xs font-bold border border-amber-300/30">
-                      <ShieldCheck className="w-4 h-4 text-amber-400" />
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-400/30">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
                       <span>Master Admin Audit & Payroll Portal</span>
                     </div>
-                    <h2 className="text-2xl sm:text-3xl font-black font-display tracking-tight text-white flex items-center gap-3">
+                    <h2 className="text-xl sm:text-3xl font-black font-display tracking-tight text-white flex flex-wrap items-center gap-2.5 sm:gap-3">
                       <span>PCU Submissions & Payroll Ledger</span>
                       <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/10 text-emerald-300">
                         {submittersLedger.length} Contributors
@@ -2333,11 +2347,11 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-3 shrink-0">
+                  <div className="flex items-center gap-3 shrink-0 w-full sm:w-auto">
                     <button
                       type="button"
                       onClick={exportLedgerToCsv}
-                      className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-emerald-600/30 transition-all cursor-pointer"
+                      className="w-full sm:w-auto neu-btn-green inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl sm:rounded-2xl text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer min-h-[44px]"
                     >
                       <Download className="w-4 h-4" />
                       <span>Export Payroll CSV</span>
@@ -2347,14 +2361,14 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               </div>
 
               {/* Base Rate Configuration Card (Saved Permanently to MySQL) */}
-              <div className="bg-gradient-to-br from-amber-500/10 via-emerald-500/5 to-teal-500/10 rounded-3xl p-6 sm:p-8 border border-amber-200/80 shadow-xs space-y-4">
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+              <div className="neu-raised rounded-3xl p-4 sm:p-6 md:p-8 space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6">
                   <div className="space-y-1.5 max-w-xl">
-                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-[11px] font-black border border-amber-300">
-                      <Database className="w-3.5 h-3.5 text-amber-700" />
+                    <div className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-1 rounded-full bg-emerald-50 text-emerald-900 text-[11px] font-black border border-emerald-300">
+                      <Database className="w-3.5 h-3.5 text-emerald-700" />
                       <span>Saved Permanently in MySQL (`site_settings`)</span>
                     </div>
-                    <h3 className="text-xl font-black text-slate-900 flex items-center gap-2.5">
+                    <h3 className="text-lg sm:text-xl font-black text-slate-900 flex items-center gap-2.5">
                       <Banknote className="w-5 h-5 text-emerald-700" />
                       <span>PCU Submission Base Rate</span>
                     </h3>
@@ -2363,7 +2377,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     </p>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 w-full lg:w-auto">
                     <div className="relative flex-1 sm:w-48">
                       <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-black text-slate-500 text-sm">
                         ₱
@@ -2381,7 +2395,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                           }
                         }}
                         placeholder="50.00"
-                        className="w-full pl-8 pr-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-black text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-600 transition-all font-mono shadow-xs"
+                        className="w-full pl-8 pr-4 py-2.5 neu-inset rounded-xl text-sm font-black text-slate-900 focus:outline-none transition-all font-mono min-h-[42px]"
                       />
                     </div>
 
@@ -2389,7 +2403,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       type="button"
                       onClick={() => handleSaveBaseRate()}
                       disabled={savingBaseRate}
-                      className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-700 hover:bg-emerald-600 disabled:bg-slate-300 text-white font-bold text-xs uppercase tracking-wider shadow-md shadow-emerald-700/20 transition-all cursor-pointer shrink-0"
+                      className="neu-btn-green inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shrink-0 min-h-[42px] w-full sm:w-auto"
                     >
                       {savingBaseRate ? (
                         <>
@@ -2407,8 +2421,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 </div>
 
                 {/* Quick Preset Buttons & Active Rate Indicator */}
-                <div className="pt-4 border-t border-amber-200/60 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
+                <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                     <span className="text-[11px] font-bold text-slate-500">Quick Rates:</span>
                     {[25, 50, 75, 100, 150].map((rate) => (
                       <button
@@ -2418,10 +2432,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                           setBaseRateInput(String(rate));
                           handleSaveBaseRate(rate);
                         }}
-                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
                           baseRate === rate
-                            ? 'bg-emerald-700 text-white shadow-xs'
-                            : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                            ? 'neu-btn-green'
+                            : 'neu-btn-white'
                         }`}
                       >
                         ₱{rate}.00
@@ -2429,7 +2443,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     ))}
                   </div>
 
-                  <div className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-white/70 px-3 py-1.5 rounded-xl border border-emerald-200">
+                  <div className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-white/70 px-3 py-1.5 rounded-xl border border-emerald-200 self-start sm:self-auto">
                     <span>Active Rate:</span>
                     <span className="font-mono text-emerald-950 font-black">₱{baseRate.toFixed(2)}</span>
                     <span className="text-slate-400 font-normal">/ verified submission</span>
@@ -2440,7 +2454,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               {/* 4 KPI Metrics Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* 1. Total Verified Credits */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-2">
+                <div className="neu-raised rounded-2xl p-5 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Verified Credits</span>
                     <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
@@ -2454,10 +2468,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 </div>
 
                 {/* 2. Active Submitters */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-2">
+                <div className="neu-raised rounded-2xl p-5 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Active Submitters</span>
-                    <div className="p-2 rounded-xl bg-indigo-50 text-indigo-700">
+                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
                       <Users className="w-4 h-4" />
                     </div>
                   </div>
@@ -2466,10 +2480,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 </div>
 
                 {/* 3. Current Base Rate */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-2">
+                <div className="neu-raised rounded-2xl p-5 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Current Base Rate</span>
-                    <div className="p-2 rounded-xl bg-amber-50 text-amber-700">
+                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
                       <Coins className="w-4 h-4" />
                     </div>
                   </div>
@@ -2478,10 +2492,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 </div>
 
                 {/* 4. Total Payroll Pool */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs space-y-2">
+                <div className="neu-raised rounded-2xl p-5 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Salary Pool</span>
-                    <div className="p-2 rounded-xl bg-teal-50 text-teal-700">
+                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
                       <Wallet className="w-4 h-4" />
                     </div>
                   </div>
@@ -2496,29 +2510,109 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
               {/* SUBMITTERS & CONTRIBUTOR TALLIES TABLE */}
               {/* Displays only: Submitter, Verified Credits, Pending, Total Salary, Action (Settlement) */}
-              <div className="bg-white rounded-3xl p-6 sm:p-8 border border-slate-200/80 shadow-sm space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 gap-2">
+              <div className="neu-raised rounded-3xl p-4 sm:p-6 md:p-8 space-y-4 sm:space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 sm:pb-4 border-b border-slate-100 gap-2">
                   <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
+                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700 shrink-0">
                       <Users className="w-5 h-5" />
                     </div>
                     <div>
-                      <h3 className="text-lg font-black text-slate-900">
+                      <h3 className="text-base sm:text-lg font-black text-slate-900">
                         Submitters & Contributor Tallies
                       </h3>
                       <p className="text-xs text-slate-400">
-                        Only verified PCU submissions earn 1 credit (₱{baseRate.toFixed(2)}) towards submitter salary. Pending submissions earn 0 credits until verified.
+                        Only verified PCU submissions earn 1 credit (₱{baseRate.toFixed(2)}) towards submitter salary.
                       </p>
                     </div>
                   </div>
 
-                  <span className="text-xs font-bold text-slate-500">
+                  <span className="text-xs font-bold text-slate-500 self-start sm:self-auto">
                     {submittersLedger.length} Registered Submitters
                   </span>
                 </div>
 
-                {/* Tallies Table */}
-                <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                {/* Mobile Cards View (sm/xs screens) */}
+                <div className="block md:hidden space-y-3">
+                  {submittersLedger.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 font-medium text-xs">
+                      No submitters recorded yet.
+                    </div>
+                  ) : (
+                    submittersLedger.map((sub, idx) => {
+                      const computedSalary = sub.submissionsCount * baseRate;
+                      const settlementRec = settlements.find(
+                        s => s.submitter && s.submitter.toLowerCase() === sub.name.toLowerCase()
+                      );
+                      const isSettled = settlementRec && (settlementRec.paymentStatus === 'SETTLED' || settlementRec.paymentStatus === 'PAID');
+
+                      return (
+                        <div key={`m-${sub.name}`} className="neu-inset p-4 rounded-2xl space-y-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white font-black text-sm flex items-center justify-center shrink-0">
+                                {sub.name.charAt(0).toUpperCase()}
+                              </div>
+                              <div className="min-w-0">
+                                <h4 className="font-black text-slate-900 text-sm truncate">{sub.name}</h4>
+                                <span className="text-[11px] font-semibold text-slate-400">Rank #{idx + 1} Contributor</span>
+                              </div>
+                            </div>
+
+                            {isSettled ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shrink-0">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                                Settled
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 shrink-0">
+                                <Clock className="w-3 h-3 text-amber-600" />
+                                Pending
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200/50">
+                            <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-100">
+                              <span className="text-[10px] uppercase font-bold text-emerald-700 block">Verified Credits</span>
+                              <span className="text-sm font-black text-emerald-950">{sub.submissionsCount} Credits</span>
+                            </div>
+                            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
+                              <span className="text-[10px] uppercase font-bold text-slate-500 block">Total Salary</span>
+                              <span className="text-sm font-black text-emerald-700 font-mono">
+                                ₱{computedSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="pt-1">
+                            {isSettled ? (
+                              <button
+                                type="button"
+                                onClick={() => openSettlementModal(sub)}
+                                className="w-full inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs border border-emerald-300 transition-all cursor-pointer min-h-[42px]"
+                              >
+                                <Receipt className="w-4 h-4 text-emerald-600" />
+                                <span>Settled (₱{(settlementRec.amountPaid ?? settlementRec.totalSalary).toFixed(2)})</span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => openSettlementModal(sub)}
+                                className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer min-h-[42px]"
+                              >
+                                <Wallet className="w-4 h-4" />
+                                <span>Process Settlement</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Desktop Tallies Table */}
+                <div className="hidden md:block overflow-x-auto border border-slate-200 rounded-2xl">
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
                       <tr>
@@ -2611,7 +2705,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                     <button
                                       type="button"
                                       onClick={() => openSettlementModal(sub)}
-                                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs border border-emerald-300 transition-all cursor-pointer shadow-xs"
+                                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs border border-emerald-300 transition-all cursor-pointer shadow-xs min-h-[38px]"
                                       title="View or update settlement voucher"
                                     >
                                       <Receipt className="w-3.5 h-3.5 text-emerald-600" />
@@ -2621,7 +2715,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                     <button
                                       type="button"
                                       onClick={() => openSettlementModal(sub)}
-                                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer min-h-[38px]"
                                       title="Process salary settlement for submitter"
                                     >
                                       <Wallet className="w-3.5 h-3.5" />
@@ -2822,24 +2916,24 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
             transition={{ duration: 0.25 }}
             className="space-y-6"
           >
-            <div className="bg-white rounded-3xl p-6 sm:p-10 border border-slate-200/80 shadow-sm space-y-8">
+            <div className="neu-raised rounded-3xl p-4 sm:p-8 md:p-10 space-y-6 sm:space-y-8">
               {/* Form Navigation Header */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-slate-100 gap-4">
-                <div className="flex items-center gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 sm:pb-6 border-b border-slate-100 gap-3 sm:gap-4">
+                <div className="flex items-start sm:items-center gap-3">
                   <button
                     type="button"
                     onClick={() => setIsFormOpen(false)}
-                    className="p-2.5 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                    className="p-2.5 neu-btn-white text-emerald-950 rounded-xl transition-colors cursor-pointer shrink-0 min-h-[40px] min-w-[40px] flex items-center justify-center"
                     title="Back to Grid"
                   >
                     <ArrowLeft className="w-5 h-5" />
                   </button>
                   <div>
-                    <h2 className="text-xl sm:text-2xl font-black text-slate-800 font-display">
+                    <h2 className="text-lg sm:text-2xl font-black text-slate-800 font-display">
                       PCU Upload & Submission Form
                     </h2>
                     <p className="text-xs text-slate-500">
-                      Fill in patient information and select multiple PCU images to submit to Base44 and MySQL.
+                      Fill in patient information and select multiple PCU images to submit.
                     </p>
                   </div>
                 </div>
@@ -2847,9 +2941,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 <button
                   type="button"
                   onClick={() => setIsFormOpen(false)}
-                  className="text-xs font-bold text-slate-500 hover:text-slate-800 px-3.5 py-2 rounded-xl hover:bg-slate-100 transition-colors self-start sm:self-auto cursor-pointer"
+                  className="neu-btn-white text-xs font-bold text-slate-700 px-4 py-2.5 rounded-xl self-stretch sm:self-auto cursor-pointer min-h-[40px] text-center"
                 >
-                  Cancel & Return to Grid
+                  Cancel & Return
                 </button>
               </div>
 
@@ -2868,7 +2962,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       onChange={(e) => setFullName(e.target.value)}
                       placeholder="e.g. Juan Dela Cruz"
                       required
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all"
+                      className="w-full px-4 py-3 neu-inset rounded-xl text-xs sm:text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none transition-all"
                     />
                     <span className="text-[11px] text-slate-400 block">
                       Enter the patient's complete name (First, Middle, Last).
@@ -2893,7 +2987,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         value={barangay}
                         onChange={(e) => setBarangay(e.target.value)}
                         required
-                        className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all cursor-pointer"
+                        className="w-full px-4 py-3 neu-inset rounded-xl text-xs sm:text-sm font-bold text-slate-800 focus:outline-none transition-all cursor-pointer"
                       >
                         {barangaysList.length === 0 ? (
                           <option value="">No Barangays Loaded</option>
@@ -2922,7 +3016,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       value={purok}
                       onChange={(e) => setPurok(e.target.value)}
                       placeholder="e.g. Purok 1, Purok Rosal, Sitio Centro"
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all"
+                      className="w-full px-4 py-3 neu-inset rounded-xl text-xs sm:text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none transition-all"
                     />
                     <span className="text-[11px] text-slate-400 block">
                       Sub-village or purok location within the barangay.
@@ -2940,7 +3034,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       value={contactNumber}
                       onChange={(e) => setContactNumber(e.target.value)}
                       placeholder="e.g. 0912-345-6789"
-                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-600 transition-all font-mono"
+                      className="w-full px-4 py-3 neu-inset rounded-xl text-xs sm:text-sm font-semibold text-slate-800 placeholder-slate-400 focus:outline-none transition-all font-mono"
                     />
                     <span className="text-[11px] text-slate-400 block">
                       Mobile number or phone contact for patient follow-up.
@@ -2965,7 +3059,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   {/* Dropzone Area */}
                   <div
                     onClick={() => fileInputRef.current?.click()}
-                    className="border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/30 hover:bg-emerald-50/60 rounded-2xl p-6 sm:p-8 text-center transition-all cursor-pointer group"
+                    className="neu-flat border-2 border-dashed border-emerald-400/60 rounded-2xl p-6 sm:p-8 text-center transition-all cursor-pointer group"
                   >
                     <input
                       ref={fileInputRef}
@@ -2977,14 +3071,14 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     />
 
                     <div className="space-y-3">
-                      <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center group-hover:scale-110 transition-transform shadow-xs">
+                      <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center group-hover:scale-110 transition-transform shadow-xs">
                         <UploadCloud className="w-7 h-7" />
                       </div>
                       <div className="space-y-1">
-                        <p className="text-xs sm:text-sm font-bold text-slate-700">
+                        <p className="text-xs sm:text-sm font-bold text-slate-800">
                           Click to select multiple PCU images or drag & drop files here
                         </p>
-                        <p className="text-[11px] text-slate-400">
+                        <p className="text-[11px] text-slate-500">
                           Supports PNG, JPG, JPEG, WEBP, and PDF documents (up to 25MB each)
                         </p>
                       </div>
@@ -3065,7 +3159,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     type="button"
                     onClick={() => setIsFormOpen(false)}
                     disabled={submitting}
-                    className="w-full sm:w-auto px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider rounded-xl transition-colors cursor-pointer"
+                    className="w-full sm:w-auto px-6 py-3 neu-btn-white text-slate-700 font-bold text-xs uppercase tracking-wider rounded-xl transition-colors cursor-pointer"
                   >
                     Cancel
                   </button>
@@ -3073,7 +3167,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   <button
                     type="submit"
                     disabled={submitting || stagedFiles.length === 0}
-                    className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg shadow-emerald-700/20 hover:shadow-xl hover:shadow-emerald-700/30 transition-all cursor-pointer focus:outline-none"
+                    className="w-full sm:w-auto neu-btn-green inline-flex items-center justify-center gap-2 px-8 py-3.5 disabled:opacity-50 text-white font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer focus:outline-none"
                   >
                     {submitting ? (
                       <>
@@ -3099,19 +3193,19 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       {/* ========================================================================= */}
       <AnimatePresence>
         {selectedRecord && (
-          <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4 sm:p-6">
+          <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6">
             <motion.div
               initial={{ opacity: 0, scale: 0.95, y: 15 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 15 }}
               transition={{ duration: 0.2 }}
-              className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col"
+              className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl border border-slate-200 w-full max-w-4xl max-h-[94vh] sm:max-h-[90vh] overflow-hidden flex flex-col my-auto"
               onClick={(e) => e.stopPropagation()}
             >
               {/* Modal Header */}
-              <div className="p-6 bg-gradient-to-r from-emerald-900 to-teal-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="p-4 sm:p-6 bg-gradient-to-r from-emerald-900 to-teal-900 text-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shrink-0">
                 <div className="space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                     <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold uppercase tracking-wider border border-emerald-400/30">
                       <ShieldCheck className="w-3 h-3" />
                       Whole Data Uploaded
@@ -3128,12 +3222,12 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       </span>
                     )}
                   </div>
-                  <h2 className="text-xl sm:text-2xl font-black font-display tracking-tight text-white">
+                  <h2 className="text-lg sm:text-2xl font-black font-display tracking-tight text-white line-clamp-1">
                     {selectedRecord.fullName}
                   </h2>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
                   {/* Verify / Unverify Button (Master Admin Only) */}
                   {isMasterAdmin && (
                     (selectedRecord.status || '').toUpperCase() !== 'VERIFIED' ? (
@@ -3141,7 +3235,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         type="button"
                         onClick={() => setVerifyTarget(selectedRecord)}
                         disabled={verifyingId === selectedRecord.id}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-white rounded-xl text-xs font-black transition-all shadow-md cursor-pointer disabled:opacity-50"
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-white rounded-xl text-xs font-black transition-all shadow-md cursor-pointer disabled:opacity-50"
                         title="Verify submission: opens confirmation popup (Master Admin Only)"
                       >
                         {verifyingId === selectedRecord.id ? (
@@ -3156,7 +3250,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         type="button"
                         onClick={() => handleUnverifyRecord(selectedRecord)}
                         disabled={verifyingId === selectedRecord.id}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all border border-white/20 cursor-pointer"
+                        className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-all border border-white/20 cursor-pointer"
                         title="Move back to Pending (Master Admin Only)"
                       >
                         {verifyingId === selectedRecord.id ? (
@@ -3174,7 +3268,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     <button
                       type="button"
                       onClick={(e) => promptDeleteRecord(e, selectedRecord)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600/80 hover:bg-rose-600 active:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                      className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] bg-rose-600/80 hover:bg-rose-600 active:bg-rose-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
                       title="Permanently Delete Entire Submission from MySQL (Master Admin Only)"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -3185,7 +3279,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   <button
                     type="button"
                     onClick={() => setSelectedRecord(null)}
-                    className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-xl transition-colors cursor-pointer"
+                    className="p-2 min-h-[40px] min-w-[40px] flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 rounded-xl transition-colors cursor-pointer"
                     title="Close Details"
                   >
                     <X className="w-6 h-6" />
@@ -3228,9 +3322,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               )}
 
               {/* Modal Content - Scrollable */}
-              <div className="p-6 sm:p-8 overflow-y-auto space-y-6">
+              <div className="p-4 sm:p-6 md:p-8 overflow-y-auto space-y-5 sm:space-y-6 flex-1 overscroll-contain">
                 {/* 1. Patient & Upload Summary Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4">
                   {/* Barangay */}
                   <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block flex items-center gap-1">
