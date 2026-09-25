@@ -855,6 +855,7 @@ export interface SiteSettings {
   navExistAccFiles?: string;
   rolePermissions?: Record<string, string[]>;
   pcuBaseRate?: number;
+  pcuPendingBaseRate?: number;
 }
 
 const DEFAULT_SITE_LOGO = 'https://www.image2url.com/r2/default/images/1785037750375-501bcf0e-4b15-4e0e-8be2-610bc89d072e.png';
@@ -865,6 +866,7 @@ let siteSettings: SiteSettings = {
   logoDataUrl: DEFAULT_SITE_LOGO,
   faviconDataUrl: DEFAULT_SITE_LOGO,
   pcuBaseRate: 50.00,
+  pcuPendingBaseRate: 25.00,
   navDashboard: 'Dashboard',
   navMap: 'Clinic Map',
   navDirectory: 'Clinic Directory',
@@ -8643,7 +8645,15 @@ export async function addPCUUpdate(
     fileData: finalFileUrlOrData, // Save the full URL (if success) or full base64 (if local fallback) in local cache
     uploadedAt: new Date().toISOString(),
     uploadedBy: username,
-    added_from_website: true
+    added_from_website: true,
+    status: 'FILES',
+    contact_number: contactNumber,
+    uploadedFiles: [{
+      name: fileName,
+      url: finalFileUrlOrData,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: username
+    }]
   };
 
   pcuUpdatesCache.unshift(newUpdate);
@@ -8724,14 +8734,42 @@ export async function addPCUUpdate(
     });
     contact.updated_at = new Date().toISOString();
 
-    // 1. CONFIRM BASE44 SUBMISSION:
-    console.log(`[Submission Pipeline] Step 1: Submitting contact "${fullName}" to Base44 database...`);
-    try {
-      await saveContactToBase44(contact, username);
-      console.log(`[Submission Pipeline] Step 1 Confirmed: Contact "${fullName}" saved to Base44 database.`);
-    } catch (bErr: any) {
-      console.warn(`[Submission Pipeline] Step 1 Notice: Base44 direct cloud write notice: ${bErr.message || bErr}. Operating safely with local and cPanel MySQL persistence.`);
+    // 1. SAVE TO SUBMIT PCU (Files section) & MYSQL pcu_submissions:
+    console.log(`[Submission Pipeline] Step 1: Saving contact "${fullName}" to Submit PCU (Files section) in MySQL...`);
+    if (isCPanelDbConnected()) {
+      try {
+        await savePcuSubmissionToCPanel({
+          id: String(contact.id || newUpdate.id),
+          contactId: contact.id,
+          fullName: contact.full_name || fullName,
+          barangay: contact.barangay || barangay,
+          purok: contact.purok || purok,
+          contactNumber: contact.contact_number || contactNumber,
+          fileName,
+          fileUrl: finalFileUrlOrData,
+          uploadedFiles: contact.uploadedFiles,
+          uploadedBy: username,
+          uploadedAt: newUpdate.uploadedAt,
+          status: 'FILES'
+        });
+        console.log(`[Submission Pipeline] Step 1 Confirmed: Contact "${fullName}" saved to MySQL pcu_submissions.`);
+      } catch (saveErr: any) {
+        console.warn('[Submission Pipeline] MySQL pcu_submissions write notice:', saveErr.message || saveErr);
+      }
     }
+
+    // Log action to PCU History
+    await logPcuHistory({
+      action: 'SUBMITTED_FILES',
+      recordId: String(contact.id || newUpdate.id),
+      patientName: fullName,
+      barangay: contact.barangay || barangay,
+      submitter: username,
+      performedBy: username,
+      previousStatus: 'DIRECTORY',
+      newStatus: 'FILES',
+      details: `Submitted PCU file "${fileName}" from PCU Directory to Submit PCU under Barangay Folder "${contact.barangay || barangay}" (Files section).`
+    });
 
     // 2. PERMANENTLY DELETE CONTACT FROM CPANEL MYSQL DATABASE:
     let cpanelSyncSuccess = true;
@@ -9006,7 +9044,9 @@ export async function addPCUUpdatesMultiple(
         fileData: finalFileUrlOrData, // Save the full URL (if success) or full base64 (if local fallback) in local cache
         uploadedAt: fileUploadedAt,
         uploadedBy: username,
-        added_from_website: true
+        added_from_website: true,
+        status: 'FILES',
+        contact_number: contactNumber
       };
 
       pcuUpdatesCache.unshift(newUpdate);
@@ -9099,30 +9139,9 @@ export async function addPCUUpdatesMultiple(
     contact.isSubmitted = true;
     contact.submittedAt = lastUploadedAt;
 
-    // 1. CONFIRM BASE44 SUBMISSION:
-    console.log(`[Submission Pipeline] Step 1: Submitting contact "${fullName}" to Base44 database...`);
-    try {
-      await saveContactToBase44(contact, username);
-      console.log(`[Submission Pipeline] Step 1 Confirmed: Contact "${fullName}" saved to Base44 database.`);
-    } catch (bErr: any) {
-      console.warn(`[Submission Pipeline] Step 1 Notice: Base44 direct cloud write notice: ${bErr.message || bErr}. Operating safely with local and cPanel MySQL persistence.`);
-    }
-
-    // 2. PERMANENTLY DELETE CONTACT FROM CPANEL MYSQL DATABASE:
-    let cpanelSyncSuccess = true;
-    let cpanelSyncWarning: string | null = null;
+    // 1. SAVE TO SUBMIT PCU (Files section) & MYSQL pcu_submissions:
+    console.log(`[Submission Pipeline] Step 1: Saving contact "${fullName}" (${contact.uploadedFiles?.length || 1} files) to Submit PCU (Files section) in MySQL...`);
     if (isCPanelDbConnected()) {
-      try {
-        console.log(`[Submission Pipeline] Step 2: Marking contact "${fullName}" deleted in cPanel MySQL database...`);
-        await deleteContactFromCPanel(contact.id, new Date().toISOString(), fullName, contact.barangay);
-        console.log(`[Submission Pipeline] Step 2 Confirmed: Contact "${fullName}" deleted in cPanel MySQL database.`);
-      } catch (err: any) {
-        cpanelSyncSuccess = false;
-        cpanelSyncWarning = err.message || 'Error updating cPanel MySQL database';
-        console.error('[Submission Pipeline] Step 2 Error deleting contact from cPanel MySQL database:', cpanelSyncWarning);
-      }
-
-      // Record in dedicated pcu_submissions table in cPanel MySQL
       try {
         await savePcuSubmissionToCPanel({
           id: String(contact.id || crypto.randomUUID()),
@@ -9136,10 +9155,39 @@ export async function addPCUUpdatesMultiple(
           uploadedFiles: contact.uploadedFiles,
           uploadedBy: username,
           uploadedAt: lastUploadedAt,
-          status: 'SUBMITTED'
+          status: 'FILES'
         });
+        console.log(`[Submission Pipeline] Step 1 Confirmed: Contact "${fullName}" saved to MySQL pcu_submissions table.`);
+      } catch (saveErr: any) {
+        console.warn('[Submission Pipeline] MySQL pcu_submissions write notice:', saveErr.message || saveErr);
+      }
+    }
+
+    // Log action to PCU History
+    await logPcuHistory({
+      action: 'SUBMITTED_FILES',
+      recordId: String(contact.id),
+      patientName: fullName,
+      barangay: contact.barangay || options?.barangay || '',
+      submitter: username,
+      performedBy: username,
+      previousStatus: 'DIRECTORY',
+      newStatus: 'FILES',
+      details: `Submitted ${contact.uploadedFiles?.length || 1} file(s) from PCU Directory to Submit PCU under Barangay Folder "${contact.barangay || options?.barangay || ''}" (Files section).`
+    });
+
+    // 2. PERMANENTLY DELETE CONTACT FROM CPANEL MYSQL DATABASE:
+    let cpanelSyncSuccess = true;
+    let cpanelSyncWarning: string | null = null;
+    if (isCPanelDbConnected()) {
+      try {
+        console.log(`[Submission Pipeline] Step 2: Marking contact "${fullName}" deleted in cPanel MySQL database...`);
+        await deleteContactFromCPanel(contact.id, new Date().toISOString(), fullName, contact.barangay);
+        console.log(`[Submission Pipeline] Step 2 Confirmed: Contact "${fullName}" deleted in cPanel MySQL database.`);
       } catch (err: any) {
-        console.warn('[cPanel DB Warning] Failed to save to pcu_submissions table:', err.message || err);
+        cpanelSyncSuccess = false;
+        cpanelSyncWarning = err.message || 'Error updating cPanel MySQL database';
+        console.error('[Submission Pipeline] Step 2 Error deleting contact from cPanel MySQL database:', cpanelSyncWarning);
       }
     }
 

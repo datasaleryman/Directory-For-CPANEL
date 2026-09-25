@@ -1419,6 +1419,8 @@ export async function fetchAllFromCPanelDb(): Promise<{
   barangays: string[];
   activities: any[];
   settings: Record<string, any>;
+  pcuSubmissions?: any[];
+  pcuHistory?: any[];
 } | null> {
   if (!pool || !currentStatus.connected) return null;
 

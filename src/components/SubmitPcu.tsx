@@ -50,7 +50,9 @@ import {
   History,
   CheckCheck,
   CalendarClock,
-  TrendingUp
+  TrendingUp,
+  RotateCcw,
+  FolderInput
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -524,12 +526,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   };
 
   // Open Settlement Modal for a Submitter
-  const openSettlementModal = (sub: { name: string; submissionsCount: number }) => {
+  const openSettlementModal = (sub: any) => {
     const existing = settlements.find(s => s.submitter && s.submitter.toLowerCase() === sub.name.toLowerCase());
-    const computedSalary = sub.submissionsCount * baseRate;
+    const computedSalary = sub.totalSalary !== undefined 
+      ? sub.totalSalary 
+      : ((sub.verifiedCount || 0) * baseRate + (sub.pendingCount || 0) * pendingBaseRate);
+    const totalCount = (sub.verifiedCount || 0) + (sub.pendingCount || 0);
     setSettlingSubmitter({
       name: sub.name,
-      totalSubmissions: sub.submissionsCount,
+      totalSubmissions: totalCount,
       totalSalary: computedSalary
     });
     setSettlementAmount(existing ? String(existing.amountPaid ?? existing.totalSalary) : String(computedSalary));
@@ -1701,6 +1706,92 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     );
   };
 
+  // Reusable Status Badge for cards, modals, and tables
+  const renderStatusBadge = (record: UploadedPcuRecord) => {
+    const s = (record.status || 'FILES').toUpperCase();
+    if (s === 'VERIFIED') {
+      return (
+        <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
+          <CheckCircle2 className="w-3 h-3 text-white" />
+          <span>Verified</span>
+        </span>
+      );
+    }
+    if (s === 'PENDING') {
+      return (
+        <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
+          <Clock className="w-3 h-3 text-white" />
+          <span>Pending</span>
+        </span>
+      );
+    }
+    if (s === 'UPDATED') {
+      return (
+        <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-blue-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
+          <CheckCheck className="w-3 h-3 text-white" />
+          <span>Updated</span>
+        </span>
+      );
+    }
+    return (
+      <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
+        <FileText className="w-3 h-3 text-white" />
+        <span>Files</span>
+      </span>
+    );
+  };
+
+  // Reusable Action Badge for History Log
+  const getActionBadge = (action: string) => {
+    const a = (action || '').toUpperCase();
+    if (a.includes('VERIFIED')) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+          Verified
+        </span>
+      );
+    }
+    if (a.includes('PENDING')) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300">
+          <Clock className="w-3 h-3 text-amber-600" />
+          Moved to Pending
+        </span>
+      );
+    }
+    if (a.includes('UPDATED')) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-blue-900 border border-blue-300">
+          <CheckCheck className="w-3 h-3 text-blue-600" />
+          Moved to Updated
+        </span>
+      );
+    }
+    if (a.includes('DIRECTORY') || a.includes('TRANSFER')) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-teal-100 text-teal-900 border border-teal-300">
+          <FolderInput className="w-3 h-3 text-teal-700" />
+          Transferred from Directory
+        </span>
+      );
+    }
+    if (a.includes('FILE')) {
+      return (
+        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-800 border border-slate-300">
+          <FileText className="w-3 h-3 text-slate-600" />
+          Returned to Files
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-700 border border-slate-200">
+        <History className="w-3 h-3 text-slate-500" />
+        {action.replace(/_/g, ' ')}
+      </span>
+    );
+  };
+
   // Reusable Record Action Buttons component for Files (Verify + Pending), Pending (Update), Updated (Badge), and Verified (Badge)
   const renderRecordActionButtons = (record: UploadedPcuRecord) => {
     const s = (record.status || 'FILES').toUpperCase();
@@ -2506,17 +2597,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                         <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-emerald-950/80 backdrop-blur-md text-emerald-200 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30 shadow-xs truncate max-w-[100px] sm:max-w-none">
                                           {record.barangay}
                                         </span>
-                                        {isVerified ? (
-                                          <span className="px-2 py-0.5 sm:px-2 sm:py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
-                                            <CheckCircle2 className="w-3 h-3 text-white" />
-                                            Verified
-                                          </span>
-                                        ) : (
-                                          <span className="px-2 py-0.5 sm:px-2 sm:py-1 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
-                                            <Clock className="w-3 h-3 text-white" />
-                                            Pending
-                                          </span>
-                                        )}
+                                        {renderStatusBadge(record)}
                                       </div>
 
                                       <div className="flex items-center gap-1 pointer-events-auto shrink-0">
@@ -2574,55 +2655,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                       </div>
                                     </div>
 
-                                    {/* Action row: Verify Button */}
+                                    {/* Action row: Reusable Action Buttons for Files / Verified / Pending / Updated */}
                                     <div className="pt-2">
-                                      {!isVerified ? (
-                                        isMasterAdmin ? (
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setVerifyTarget(record);
-                                            }}
-                                            disabled={verifyingId === record.id}
-                                            className="w-full py-2.5 px-3 min-h-[42px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
-                                            title="Verify submission: opens confirmation popup (Master Admin Only)"
-                                          >
-                                            {verifyingId === record.id ? (
-                                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                            ) : (
-                                              <CheckCircle2 className="w-3.5 h-3.5" />
-                                            )}
-                                            <span>Verify</span>
-                                          </button>
-                                        ) : (
-                                          <div className="w-full py-2 px-2 min-h-[38px] bg-amber-50 border border-amber-200/70 text-amber-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 shadow-xs">
-                                            <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                            <span className="truncate">Pending Verification</span>
-                                          </div>
-                                        )
-                                      ) : (
-                                        <div className="flex items-center justify-between gap-2">
-                                          <span className="flex-1 py-2 px-2 min-h-[38px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black flex items-center justify-center gap-1">
-                                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                                            <span>Verified</span>
-                                          </span>
-                                          {isMasterAdmin && (
-                                            <button
-                                              type="button"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                handleUnverifyRecord(record);
-                                              }}
-                                              disabled={verifyingId === record.id}
-                                              className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-colors cursor-pointer"
-                                              title="Move back to Pending (Master Admin Only)"
-                                            >
-                                              <Clock className="w-3.5 h-3.5" />
-                                            </button>
-                                          )}
-                                        </div>
-                                      )}
+                                      {renderRecordActionButtons(record)}
                                     </div>
 
                                     <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
@@ -2853,17 +2888,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                     <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-emerald-950/80 backdrop-blur-md text-emerald-200 text-[10px] font-black uppercase tracking-wider border border-emerald-500/30 shadow-xs truncate max-w-[100px] sm:max-w-none">
                                       {record.barangay}
                                     </span>
-                                    {(record.status || '').toUpperCase() === 'VERIFIED' ? (
-                                      <span className="px-2 py-0.5 sm:px-2 sm:py-1 rounded-lg bg-emerald-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
-                                        <CheckCircle2 className="w-3 h-3 text-white" />
-                                        Verified
-                                      </span>
-                                    ) : (
-                                      <span className="px-2 py-0.5 sm:px-2 sm:py-1 rounded-lg bg-amber-500 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
-                                        <Clock className="w-3 h-3 text-white" />
-                                        Pending
-                                      </span>
-                                    )}
+                                    {renderStatusBadge(record)}
                                   </div>
 
                                   <div className="flex items-center gap-1 pointer-events-auto shrink-0">
@@ -2921,55 +2946,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                   </div>
                                 </div>
 
-                                {/* Action row: Verify Button */}
+                                {/* Action row: Reusable Action Buttons for Files / Verified / Pending / Updated */}
                                 <div className="pt-2">
-                                  {(record.status || '').toUpperCase() !== 'VERIFIED' ? (
-                                    isMasterAdmin ? (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setVerifyTarget(record);
-                                        }}
-                                        disabled={verifyingId === record.id}
-                                        className="w-full py-2.5 px-3 min-h-[42px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-xs font-black shadow-sm flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
-                                        title="Verify submission: opens confirmation popup (Master Admin Only)"
-                                      >
-                                        {verifyingId === record.id ? (
-                                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                        ) : (
-                                          <CheckCircle2 className="w-3.5 h-3.5" />
-                                        )}
-                                        <span>Verify</span>
-                                      </button>
-                                    ) : (
-                                      <div className="w-full py-2 px-2 min-h-[38px] bg-amber-50 border border-amber-200/70 text-amber-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 shadow-xs">
-                                        <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                                        <span className="truncate">Pending Verification</span>
-                                      </div>
-                                    )
-                                  ) : (
-                                    <div className="flex items-center justify-between gap-2">
-                                      <span className="flex-1 py-2 px-2 min-h-[38px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black flex items-center justify-center gap-1">
-                                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                                        <span>Verified</span>
-                                      </span>
-                                      {isMasterAdmin && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleUnverifyRecord(record);
-                                          }}
-                                          disabled={verifyingId === record.id}
-                                          className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-colors cursor-pointer"
-                                          title="Move back to Pending (Master Admin Only)"
-                                        >
-                                          <Clock className="w-3.5 h-3.5" />
-                                        </button>
-                                      )}
-                                    </div>
-                                  )}
+                                  {renderRecordActionButtons(record)}
                                 </div>
 
                                 <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-400">
@@ -3059,100 +3038,188 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 </div>
               </div>
 
-              {/* Base Rate Configuration Card (Saved Permanently to MySQL) */}
-              <div className="neu-raised rounded-3xl p-4 sm:p-6 md:p-8 space-y-4">
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6">
-                  <div className="space-y-1.5 max-w-xl">
-                    <div className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-1 rounded-full bg-emerald-50 text-emerald-900 text-[11px] font-black border border-emerald-300">
-                      <Database className="w-3.5 h-3.5 text-emerald-700" />
-                      <span>Saved Permanently in MySQL (`site_settings`)</span>
+              {/* Base Rate Configuration Cards (Saved Permanently to MySQL) */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+                {/* 1. Verified Base Rate Card */}
+                <div className="neu-raised rounded-3xl p-4 sm:p-6 md:p-8 space-y-4 flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-1 rounded-full bg-emerald-50 text-emerald-900 text-[11px] font-black border border-emerald-300">
+                        <Database className="w-3.5 h-3.5 text-emerald-700" />
+                        <span>Saved in MySQL (`pcuBaseRate`)</span>
+                      </div>
+                      <div className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-white/80 px-2.5 py-1 rounded-xl border border-emerald-200">
+                        <span>Active:</span>
+                        <span className="font-mono text-emerald-950 font-black">₱{baseRate.toFixed(2)}</span>
+                      </div>
                     </div>
-                    <h3 className="text-lg sm:text-xl font-black text-slate-900 flex items-center gap-2.5">
-                      <Banknote className="w-5 h-5 text-emerald-700" />
-                      <span>PCU Submission Base Rate</span>
+
+                    <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                      <span>Verified Base Rate</span>
                     </h3>
                     <p className="text-xs text-slate-600 leading-relaxed">
-                      Set the approved salary or stipend rate per verified submission. Changing this rate automatically recalculates all submitters' Total Salary tallies below and persists permanently to the MySQL database.
+                      Rate earned when a record is verified from Files: <strong>1 Credit × Verified Base Rate</strong>. Automatically credited to submitter.
                     </p>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 sm:gap-3 w-full lg:w-auto">
-                    <div className="relative flex-1 sm:w-48">
-                      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-black text-slate-500 text-sm">
-                        ₱
-                      </span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        value={baseRateInput}
-                        onChange={(e) => setBaseRateInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleSaveBaseRate();
-                          }
-                        }}
-                        placeholder="50.00"
-                        className="w-full pl-8 pr-4 py-2.5 neu-inset rounded-xl text-sm font-black text-slate-900 focus:outline-none transition-all font-mono min-h-[42px]"
-                      />
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="relative flex-1">
+                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-black text-slate-500 text-sm">
+                          ₱
+                        </span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={baseRateInput}
+                          onChange={(e) => setBaseRateInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSaveBaseRate();
+                            }
+                          }}
+                          placeholder="50.00"
+                          className="w-full pl-8 pr-4 py-2.5 neu-inset rounded-xl text-sm font-black text-slate-900 focus:outline-none transition-all font-mono min-h-[42px]"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSaveBaseRate()}
+                        disabled={savingBaseRate}
+                        className="neu-btn-green inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shrink-0 min-h-[42px]"
+                      >
+                        {savingBaseRate ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>Saving...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Save Rate</span>
+                          </>
+                        )}
+                      </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() => handleSaveBaseRate()}
-                      disabled={savingBaseRate}
-                      className="neu-btn-green inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shrink-0 min-h-[42px] w-full sm:w-auto"
-                    >
-                      {savingBaseRate ? (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>Saving to MySQL...</span>
-                        </>
-                      ) : (
-                        <>
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>Save Base Rate</span>
-                        </>
-                      )}
-                    </button>
+                    {/* Quick Presets */}
+                    <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] font-bold text-slate-400">Presets:</span>
+                      {[25, 50, 75, 100, 150].map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => {
+                            setBaseRateInput(String(rate));
+                            handleSaveBaseRate(rate);
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[32px] ${
+                            baseRate === rate ? 'neu-btn-green' : 'neu-btn-white'
+                          }`}
+                        >
+                          ₱{rate}.00
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
 
-                {/* Quick Preset Buttons & Active Rate Indicator */}
-                <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                    <span className="text-[11px] font-bold text-slate-500">Quick Rates:</span>
-                    {[25, 50, 75, 100, 150].map((rate) => (
-                      <button
-                        key={rate}
-                        type="button"
-                        onClick={() => {
-                          setBaseRateInput(String(rate));
-                          handleSaveBaseRate(rate);
-                        }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[36px] ${
-                          baseRate === rate
-                            ? 'neu-btn-green'
-                            : 'neu-btn-white'
-                        }`}
-                      >
-                        ₱{rate}.00
-                      </button>
-                    ))}
+                {/* 2. Pending Base Rate Card */}
+                <div className="neu-raised rounded-3xl p-4 sm:p-6 md:p-8 space-y-4 flex flex-col justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-1 rounded-full bg-amber-50 text-amber-900 text-[11px] font-black border border-amber-300">
+                        <Database className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Saved in MySQL (`pcuPendingBaseRate`)</span>
+                      </div>
+                      <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-900 bg-white/80 px-2.5 py-1 rounded-xl border border-amber-200">
+                        <span>Active:</span>
+                        <span className="font-mono text-amber-950 font-black">₱{pendingBaseRate.toFixed(2)}</span>
+                      </div>
+                    </div>
+
+                    <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
+                      <Clock className="w-5 h-5 text-amber-600" />
+                      <span>Pending Base Rate</span>
+                    </h3>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Rate earned when a record is moved to Pending: <strong>1 Credit × Pending Base Rate</strong>. Automatically credited to submitter.
+                    </p>
                   </div>
 
-                  <div className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-white/70 px-3 py-1.5 rounded-xl border border-emerald-200 self-start sm:self-auto">
-                    <span>Active Rate:</span>
-                    <span className="font-mono text-emerald-950 font-black">₱{baseRate.toFixed(2)}</span>
-                    <span className="text-slate-400 font-normal">/ verified submission</span>
+                  <div className="space-y-3 pt-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="relative flex-1">
+                        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 font-black text-slate-500 text-sm">
+                          ₱
+                        </span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={pendingBaseRateInput}
+                          onChange={(e) => setPendingBaseRateInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSavePendingBaseRate();
+                            }
+                          }}
+                          placeholder="50.00"
+                          className="w-full pl-8 pr-4 py-2.5 neu-inset rounded-xl text-sm font-black text-slate-900 focus:outline-none transition-all font-mono min-h-[42px]"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSavePendingBaseRate()}
+                        disabled={savingPendingBaseRate}
+                        className="neu-btn-green inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl disabled:opacity-50 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shrink-0 min-h-[42px]"
+                      >
+                        {savingPendingBaseRate ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>Saving...</span>
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>Save Rate</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* Quick Presets */}
+                    <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[11px] font-bold text-slate-400">Presets:</span>
+                      {[25, 50, 75, 100, 150].map((rate) => (
+                        <button
+                          key={rate}
+                          type="button"
+                          onClick={() => {
+                            setPendingBaseRateInput(String(rate));
+                            handleSavePendingBaseRate(rate);
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[32px] ${
+                            pendingBaseRate === rate ? 'neu-btn-green' : 'neu-btn-white'
+                          }`}
+                        >
+                          ₱{rate}.00
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               </div>
 
               {/* 4 KPI Metrics Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* 1. Total Verified Credits */}
+                {/* 1. Verified Credits */}
                 <div className="neu-raised rounded-2xl p-5 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Verified Credits</span>
@@ -3162,35 +3229,43 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   </div>
                   <div className="text-2xl font-black text-slate-900">{verifiedRecords.length}</div>
                   <span className="text-[11px] text-emerald-700 font-bold block">
-                    {pendingRecords.length} pending (uncredited)
+                    ₱{(verifiedRecords.length * baseRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} subtotal (₱{baseRate.toFixed(2)}/ea)
                   </span>
                 </div>
 
-                {/* 2. Active Submitters */}
+                {/* 2. Pending Credits */}
                 <div className="neu-raised rounded-2xl p-5 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Active Submitters</span>
-                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
-                      <Users className="w-4 h-4" />
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Pending Credits</span>
+                    <div className="p-2 rounded-xl bg-amber-50 text-amber-700">
+                      <Clock className="w-4 h-4" />
                     </div>
                   </div>
-                  <div className="text-2xl font-black text-slate-900">{submittersLedger.length}</div>
-                  <span className="text-[11px] text-slate-400 block">Registered staff accounts</span>
+                  <div className="text-2xl font-black text-slate-900">{pendingRecords.length}</div>
+                  <span className="text-[11px] text-amber-700 font-bold block">
+                    ₱{(pendingRecords.length * pendingBaseRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} subtotal (₱{pendingBaseRate.toFixed(2)}/ea)
+                  </span>
                 </div>
 
-                {/* 3. Current Base Rate */}
+                {/* 3. Active Base Rates */}
                 <div className="neu-raised rounded-2xl p-5 space-y-2">
                   <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Current Base Rate</span>
-                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Active Base Rates</span>
+                    <div className="p-2 rounded-xl bg-blue-50 text-blue-700">
                       <Coins className="w-4 h-4" />
                     </div>
                   </div>
-                  <div className="text-2xl font-black text-slate-900 font-mono">₱{baseRate.toFixed(2)}</div>
-                  <span className="text-[11px] text-emerald-600 font-semibold block">Per verified submission</span>
+                  <div className="text-lg font-black text-slate-900 font-mono flex items-center gap-2">
+                    <span className="text-emerald-700">₱{baseRate.toFixed(0)}</span>
+                    <span className="text-slate-300 font-normal">/</span>
+                    <span className="text-amber-700">₱{pendingBaseRate.toFixed(0)}</span>
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-semibold block">
+                    Verified: ₱{baseRate.toFixed(2)} | Pending: ₱{pendingBaseRate.toFixed(2)}
+                  </span>
                 </div>
 
-                {/* 4. Total Payroll Pool */}
+                {/* 4. Total Salary Pool */}
                 <div className="neu-raised rounded-2xl p-5 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Salary Pool</span>
@@ -3199,10 +3274,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     </div>
                   </div>
                   <div className="text-xl font-black text-slate-900 font-mono">
-                    ₱{(verifiedRecords.length * baseRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ₱{((verifiedRecords.length * baseRate) + (pendingRecords.length * pendingBaseRate)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </div>
                   <span className="text-[11px] text-slate-400 block">
-                    {verifiedRecords.length} verified &times; ₱{baseRate.toFixed(2)}
+                    Combined Verified & Pending credits
                   </span>
                 </div>
               </div>
@@ -3220,7 +3295,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         Submitters & Contributor Tallies
                       </h3>
                       <p className="text-xs text-slate-400">
-                        Only verified PCU submissions earn 1 credit (₱{baseRate.toFixed(2)}) towards submitter salary.
+                        Verified submissions earn 1 credit (₱{baseRate.toFixed(2)}) and Pending submissions earn 1 credit (₱{pendingBaseRate.toFixed(2)}) towards submitter salary.
                       </p>
                     </div>
                   </div>
@@ -3238,7 +3313,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     </div>
                   ) : (
                     submittersLedger.map((sub, idx) => {
-                      const computedSalary = sub.submissionsCount * baseRate;
+                      const computedSalary = sub.totalSalary;
                       const settlementRec = settlements.find(
                         s => s.submitter && s.submitter.toLowerCase() === sub.name.toLowerCase()
                       );
@@ -3270,14 +3345,20 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                             )}
                           </div>
 
-                          <div className="grid grid-cols-2 gap-2 pt-1 border-t border-slate-200/50">
-                            <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-100">
-                              <span className="text-[10px] uppercase font-bold text-emerald-700 block">Verified Credits</span>
-                              <span className="text-sm font-black text-emerald-950">{sub.submissionsCount} Credits</span>
+                          <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-200/50 text-center">
+                            <div className="p-2 rounded-xl bg-emerald-50/70 border border-emerald-100">
+                              <span className="text-[10px] uppercase font-bold text-emerald-700 block">Verified</span>
+                              <span className="text-xs font-black text-emerald-950">{sub.verifiedCount} cr.</span>
+                              <span className="text-[9px] text-emerald-700 block">₱{sub.verifiedSalary.toFixed(0)}</span>
                             </div>
-                            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
-                              <span className="text-[10px] uppercase font-bold text-slate-500 block">Total Salary</span>
-                              <span className="text-sm font-black text-emerald-700 font-mono">
+                            <div className="p-2 rounded-xl bg-amber-50/70 border border-amber-100">
+                              <span className="text-[10px] uppercase font-bold text-amber-700 block">Pending</span>
+                              <span className="text-xs font-black text-amber-950">{sub.pendingCount} cr.</span>
+                              <span className="text-[9px] text-amber-700 block">₱{sub.pendingSalary.toFixed(0)}</span>
+                            </div>
+                            <div className="p-2 rounded-xl bg-slate-50 border border-slate-200">
+                              <span className="text-[10px] uppercase font-bold text-slate-500 block">Total</span>
+                              <span className="text-xs font-black text-emerald-700 font-mono">
                                 ₱{computedSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                               </span>
                             </div>
@@ -3316,8 +3397,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
                       <tr>
                         <th className="py-3.5 px-6">Submitter</th>
-                        <th className="py-3.5 px-6 text-center">Verified Submissions (1 Credit Each)</th>
-                        <th className="py-3.5 px-6 text-center">Pending (0 Credits)</th>
+                        <th className="py-3.5 px-6 text-center">Verified Submissions (1 Credit × ₱{baseRate.toFixed(2)})</th>
+                        <th className="py-3.5 px-6 text-center">Pending Submissions (1 Credit × ₱{pendingBaseRate.toFixed(2)})</th>
                         <th className="py-3.5 px-6 text-right">Total Salary</th>
                         <th className="py-3.5 px-6 text-center">Action (Settlement)</th>
                       </tr>
@@ -3331,7 +3412,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         </tr>
                       ) : (
                         submittersLedger.map((sub, idx) => {
-                          const computedSalary = sub.submissionsCount * baseRate;
+                          const computedSalary = sub.totalSalary;
                           const settlementRec = settlements.find(
                             s => s.submitter && s.submitter.toLowerCase() === sub.name.toLowerCase()
                           );
@@ -3367,23 +3448,31 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                 </div>
                               </td>
 
-                              {/* 2. Verified Submissions (1 Credit Each) */}
+                              {/* 2. Verified Submissions (1 Credit × Verified Base Rate) */}
                               <td className="py-4 px-6 text-center">
-                                <span className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 font-black text-sm border border-emerald-200 shadow-xs">
-                                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                                  <span>{sub.submissionsCount} Credits</span>
+                                <span className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 font-black text-xs border border-emerald-200 shadow-xs">
+                                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                                  <span>{sub.verifiedCount} Credits</span>
+                                  <span className="font-mono text-emerald-700 font-normal">
+                                    (₱{sub.verifiedSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                  </span>
                                 </span>
                               </td>
 
-                              {/* 3. Pending Submissions (0 Credits) */}
+                              {/* 3. Pending Submissions (1 Credit × Pending Base Rate) */}
                               <td className="py-4 px-6 text-center">
-                                <span className={`inline-flex items-center justify-center gap-1 px-3 py-1 rounded-xl text-xs font-bold ${
-                                  (sub.pendingCount || 0) > 0 
-                                    ? 'bg-amber-50 text-amber-800 border border-amber-200' 
-                                    : 'bg-slate-50 text-slate-400'
+                                <span className={`inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-black border shadow-xs ${
+                                  sub.pendingCount > 0 
+                                    ? 'bg-amber-50 text-amber-900 border-amber-200' 
+                                    : 'bg-slate-50 text-slate-400 border-slate-200'
                                 }`}>
-                                  <Clock className="w-3.5 h-3.5 text-amber-600" />
-                                  <span>{sub.pendingCount || 0} Pending</span>
+                                  <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                                  <span>{sub.pendingCount} Credits</span>
+                                  {sub.pendingCount > 0 && (
+                                    <span className="font-mono text-amber-800 font-normal">
+                                      (₱{sub.pendingSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                                    </span>
+                                  )}
                                 </span>
                               </td>
 
@@ -3392,8 +3481,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                 <div className="font-black text-base text-emerald-700 font-mono">
                                   ₱{computedSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </div>
-                                <div className="text-[11px] font-medium text-slate-400">
-                                  {sub.submissionsCount} verified &times; ₱{baseRate.toFixed(2)}
+                                <div className="text-[10px] font-medium text-slate-400">
+                                  {sub.verifiedCount} v. (₱{sub.verifiedSalary.toFixed(2)}) + {sub.pendingCount} p. (₱{sub.pendingSalary.toFixed(2)})
                                 </div>
                               </td>
 

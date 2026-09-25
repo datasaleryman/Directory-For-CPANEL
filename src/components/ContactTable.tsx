@@ -658,7 +658,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
         if (totalBatches > 1) {
           setUploadProgressText(`Uploading batch ${currentBatchNum} of ${totalBatches} (${startFileIdx}–${endFileIdx} of ${stagedPcuFiles.length} files)...`);
         } else {
-          setUploadProgressText(`Uploading ${stagedPcuFiles.length} PCU file(s) to Base44 DB...`);
+          setUploadProgressText(`Uploading ${stagedPcuFiles.length} PCU file(s) to Submit PCU (Files)...`);
         }
 
         // Fast parallel base64 conversion & image optimization for this batch
@@ -713,9 +713,9 @@ export const ContactTable: React.FC<ContactTableProps> = ({
       setStagedPcuFiles([]);
       fetchContacts(false, page, true);
       if (lastResponseData?.sheetsSyncWarning || lastResponseData?.cpanelSyncWarning) {
-        showToast(`Submitted "${memberName}" (${filesCount} file(s)) to Base44 database and permanently deleted from PCU Directory. (${lastResponseData.sheetsSyncWarning || lastResponseData.cpanelSyncWarning})`, 'warning');
+        showToast(`Transferred "${memberName}" (${filesCount} file(s)) to Submit PCU (${currentBarangay} Folder > Files) and permanently deleted from PCU Directory. (${lastResponseData.sheetsSyncWarning || lastResponseData.cpanelSyncWarning})`, 'warning');
       } else {
-        showToast(`Successfully submitted "${memberName}" (${filesCount} file(s)) to Base44 database and permanently deleted from PCU Directory!`, 'success');
+        showToast(`Successfully transferred "${memberName}" (${filesCount} file(s)) to Submit PCU (${currentBarangay} Folder > Files) and permanently deleted from PCU Directory!`, 'success');
       }
     } catch (err: any) {
       showToast(err.message, 'error');
@@ -3167,7 +3167,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                               {pcuUploading ? (
                                 <>
                                   <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                                  <span className="truncate">{uploadProgressText || 'Saving to Base44 DB...'}</span>
+                                  <span className="truncate">{uploadProgressText || 'Saving to Submit PCU (Files)...'}</span>
                                 </>
                               ) : canSubmitFiles ? (
                                 stagedPcuFiles.length > 20
@@ -3237,7 +3237,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                 <ShieldAlert className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
                 <div className="space-y-1">
                   <p className="font-bold text-amber-950">
-                    This contact has already been submitted to the Base44 database and is permanently locked.
+                    This contact has already been transferred to Submit PCU (Files section) and is permanently locked.
                   </p>
                   <p className="text-amber-800 text-[11px] leading-relaxed">
                     Re-submission is prevented to preserve database consistency. Staged uploads, file modifications, and editing for this record are strictly disabled.
@@ -3278,7 +3278,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                 )}
                 <div className="flex items-center justify-between pt-1 border-t border-slate-200/60">
                   <span className="text-slate-400 font-semibold uppercase text-[10px]">Status</span>
-                  <span className="font-extrabold text-slate-800">SUBMITTED (LOCKED)</span>
+                  <span className="font-extrabold text-slate-800">TRANSFERRED (LOCKED)</span>
                 </div>
               </div>
 
