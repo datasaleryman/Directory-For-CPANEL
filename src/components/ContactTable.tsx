@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, ChevronDown, ChevronUp, Edit2, Trash2, Eye, FileText, ArrowDownToLine, Loader2, Calendar, Phone, User, Clock, ChevronLeft, ChevronRight, Check, Folder, FolderOpen, ArrowLeft, Grid, List, Plus, Layers, Navigation, Upload, Image, UserCheck, ShieldCheck, CheckSquare, Square, BarChart3, AlertTriangle, CheckCircle2, Lock, ShieldAlert, X, SearchX, UserX, UserPlus, RotateCcw, Database, Save, Pill } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp, Edit2, Trash2, Eye, FileText, ArrowDownToLine, Loader2, Calendar, Phone, User, Clock, ChevronLeft, ChevronRight, Check, Folder, FolderOpen, ArrowLeft, Grid, List, Plus, Layers, Navigation, Upload, Image, UserCheck, ShieldCheck, CheckSquare, Square, BarChart3, AlertTriangle, CheckCircle2, Lock, ShieldAlert, X, SearchX, UserX, UserPlus, RotateCcw, Database, Save, Pill, FolderInput } from 'lucide-react';
 import { Contact } from '../types.js';
 
 export const isContactLocked = (c: Contact | null | undefined): boolean => {
@@ -1053,15 +1053,17 @@ export const ContactTable: React.FC<ContactTableProps> = ({
     }
   };
 
-  // Direct submit to Base44 database (automatically permanently deletes from PCU Directory)
+  // Direct transfer to Submit PCU under Barangay folder (Files section)
+  // New Workflow: PCU Directory -> Submit PCU -> Barangay Folder -> Files
   const handleSubmitBase44Confirm = async () => {
     if (!submitBase44Target) return;
     setSubmittingBase44(true);
     const targetId = submitBase44Target.id;
     const targetName = submitBase44Target.full_name;
+    const targetBarangay = submitBase44Target.barangay || 'General / Unassigned';
 
     try {
-      const res = await fetch(`/api/contacts/${targetId}/submit-base44`, {
+      const res = await fetch(`/api/contacts/${targetId}/transfer-to-pcu`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1071,10 +1073,10 @@ export const ContactTable: React.FC<ContactTableProps> = ({
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to submit contact to Base44 database.');
+        throw new Error(data.error || 'Failed to transfer contact to Submit PCU.');
       }
 
-      // Automatically remove from directory table
+      // Automatically remove from directory table after successful transfer
       setContacts(prev => prev.filter(c => 
         String(c.id) !== String(targetId) &&
         (!c.full_name || c.full_name.trim().toLowerCase() !== targetName.trim().toLowerCase())
@@ -1084,7 +1086,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
       if (viewContact && (String(viewContact.id) === String(targetId) || viewContact.full_name === targetName)) {
         setViewContact(null);
       }
-      showToast(`Contact "${targetName}" was successfully submitted to Base44 database and automatically deleted from PCU Directory!`, 'success');
+      showToast(`Contact "${targetName}" was successfully transferred to Submit PCU under Barangay "${targetBarangay}" (Files section) and removed from PCU Directory!`, 'success');
       fetchContacts(false, page, true);
     } catch (err: any) {
       showToast(err.message, 'error');
@@ -2454,10 +2456,10 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                                   </button>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setSubmitBase44Target(contact); }}
-                                    className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                                    title="Submit to Base44 database (removes from directory)"
+                                    className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                                    title="Transfer to Submit PCU (Files section)"
                                   >
-                                    <Database className="w-4 h-4" />
+                                    <FolderInput className="w-4 h-4" />
                                   </button>
                                   <button
                                     onClick={(e) => { e.stopPropagation(); setDeleteTarget(contact); }}
@@ -2635,10 +2637,10 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setSubmitBase44Target(contact); }}
-                                className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
-                                title="Submit to Base44 database (removes from directory)"
+                                className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                                title="Transfer to Submit PCU (Files section)"
                               >
-                                <Database className="w-4 h-4" />
+                                <FolderInput className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); setDeleteTarget(contact); }}
@@ -3186,10 +3188,10 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                             onClick={() => {
                               setSubmitBase44Target(viewContact);
                             }}
-                            className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer min-h-[42px] flex items-center justify-center gap-2 shadow-sm font-display"
+                            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer min-h-[42px] flex items-center justify-center gap-2 shadow-sm font-display"
                           >
-                            <Database className="w-4 h-4" />
-                            Submit Contact to Base44 Database
+                            <FolderInput className="w-4 h-4" />
+                            Transfer Contact to Submit PCU (Files)
                           </button>
                         )}
                         <button
@@ -3343,14 +3345,19 @@ export const ContactTable: React.FC<ContactTableProps> = ({
               exit={{ opacity: 0, scale: 0.95 }}
               className="bg-white rounded-3xl max-w-sm w-full p-5 sm:p-6 text-center shadow-2xl border border-slate-100 max-h-[90vh] overflow-y-auto my-auto"
             >
-              <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center mx-auto mb-4">
-                <Database className="w-6 h-6" />
+              <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center mx-auto mb-4">
+                <FolderInput className="w-6 h-6" />
               </div>
 
-              <h3 className="text-lg font-bold text-slate-800 font-display">Submit to Base44 Database?</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Are you sure you want to submit <strong className="text-slate-700">{submitBase44Target.full_name}</strong> to the Base44 database? Once submitted, it will be automatically and permanently deleted from the PCU Directory.
+              <h3 className="text-lg font-bold text-slate-800 font-display">Transfer to Submit PCU?</h3>
+              <p className="text-xs text-slate-500 mt-1 leading-relaxed">
+                Are you sure you want to transfer <strong className="text-slate-800">{submitBase44Target.full_name}</strong> to the <strong>Submit PCU</strong> page?
               </p>
+              <div className="mt-3 p-3 bg-emerald-50 rounded-2xl border border-emerald-100 text-[11px] text-emerald-800 text-left space-y-1">
+                <p>• Assigned to Barangay Folder: <strong>{submitBase44Target.barangay || 'General / Unassigned'}</strong></p>
+                <p>• Placed into the <strong>Files</strong> section for verification</p>
+                <p>• Permanently removed from <strong>PCU Directory</strong> upon successful transfer</p>
+              </div>
 
               <div className="pt-6 flex gap-3">
                 <button
@@ -3363,9 +3370,9 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                 <button
                   onClick={handleSubmitBase44Confirm}
                   disabled={submittingBase44}
-                  className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 min-h-[42px]"
+                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 min-h-[42px]"
                 >
-                  {submittingBase44 ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Submit & Delete'}
+                  {submittingBase44 ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Transfer Contact'}
                 </button>
               </div>
             </motion.div>

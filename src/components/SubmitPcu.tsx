@@ -46,7 +46,11 @@ import {
   Receipt,
   Printer,
   Wallet,
-  CreditCard
+  CreditCard,
+  History,
+  CheckCheck,
+  CalendarClock,
+  TrendingUp
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -77,8 +81,30 @@ interface UploadedPcuRecord {
   uploadedAt: string;
   uploadedBy: string;
   status?: string;
+  verified_at?: string | null;
+  verified_by?: string | null;
+  pending_at?: string | null;
+  pending_by?: string | null;
+  updated_status_at?: string | null;
+  updated_status_by?: string | null;
+  verified_credit_added?: boolean;
+  pending_credit_added?: boolean;
   filesCount: number;
   uploadedFiles: UploadedFileItem[];
+}
+
+export interface PcuHistoryItem {
+  id: string;
+  action: string;
+  recordId: string;
+  patientName: string;
+  barangay: string;
+  submitter: string;
+  performedBy: string;
+  previousStatus: string;
+  newStatus: string;
+  timestamp: string;
+  details?: string;
 }
 
 interface DeleteTarget {
@@ -151,8 +177,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     return role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username === 'admin';
   }, [currentUser]);
 
-  // Tab state: 'pending' (Pending PCU Uploads) | 'verified' (Verified PCU Uploads) | 'ledger' (Master Admin Ledger)
-  const [activeTab, setActiveTab] = useState<'pending' | 'verified' | 'ledger'>('pending');
+  // Tab state: 'files' | 'verified' | 'pending' | 'updated' | 'ledger'
+  const [activeTab, setActiveTab] = useState<'files' | 'verified' | 'pending' | 'updated' | 'ledger'>('files');
 
   // Currently opened Barangay folder: null = showing all folder cards; string = inside that folder
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
@@ -169,8 +195,23 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const [inFolderPage, setInFolderPage] = useState<number>(1);
   const ITEMS_PER_PAGE = 30; // 6 rows x 5 columns = 30 items per page
 
-  // Verification in progress tracking
+  // Verification and Status update tracking
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
+
+  // Midnight timer tick to guarantee daily counters automatically reset at 12:00 AM
+  const [nowTick, setNowTick] = useState<number>(Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowTick(Date.now());
+    }, 30000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // History Log state (clickable Files History counter)
+  const [pcuHistory, setPcuHistory] = useState<PcuHistoryItem[]>([]);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false);
+  const [historySearch, setHistorySearch] = useState<string>('');
+  const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
 
   // Reset pagination and folder when active tab changes
   useEffect(() => {
@@ -193,10 +234,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     setInFolderPage(1);
   }, [selectedFolder, searchQuery]);
 
-  // Ledger Base Rate & Settlements State (Master Admin Only)
+  // Ledger Base Rate & Pending Base Rate State (Master Admin Only)
   const [baseRate, setBaseRate] = useState<number>(50);
   const [baseRateInput, setBaseRateInput] = useState<string>('50');
   const [savingBaseRate, setSavingBaseRate] = useState<boolean>(false);
+
+  const [pendingBaseRate, setPendingBaseRate] = useState<number>(50);
+  const [pendingBaseRateInput, setPendingBaseRateInput] = useState<string>('50');
+  const [savingPendingBaseRate, setSavingPendingBaseRate] = useState<boolean>(false);
+
   const [settlements, setSettlements] = useState<any[]>([]);
   const [loadingSettlements, setLoadingSettlements] = useState<boolean>(false);
   const [settlingSubmitter, setSettlingSubmitter] = useState<{
@@ -209,10 +255,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const [settlementNotes, setSettlementNotes] = useState<string>('');
   const [submittingSettlement, setSubmittingSettlement] = useState<boolean>(false);
 
-  // Security guard: If a non-master admin somehow has activeTab === 'ledger', force back to 'pending'
+  // Security guard: If a non-master admin somehow has activeTab === 'ledger', force back to 'files'
   useEffect(() => {
     if (!isMasterAdmin && activeTab === 'ledger') {
-      setActiveTab('pending');
+      setActiveTab('files');
     }
   }, [isMasterAdmin, activeTab]);
 
@@ -271,6 +317,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           }
 
           const uniqueId = String(item.id || item.contactId || `pcu_rec_${idx}_${Date.now()}`);
+          const rawStatus = (item.status || 'FILES').toUpperCase();
+          const normalizedStatus = (rawStatus === 'VERIFIED' || rawStatus === 'PENDING' || rawStatus === 'UPDATED') ? rawStatus : 'FILES';
 
           return {
             id: uniqueId,
@@ -282,7 +330,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
             fileUrl: files[0]?.url || item.pcu_file_url || '',
             uploadedAt: item.pcu_uploaded_at || item.updated_at || item.created_at || new Date().toISOString(),
             uploadedBy: item.pcu_uploaded_by || 'Staff',
-            status: (item.status || '').toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'PENDING',
+            status: normalizedStatus,
+            verified_at: item.verified_at || null,
+            verified_by: item.verified_by || null,
+            pending_at: item.pending_at || null,
+            pending_by: item.pending_by || null,
+            updated_status_at: item.updated_status_at || null,
+            updated_status_by: item.updated_status_by || null,
+            verified_credit_added: Boolean(item.verified_credit_added),
+            pending_credit_added: Boolean(item.pending_credit_added),
             filesCount: files.length,
             uploadedFiles: files
           };
@@ -303,6 +359,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               uploadedAt: item.uploadedAt || new Date().toISOString(),
               uploadedBy: item.uploadedBy || 'Staff'
             };
+            const rawStatus = (item.status || 'FILES').toUpperCase();
+            const normalizedStatus = (rawStatus === 'VERIFIED' || rawStatus === 'PENDING' || rawStatus === 'UPDATED') ? rawStatus : 'FILES';
+
             return {
               id: String(item.id || item.contactId || `pcu_upd_${idx}_${Date.now()}`),
               fullName: item.fullName || 'Patient',
@@ -313,7 +372,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               fileUrl: item.fileData || '',
               uploadedAt: item.uploadedAt || new Date().toISOString(),
               uploadedBy: item.uploadedBy || 'Staff',
-              status: (item.status || '').toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'PENDING',
+              status: normalizedStatus,
+              verified_at: item.verified_at || null,
+              verified_by: item.verified_by || null,
+              pending_at: item.pending_at || null,
+              pending_by: item.pending_by || null,
+              updated_status_at: item.updated_status_at || null,
+              updated_status_by: item.updated_status_by || null,
+              verified_credit_added: Boolean(item.verified_credit_added),
+              pending_credit_added: Boolean(item.pending_credit_added),
               filesCount: 1,
               uploadedFiles: [fileItem]
             };
@@ -328,7 +395,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     }
   };
 
-  // Fetch PCU Base Rate from MySQL
+  // Fetch PCU Base Rates (Verified & Pending) from MySQL
   const fetchBaseRate = async () => {
     try {
       const res = await fetch('/api/pcu/base-rate', {
@@ -340,9 +407,33 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           setBaseRate(data.baseRate);
           setBaseRateInput(String(data.baseRate));
         }
+        if (typeof data.pendingBaseRate === 'number') {
+          setPendingBaseRate(data.pendingBaseRate);
+          setPendingBaseRateInput(String(data.pendingBaseRate));
+        }
       }
     } catch (err: any) {
-      console.warn('Error fetching base rate:', err.message);
+      console.warn('Error fetching base rates:', err.message);
+    }
+  };
+
+  // Fetch PCU History Log from MySQL
+  const fetchHistory = async () => {
+    setLoadingHistory(true);
+    try {
+      const res = await fetch('/api/pcu/history', {
+        headers: authToken ? { Authorization: `Bearer ${authToken}` } : {}
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.history)) {
+          setPcuHistory(data.history);
+        }
+      }
+    } catch (err: any) {
+      console.warn('Error fetching PCU history:', err.message);
+    } finally {
+      setLoadingHistory(false);
     }
   };
 
@@ -366,7 +457,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     }
   };
 
-  // Save Base Rate permanently to MySQL
+  // Save Verified Base Rate permanently to MySQL
   const handleSaveBaseRate = async (rateToSave?: number) => {
     const val = rateToSave !== undefined ? rateToSave : parseFloat(baseRateInput);
     if (isNaN(val) || val < 0) {
@@ -381,21 +472,54 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${authToken}`
         },
-        body: JSON.stringify({ baseRate: val })
+        body: JSON.stringify({ baseRate: val, pendingBaseRate: pendingBaseRate })
       });
       if (res.ok) {
         const data = await res.json();
         setBaseRate(data.baseRate);
         setBaseRateInput(String(data.baseRate));
-        showToast(`Base rate ₱${data.baseRate.toFixed(2)} saved permanently to MySQL!`, 'success');
+        showToast(`Verified Base Rate ₱${data.baseRate.toFixed(2)} saved permanently to MySQL!`, 'success');
       } else {
         const err = await res.json();
-        showToast(err.error || 'Failed to update base rate.', 'error');
+        showToast(err.error || 'Failed to update verified base rate.', 'error');
       }
     } catch (err: any) {
-      showToast(err.message || 'Error updating base rate.', 'error');
+      showToast(err.message || 'Error updating verified base rate.', 'error');
     } finally {
       setSavingBaseRate(false);
+    }
+  };
+
+  // Save Pending Base Rate permanently to MySQL
+  const handleSavePendingBaseRate = async (rateToSave?: number) => {
+    const val = rateToSave !== undefined ? rateToSave : parseFloat(pendingBaseRateInput);
+    if (isNaN(val) || val < 0) {
+      showToast('Please enter a valid pending base rate (0 or greater).', 'error');
+      return;
+    }
+    setSavingPendingBaseRate(true);
+    try {
+      const res = await fetch('/api/pcu/base-rate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ baseRate: baseRate, pendingBaseRate: val })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPendingBaseRate(data.pendingBaseRate);
+        setPendingBaseRateInput(String(data.pendingBaseRate));
+        showToast(`Pending Base Rate ₱${data.pendingBaseRate.toFixed(2)} saved permanently to MySQL!`, 'success');
+      } else {
+        const err = await res.json();
+        showToast(err.error || 'Failed to update pending base rate.', 'error');
+      }
+    } catch (err: any) {
+      showToast(err.message || 'Error updating pending base rate.', 'error');
+    } finally {
+      setSavingPendingBaseRate(false);
     }
   };
 
@@ -879,7 +1003,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   };
 
   // =========================================================================
-  // VERIFICATION WORKFLOW: MOVE BETWEEN PENDING AND VERIFIED (Master Admin Only)
+  // STATUS TRANSITION WORKFLOWS (Master Admin Only)
+  // Files -> Verified (1 Credit * Verified Base Rate)
+  // Files -> Pending (1 Credit * Pending Base Rate)
+  // Pending -> Updated
   // =========================================================================
   const handleVerifyRecord = async (record: UploadedPcuRecord) => {
     if (!isMasterAdmin) {
@@ -911,18 +1038,132 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         const isMatch = (item.id && record.id && item.id === record.id) ||
           (item.fullName && record.fullName && item.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim());
         if (isMatch) {
-          return { ...item, status: 'VERIFIED' };
+          return { 
+            ...item, 
+            status: 'VERIFIED',
+            verified_at: new Date().toISOString(),
+            verified_by: currentUser?.username || 'Admin',
+            verified_credit_added: true 
+          };
         }
         return item;
       }));
 
       if (selectedRecord && (selectedRecord.id === record.id || selectedRecord.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim())) {
-        setSelectedRecord(prev => prev ? { ...prev, status: 'VERIFIED' } : null);
+        setSelectedRecord(prev => prev ? { ...prev, status: 'VERIFIED', verified_credit_added: true } : null);
       }
 
-      showToast(`PCU submission for "${record.fullName}" has been verified! Moved to Verified section and 1 credit added to submitter.`, 'success');
+      showToast(`PCU submission for "${record.fullName}" has been verified! Transferred to Verified section and 1 credit credited at ₱${baseRate.toFixed(2)}.`, 'success');
+      fetchHistory();
     } catch (err: any) {
       showToast(err.message || 'Error verifying PCU submission', 'error');
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  const handleMoveToPendingRecord = async (record: UploadedPcuRecord) => {
+    if (!isMasterAdmin) {
+      showToast('Access Denied: Only Master Admin can update PCU status.', 'error');
+      return;
+    }
+    setVerifyingId(record.id);
+    try {
+      const res = await fetch('/api/pcu/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          id: record.id,
+          fullName: record.fullName,
+          status: 'PENDING'
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to move record to Pending.');
+      }
+
+      // Update state locally so record transfers to Pending section
+      setUploadedRecords(prev => prev.map(item => {
+        const isMatch = (item.id && record.id && item.id === record.id) ||
+          (item.fullName && record.fullName && item.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim());
+        if (isMatch) {
+          return { 
+            ...item, 
+            status: 'PENDING',
+            pending_at: new Date().toISOString(),
+            pending_by: currentUser?.username || 'Admin',
+            pending_credit_added: true 
+          };
+        }
+        return item;
+      }));
+
+      if (selectedRecord && (selectedRecord.id === record.id || selectedRecord.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim())) {
+        setSelectedRecord(prev => prev ? { ...prev, status: 'PENDING', pending_credit_added: true } : null);
+      }
+
+      showToast(`Record "${record.fullName}" moved to Pending section! 1 credit credited at ₱${pendingBaseRate.toFixed(2)}.`, 'success');
+      fetchHistory();
+    } catch (err: any) {
+      showToast(err.message || 'Error moving PCU to Pending', 'error');
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  const handleUpdateStatusRecord = async (record: UploadedPcuRecord) => {
+    if (!isMasterAdmin) {
+      showToast('Access Denied: Only Master Admin can update PCU status.', 'error');
+      return;
+    }
+    setVerifyingId(record.id);
+    try {
+      const res = await fetch('/api/pcu/verify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          id: record.id,
+          fullName: record.fullName,
+          status: 'UPDATED'
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update record status.');
+      }
+
+      // Update state locally so record transfers from Pending to Updated section
+      setUploadedRecords(prev => prev.map(item => {
+        const isMatch = (item.id && record.id && item.id === record.id) ||
+          (item.fullName && record.fullName && item.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim());
+        if (isMatch) {
+          return { 
+            ...item, 
+            status: 'UPDATED',
+            updated_status_at: new Date().toISOString(),
+            updated_status_by: currentUser?.username || 'Admin'
+          };
+        }
+        return item;
+      }));
+
+      if (selectedRecord && (selectedRecord.id === record.id || selectedRecord.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim())) {
+        setSelectedRecord(prev => prev ? { ...prev, status: 'UPDATED' } : null);
+      }
+
+      showToast(`Record "${record.fullName}" status updated and transferred to Updated section!`, 'success');
+      fetchHistory();
+    } catch (err: any) {
+      showToast(err.message || 'Error updating PCU status to Updated', 'error');
     } finally {
       setVerifyingId(null);
     }
@@ -951,7 +1192,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         body: JSON.stringify({
           id: record.id,
           fullName: record.fullName,
-          status: 'PENDING'
+          status: 'FILES'
         })
       });
 
@@ -960,42 +1201,121 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         throw new Error(data.error || 'Failed to update PCU status.');
       }
 
-      // Update state locally so record transfers back to Pending section
+      // Update state locally so record transfers back to Files section
       setUploadedRecords(prev => prev.map(item => {
         const isMatch = (item.id && record.id && item.id === record.id) ||
           (item.fullName && record.fullName && item.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim());
         if (isMatch) {
-          return { ...item, status: 'PENDING' };
+          return { ...item, status: 'FILES' };
         }
         return item;
       }));
 
       if (selectedRecord && (selectedRecord.id === record.id || selectedRecord.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim())) {
-        setSelectedRecord(prev => prev ? { ...prev, status: 'PENDING' } : null);
+        setSelectedRecord(prev => prev ? { ...prev, status: 'FILES' } : null);
       }
 
-      showToast(`PCU submission for "${record.fullName}" has been moved back to Pending.`, 'info');
+      showToast(`PCU submission for "${record.fullName}" has been returned to Files section.`, 'info');
+      fetchHistory();
     } catch (err: any) {
-      showToast(err.message || 'Error moving PCU back to pending', 'error');
+      showToast(err.message || 'Error moving PCU back to Files', 'error');
     } finally {
       setVerifyingId(null);
     }
   };
 
-  // Separate uploaded records into Pending and Verified groups
-  const pendingRecords = React.useMemo(() => {
-    return uploadedRecords.filter(r => (r.status || '').toUpperCase() !== 'VERIFIED');
+  // Helper to determine if a date is within current day (Philippine / application date)
+  // Automatically resets at 12:00 AM midnight
+  const isToday = (dateString?: string | null): boolean => {
+    if (!dateString) return false;
+    const d = new Date(dateString);
+    if (isNaN(d.getTime())) return false;
+    const now = new Date(nowTick);
+    return (
+      d.getFullYear() === now.getFullYear() &&
+      d.getMonth() === now.getMonth() &&
+      d.getDate() === now.getDate()
+    );
+  };
+
+  // =========================================================================
+  // SEPARATE UPLOADED RECORDS INTO 4 TAB GROUPS:
+  // Files | Verified | Pending | Updated
+  // =========================================================================
+  const filesRecords = React.useMemo(() => {
+    return uploadedRecords.filter(r => {
+      const s = (r.status || '').toUpperCase();
+      return s === 'FILES' || (!s && s !== 'VERIFIED' && s !== 'PENDING' && s !== 'UPDATED');
+    });
   }, [uploadedRecords]);
 
   const verifiedRecords = React.useMemo(() => {
     return uploadedRecords.filter(r => (r.status || '').toUpperCase() === 'VERIFIED');
   }, [uploadedRecords]);
 
-  // Current tab records: 'verified' uses verifiedRecords, otherwise pendingRecords
-  const currentTabRecords = activeTab === 'verified' ? verifiedRecords : pendingRecords;
+  const pendingRecords = React.useMemo(() => {
+    return uploadedRecords.filter(r => (r.status || '').toUpperCase() === 'PENDING');
+  }, [uploadedRecords]);
+
+  const updatedRecords = React.useMemo(() => {
+    return uploadedRecords.filter(r => (r.status || '').toUpperCase() === 'UPDATED');
+  }, [uploadedRecords]);
+
+  // Current tab records based on active tab
+  const currentTabRecords = React.useMemo(() => {
+    switch (activeTab) {
+      case 'files':
+        return filesRecords;
+      case 'verified':
+        return verifiedRecords;
+      case 'pending':
+        return pendingRecords;
+      case 'updated':
+        return updatedRecords;
+      default:
+        return filesRecords;
+    }
+  }, [activeTab, filesRecords, verifiedRecords, pendingRecords, updatedRecords]);
+
+  // =========================================================================
+  // AUTOMATIC MIDNIGHT RESET COUNTERS:
+  // Daily Files Submitted: All files submitted today across all records (does not decrease on verify or pending)
+  // Files: Count of records currently remaining in Files section
+  // Daily Verified Files: Count verified today
+  // Total Verified Files: Historical total verified
+  // Daily Pending Files: Count moved to pending today
+  // Total Pending Files: Total pending records
+  // Daily Updated Files: Count moved to updated today
+  // Total Updated Files: Total updated records
+  // =========================================================================
+  const dailyFilesSubmitted = React.useMemo(() => {
+    return uploadedRecords.filter(r => isToday(r.uploadedAt)).length;
+  }, [uploadedRecords, nowTick]);
+
+  const dailyVerifiedCount = React.useMemo(() => {
+    return uploadedRecords.filter(r => 
+      (r.status || '').toUpperCase() === 'VERIFIED' && 
+      isToday(r.verified_at || r.uploadedAt)
+    ).length;
+  }, [uploadedRecords, nowTick]);
+
+  const dailyPendingCount = React.useMemo(() => {
+    return uploadedRecords.filter(r => 
+      (r.status || '').toUpperCase() === 'PENDING' && 
+      isToday(r.pending_at || r.uploadedAt)
+    ).length;
+  }, [uploadedRecords, nowTick]);
+
+  const dailyUpdatedCount = React.useMemo(() => {
+    return uploadedRecords.filter(r => 
+      (r.status || '').toUpperCase() === 'UPDATED' && 
+      isToday(r.updated_status_at || r.uploadedAt)
+    ).length;
+  }, [uploadedRecords, nowTick]);
 
   // =========================================================================
   // BARANGAY FOLDERS COMPUTATION (ACCURATELY DISPLAYED BASE ON BARANGAY)
+  // Distributes the current tab's records into their respective Barangay folders
   // =========================================================================
   const barangayFolders = React.useMemo(() => {
     const map = new Map<string, {
@@ -1074,17 +1394,22 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   }, [barangayFolders, folderSearch]);
 
   // =========================================================================
-  // LEDGER: ALL NAMES WHO SUBMITTED PCU FILES WITH THEIR COUNT OF SUBMISSION
-  // RULE: Only verified submissions count as 1 credit in the Ledger.
-  // If the submission is not verified, it is NOT counted towards the ledger.
+  // LEDGER: ALL NAMES WHO SUBMITTED PCU FILES WITH THEIR COUNT OF SUBMISSIONS
+  // Verified credit: 1 Credit * Verified Base Rate
+  // Pending credit: 1 Credit * Pending Base Rate
+  // Total Compensation: (Verified * Verified Rate) + (Pending * Pending Rate)
   // =========================================================================
   const submittersLedger = React.useMemo(() => {
     const map = new Map<string, {
       name: string;
-      submissionsCount: number; // ONLY VERIFIED COUNT = CREDITS
-      pendingCount: number;     // UNVERIFIED
+      verifiedCount: number; // Verified Credits
+      pendingCount: number;  // Pending Credits
+      uncreditedFiles: number; // Files in initial Files section
       totalUploaded: number;
       filesCount: number;
+      verifiedSalary: number;
+      pendingSalary: number;
+      totalSalary: number;
       barangays: Set<string>;
       latestSubmission: string | null;
       records: UploadedPcuRecord[];
@@ -1096,10 +1421,14 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       if (!map.has(key)) {
         map.set(key, {
           name: submitter,
-          submissionsCount: 0,
+          verifiedCount: 0,
           pendingCount: 0,
+          uncreditedFiles: 0,
           totalUploaded: 0,
           filesCount: 0,
+          verifiedSalary: 0,
+          pendingSalary: 0,
+          totalSalary: 0,
           barangays: new Set<string>(),
           latestSubmission: null,
           records: []
@@ -1110,15 +1439,20 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       item.records.push(rec);
       item.totalUploaded += 1;
 
-      const isVerified = (rec.status || '').toUpperCase() === 'VERIFIED';
+      const s = (rec.status || '').toUpperCase();
+      const isVerified = s === 'VERIFIED' || Boolean(rec.verified_credit_added);
+      const isPending = s === 'PENDING' || s === 'UPDATED' || Boolean(rec.pending_credit_added);
+
       if (isVerified) {
-        // Only verified submitted will be count as 1 credit to the submitter in the Ledger!
-        item.submissionsCount += 1;
-        const fCount = rec.filesCount || (rec.uploadedFiles ? rec.uploadedFiles.length : 1);
-        item.filesCount += fCount;
-      } else {
+        item.verifiedCount += 1;
+      } else if (isPending) {
         item.pendingCount += 1;
+      } else {
+        item.uncreditedFiles += 1;
       }
+
+      const fCount = rec.filesCount || (rec.uploadedFiles ? rec.uploadedFiles.length : 1);
+      item.filesCount += fCount;
 
       if (rec.barangay) item.barangays.add(rec.barangay);
       if (!item.latestSubmission || new Date(rec.uploadedAt).getTime() > new Date(item.latestSubmission).getTime()) {
@@ -1126,8 +1460,17 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       }
     });
 
-    return Array.from(map.values()).sort((a, b) => b.submissionsCount - a.submissionsCount);
-  }, [uploadedRecords]);
+    return Array.from(map.values()).map(sub => {
+      const vSalary = sub.verifiedCount * baseRate;
+      const pSalary = sub.pendingCount * pendingBaseRate;
+      return {
+        ...sub,
+        verifiedSalary: vSalary,
+        pendingSalary: pSalary,
+        totalSalary: vSalary + pSalary
+      };
+    }).sort((a, b) => b.totalSalary - a.totalSalary);
+  }, [uploadedRecords, baseRate, pendingBaseRate]);
 
   // Export Submitters Tallies & Payroll Ledger to CSV Function
   const exportLedgerToCsv = () => {
@@ -1137,10 +1480,13 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     }
     const headers = [
       'Submitter Name',
-      'Total Verified Submissions (Credits)',
-      'Pending Submissions (Uncredited)',
-      'Approved Base Rate (PHP)',
-      'Total Computed Salary (PHP)',
+      'Verified Submissions (Credits)',
+      'Verified Base Rate (PHP)',
+      'Verified Subtotal (PHP)',
+      'Pending Submissions (Credits)',
+      'Pending Base Rate (PHP)',
+      'Pending Subtotal (PHP)',
+      'Total Computed Compensation (PHP)',
       'Settlement Status',
       'Amount Settled / Paid (PHP)',
       'Disbursement Method',
@@ -1150,13 +1496,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     ];
     const rows = submittersLedger.map((sub) => {
       const setRec = settlements.find(s => s.submitter && s.submitter.toLowerCase() === sub.name.toLowerCase());
-      const computedSalary = sub.submissionsCount * baseRate;
       return [
         `"${sub.name.replace(/"/g, '""')}"`,
-        sub.submissionsCount,
-        sub.pendingCount,
+        sub.verifiedCount,
         baseRate.toFixed(2),
-        computedSalary.toFixed(2),
+        sub.verifiedSalary.toFixed(2),
+        sub.pendingCount,
+        pendingBaseRate.toFixed(2),
+        sub.pendingSalary.toFixed(2),
+        sub.totalSalary.toFixed(2),
         `"${(setRec?.paymentStatus || 'PENDING').replace(/"/g, '""')}"`,
         setRec ? (setRec.amountPaid ?? setRec.totalSalary).toFixed(2) : '0.00',
         `"${(setRec?.paymentMethod || 'N/A').replace(/"/g, '""')}"`,
@@ -1353,6 +1701,132 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     );
   };
 
+  // Reusable Record Action Buttons component for Files (Verify + Pending), Pending (Update), Updated (Badge), and Verified (Badge)
+  const renderRecordActionButtons = (record: UploadedPcuRecord) => {
+    const s = (record.status || 'FILES').toUpperCase();
+    const isFiles = s === 'FILES';
+    const isVerified = s === 'VERIFIED';
+    const isPending = s === 'PENDING';
+    const isUpdated = s === 'UPDATED';
+
+    if (isFiles) {
+      return (
+        <div className="flex items-center gap-1.5 pt-1">
+          {isMasterAdmin ? (
+            <>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setVerifyTarget(record);
+                }}
+                disabled={verifyingId === record.id}
+                className="flex-1 py-2 px-2 min-h-[38px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-[11px] font-black shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                title="Verify submission: 1 Credit × Verified Base Rate credited to submitter"
+              >
+                {verifyingId === record.id ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                )}
+                <span>Verify</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleMoveToPendingRecord(record);
+                }}
+                disabled={verifyingId === record.id}
+                className="flex-1 py-2 px-2 min-h-[38px] bg-amber-500 hover:bg-amber-600 active:scale-98 text-white rounded-xl text-[11px] font-black shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                title="Move to Pending: 1 Credit × Pending Base Rate credited to submitter"
+              >
+                {verifyingId === record.id ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Clock className="w-3.5 h-3.5" />
+                )}
+                <span>Pending</span>
+              </button>
+            </>
+          ) : (
+            <div className="w-full py-2 px-2 min-h-[38px] bg-slate-100 text-slate-700 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1">
+              <FileText className="w-3.5 h-3.5 text-slate-500" />
+              <span>Files Submitted</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (isPending) {
+      return (
+        <div className="flex items-center gap-1.5 pt-1">
+          {isMasterAdmin ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleUpdateStatusRecord(record);
+              }}
+              disabled={verifyingId === record.id}
+              className="w-full py-2 px-3 min-h-[38px] bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 active:scale-98 text-white rounded-xl text-[11px] font-black shadow-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+              title="Click Update to change status to Updated and transfer to Updated section"
+            >
+              {verifyingId === record.id ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <CheckCheck className="w-3.5 h-3.5" />
+              )}
+              <span>Update</span>
+            </button>
+          ) : (
+            <div className="w-full py-2 px-2 min-h-[38px] bg-amber-50 border border-amber-200/70 text-amber-800 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1">
+              <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <span>Pending Review</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (isUpdated) {
+      return (
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <span className="flex-1 py-2 px-2 min-h-[38px] bg-blue-50 border border-blue-200 text-blue-800 rounded-xl text-[11px] font-black flex items-center justify-center gap-1.5">
+            <CheckCheck className="w-3.5 h-3.5 text-blue-600" />
+            <span>Updated</span>
+          </span>
+        </div>
+      );
+    }
+
+    // isVerified
+    return (
+      <div className="flex items-center justify-between gap-2 pt-1">
+        <span className="flex-1 py-2 px-2 min-h-[38px] bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-[11px] font-black flex items-center justify-center gap-1">
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Verified</span>
+        </span>
+        {isMasterAdmin && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleUnverifyRecord(record);
+            }}
+            disabled={verifyingId === record.id}
+            className="p-2 min-h-[38px] min-w-[38px] flex items-center justify-center text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-colors cursor-pointer"
+            title="Return to Files (Master Admin Only)"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6 max-w-7xl 2xl:max-w-[1720px] mx-auto pb-16">
       {/* ========================================================================= */}
@@ -1449,103 +1923,328 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       </AnimatePresence>
 
       {/* ========================================================================= */}
-      {/* TABS NAVIGATION BAR BELOW THE HEADER                                       */}
-      {/* Tab 1: Pending (Renamed from Barangay Folders)                             */}
-      {/* Tab 2: Verified (New tab beside Pending for verified PCU submissions)       */}
-      {/* Tab 3: Ledger (Master Admin Only - submitter credits & payroll)           */}
+      {/* TABS NAVIGATION BAR: Files | Verified | Pending | Updated | Ledger          */}
       {/* ========================================================================= */}
       {!isFormOpen && (
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 neu-raised p-2 sm:p-3 rounded-2xl">
-          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar py-0.5 max-w-full">
-            {/* Tab 1: Pending (Renamed from Barangay Folders) */}
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('pending');
-              }}
-              className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
-                activeTab === 'pending'
-                  ? 'neu-btn-white text-emerald-950 border border-emerald-500/30'
-                  : 'neu-tab-inactive'
-              }`}
-            >
-              <Clock className="w-4 h-4 text-emerald-700 shrink-0" />
-              <span>Pending</span>
-              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                activeTab === 'pending' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
-              }`}>
-                {pendingRecords.length}
-              </span>
-            </button>
-
-            {/* Tab 2: Verified (New tab beside Pending) */}
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('verified');
-              }}
-              className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
-                activeTab === 'verified'
-                  ? 'neu-tab-active-green'
-                  : 'neu-tab-inactive'
-              }`}
-            >
-              <CheckCircle2 className="w-4 h-4 shrink-0" />
-              <span>Verified</span>
-              <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                activeTab === 'verified' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'
-              }`}>
-                {verifiedRecords.length}
-              </span>
-            </button>
-
-            {/* Tab 3: Ledger (Only Master Admin can view) */}
-            {isMasterAdmin && (
+        <div className="space-y-4">
+          <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 neu-raised p-2 sm:p-3 rounded-2xl">
+            <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar py-0.5 max-w-full">
+              {/* Tab 1: Files */}
               <button
                 type="button"
-                onClick={() => {
-                  setActiveTab('ledger');
-                }}
+                onClick={() => setActiveTab('files')}
                 className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
-                  activeTab === 'ledger'
-                    ? 'neu-black text-white'
+                  activeTab === 'files'
+                    ? 'neu-tab-active-green'
                     : 'neu-tab-inactive'
                 }`}
               >
-                <BookOpen className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Ledger</span>
-                <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-400/30">
-                  <ShieldCheck className="w-3 h-3 text-emerald-400" />
-                  Master Admin
+                <FileText className="w-4 h-4 shrink-0" />
+                <span>Files</span>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                  activeTab === 'files' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                }`}>
+                  {filesRecords.length}
                 </span>
               </button>
-            )}
+
+              {/* Tab 2: Verified */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('verified')}
+                className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
+                  activeTab === 'verified'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                    : 'neu-tab-inactive'
+                }`}
+              >
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>Verified</span>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                  activeTab === 'verified' ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-800'
+                }`}>
+                  {verifiedRecords.length}
+                </span>
+              </button>
+
+              {/* Tab 3: Pending */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('pending')}
+                className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
+                  activeTab === 'pending'
+                    ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20'
+                    : 'neu-tab-inactive'
+                }`}
+              >
+                <Clock className="w-4 h-4 shrink-0" />
+                <span>Pending</span>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                  activeTab === 'pending' ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-900'
+                }`}>
+                  {pendingRecords.length}
+                </span>
+              </button>
+
+              {/* Tab 4: Updated */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('updated')}
+                className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
+                  activeTab === 'updated'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+                    : 'neu-tab-inactive'
+                }`}
+              >
+                <CheckCheck className="w-4 h-4 shrink-0" />
+                <span>Updated</span>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                  activeTab === 'updated' ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-900'
+                }`}>
+                  {updatedRecords.length}
+                </span>
+              </button>
+
+              {/* Tab 5: Ledger (Only Master Admin can view) */}
+              {isMasterAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('ledger')}
+                  className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
+                    activeTab === 'ledger'
+                      ? 'neu-black text-white'
+                      : 'neu-tab-inactive'
+                  }`}
+                >
+                  <BookOpen className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Ledger</span>
+                  <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-400/30">
+                    <ShieldCheck className="w-3 h-3 text-emerald-400" />
+                    Master Admin
+                  </span>
+                </button>
+              )}
+            </div>
+
+            {/* Quick Info & Refresh */}
+            <div className="flex items-center justify-between lg:justify-end gap-2 sm:gap-3 px-1 sm:px-0 shrink-0">
+              <span className="text-[11px] sm:text-xs text-slate-500 font-medium truncate">
+                <span className="text-emerald-700 font-bold">{filesRecords.length} Files</span> • <span className="text-emerald-600 font-bold">{verifiedRecords.length} Verified</span> • <span className="text-amber-600 font-bold">{pendingRecords.length} Pending</span> • <span className="text-blue-600 font-bold">{updatedRecords.length} Updated</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  fetchUploadedRecords();
+                  fetchHistory();
+                }}
+                disabled={loadingRecords || loadingHistory}
+                className="p-2 neu-btn-white rounded-xl transition-colors cursor-pointer min-h-[38px] min-w-[38px] flex items-center justify-center shrink-0"
+                title="Refresh Records & History"
+              >
+                <RefreshCw className={`w-4 h-4 ${(loadingRecords || loadingHistory) ? 'animate-spin text-emerald-600' : 'text-emerald-700'}`} />
+              </button>
+            </div>
           </div>
 
-          {/* Quick Info & Refresh */}
-          <div className="flex items-center justify-between sm:justify-end gap-2 sm:gap-3 px-1 sm:px-0 shrink-0">
-            <span className="text-[11px] sm:text-xs text-slate-500 font-medium truncate">
-              <span className="text-emerald-700 font-bold">{verifiedRecords.length} Verified</span> • <span className="text-slate-700 font-bold">{pendingRecords.length} Pending</span>
-            </span>
-            <button
-              type="button"
-              onClick={fetchUploadedRecords}
-              disabled={loadingRecords}
-              className="p-2 neu-btn-white rounded-xl transition-colors cursor-pointer min-h-[38px] min-w-[38px] flex items-center justify-center shrink-0"
-              title="Refresh Records"
-            >
-              <RefreshCw className={`w-4 h-4 ${loadingRecords ? 'animate-spin text-emerald-600' : 'text-emerald-700'}`} />
-            </button>
-          </div>
+          {/* ========================================================================= */}
+          {/* SECTION COUNTER BOXES (AUTOMATIC MIDNIGHT RESET)                           */}
+          {/* ========================================================================= */}
+          {activeTab === 'files' && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+              {/* Counter 1: Daily Files Submitted */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-emerald-500/5 to-teal-500/10 border border-emerald-500/20">
+                <div className="space-y-1">
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-emerald-800">
+                    Daily Files Submitted
+                  </span>
+                  <div className="text-2xl sm:text-3xl font-black text-emerald-950 font-display">
+                    {dailyFilesSubmitted}
+                  </div>
+                  <span className="text-[11px] text-emerald-700 font-medium block">
+                    All submissions today • Resets at 12:00 AM
+                  </span>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <CalendarClock className="w-6 h-6" />
+                </div>
+              </div>
+
+              {/* Counter 2: Files (remaining in Files section) */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-white border border-slate-200/80">
+                <div className="space-y-1">
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-slate-500">
+                    Files
+                  </span>
+                  <div className="text-2xl sm:text-3xl font-black text-slate-900 font-display">
+                    {filesRecords.length}
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-medium block">
+                    Records remaining in Files section
+                  </span>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <FileText className="w-6 h-6" />
+                </div>
+              </div>
+
+              {/* Counter 3: History (Clickable Activity Log) */}
+              <button
+                type="button"
+                onClick={() => setIsHistoryModalOpen(true)}
+                className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-indigo-50 to-slate-50 border border-indigo-200/60 hover:border-indigo-400 hover:shadow-md transition-all cursor-pointer text-left group"
+                title="Click to view complete Files activity and action log"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-indigo-900 group-hover:text-indigo-600 transition-colors">
+                      History
+                    </span>
+                    <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">
+                      Click to View
+                    </span>
+                  </div>
+                  <div className="text-2xl sm:text-3xl font-black text-indigo-950 font-display group-hover:translate-x-0.5 transition-transform">
+                    {pcuHistory.length}
+                  </div>
+                  <span className="text-[11px] text-indigo-700/80 font-medium block">
+                    Total recorded actions • Open log panel
+                  </span>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0 shadow-xs group-hover:scale-105 transition-transform">
+                  <History className="w-6 h-6" />
+                </div>
+              </button>
+            </div>
+          )}
+
+          {activeTab === 'verified' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+              {/* Counter 1: Daily Verified Files */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/30">
+                <div className="space-y-1">
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-emerald-800">
+                    Daily Verified Files
+                  </span>
+                  <div className="text-2xl sm:text-3xl font-black text-emerald-950 font-display">
+                    {dailyVerifiedCount}
+                  </div>
+                  <span className="text-[11px] text-emerald-700 font-medium block">
+                    Files verified today • Resets at 12:00 AM
+                  </span>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <CalendarClock className="w-6 h-6" />
+                </div>
+              </div>
+
+              {/* Counter 2: Total Verified Files */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-white border border-emerald-200/60">
+                <div className="space-y-1">
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-slate-500">
+                    Total Verified Files
+                  </span>
+                  <div className="text-2xl sm:text-3xl font-black text-emerald-700 font-display">
+                    {verifiedRecords.length}
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-medium block">
+                    Historical verified records (does not reset)
+                  </span>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'pending' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+              {/* Counter 1: Daily Pending Files */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-amber-500/10 to-orange-500/5 border border-amber-500/30">
+                <div className="space-y-1">
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-amber-800">
+                    Daily Pending Files
+                  </span>
+                  <div className="text-2xl sm:text-3xl font-black text-amber-950 font-display">
+                    {dailyPendingCount}
+                  </div>
+                  <span className="text-[11px] text-amber-700 font-medium block">
+                    Moved to Pending today • Resets at 12:00 AM
+                  </span>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <CalendarClock className="w-6 h-6" />
+                </div>
+              </div>
+
+              {/* Counter 2: Total Pending Files */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-white border border-amber-200/60">
+                <div className="space-y-1">
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-slate-500">
+                    Total Pending Files
+                  </span>
+                  <div className="text-2xl sm:text-3xl font-black text-amber-600 font-display">
+                    {pendingRecords.length}
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-medium block">
+                    Total pending records currently recorded
+                  </span>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <Clock className="w-6 h-6" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'updated' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+              {/* Counter 1: Daily Updated Files */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-blue-500/10 to-indigo-500/5 border border-blue-500/30">
+                <div className="space-y-1">
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-blue-800">
+                    Daily Updated Files
+                  </span>
+                  <div className="text-2xl sm:text-3xl font-black text-blue-950 font-display">
+                    {dailyUpdatedCount}
+                  </div>
+                  <span className="text-[11px] text-blue-700 font-medium block">
+                    Moved to Updated today • Resets at 12:00 AM
+                  </span>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <CalendarClock className="w-6 h-6" />
+                </div>
+              </div>
+
+              {/* Counter 2: Total Updated Files */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-white border border-blue-200/60">
+                <div className="space-y-1">
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-slate-500">
+                    Total Updated Files
+                  </span>
+                  <div className="text-2xl sm:text-3xl font-black text-blue-600 font-display">
+                    {updatedRecords.length}
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-medium block">
+                    All records moved from Pending to Updated
+                  </span>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <CheckCheck className="w-6 h-6" />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Dynamic View: Toggle between Grid View of Uploaded Data and Upload PCU Form */}
       <AnimatePresence mode="wait">
         {!isFormOpen ? (
-          activeTab === 'pending' || activeTab === 'verified' ? (
+          activeTab === 'files' || activeTab === 'verified' || activeTab === 'pending' || activeTab === 'updated' ? (
             /* ========================================================================= */
-            /* VIEW: PENDING / VERIFIED BARANGAY FOLDERS & ALL GRID                      */
+            /* VIEW: FILES / VERIFIED / PENDING / UPDATED FOLDERS & ALL GRID             */
             /* ========================================================================= */
             <motion.div
               key={`${activeTab}-view`}

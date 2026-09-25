@@ -279,6 +279,24 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       INDEX idx_settle_submitter (submitter),
       INDEX idx_settle_status (payment_status),
       INDEX idx_settle_at (settled_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    // 12. PCU Activity and Status History Log Table (Files Section History)
+    `CREATE TABLE IF NOT EXISTS pcu_history (
+      id VARCHAR(100) PRIMARY KEY,
+      action VARCHAR(100) NOT NULL,
+      record_id VARCHAR(100) DEFAULT '',
+      patient_name VARCHAR(255) NOT NULL,
+      barangay VARCHAR(255) DEFAULT '',
+      submitter VARCHAR(255) DEFAULT '',
+      performed_by VARCHAR(255) NOT NULL,
+      previous_status VARCHAR(50) DEFAULT '',
+      new_status VARCHAR(50) DEFAULT '',
+      timestamp VARCHAR(100) NOT NULL,
+      details TEXT NULL,
+      INDEX idx_hist_time (timestamp),
+      INDEX idx_hist_patient (patient_name),
+      INDEX idx_hist_action (action)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
   ];
 
@@ -410,9 +428,15 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       const missingPcuCols = [
         { name: 'verified_at', type: "VARCHAR(100) NULL" },
         { name: 'verified_by', type: "VARCHAR(255) NULL" },
+        { name: 'pending_at', type: "VARCHAR(100) NULL" },
+        { name: 'pending_by', type: "VARCHAR(255) NULL" },
+        { name: 'updated_status_at', type: "VARCHAR(100) NULL" },
+        { name: 'updated_status_by', type: "VARCHAR(255) NULL" },
         { name: 'credit_added', type: "TINYINT(1) DEFAULT 0" },
+        { name: 'verified_credit_added', type: "TINYINT(1) DEFAULT 0" },
+        { name: 'pending_credit_added', type: "TINYINT(1) DEFAULT 0" },
         { name: 'notes', type: "TEXT NULL" },
-        { name: 'status', type: "VARCHAR(50) DEFAULT 'PENDING'" },
+        { name: 'status', type: "VARCHAR(50) DEFAULT 'FILES'" },
         { name: 'uploaded_files', type: "LONGTEXT NULL" }
       ];
       for (const col of missingPcuCols) {
@@ -800,10 +824,16 @@ CREATE TABLE IF NOT EXISTS \`pcu_submissions\` (
   \`uploaded_by\` VARCHAR(255) DEFAULT 'Admin',
   \`uploaded_at\` VARCHAR(100) DEFAULT '',
   \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  \`status\` VARCHAR(50) DEFAULT 'PENDING',
+  \`status\` VARCHAR(50) DEFAULT 'FILES',
   \`verified_at\` VARCHAR(100) NULL,
   \`verified_by\` VARCHAR(255) NULL,
+  \`pending_at\` VARCHAR(100) NULL,
+  \`pending_by\` VARCHAR(255) NULL,
+  \`updated_status_at\` VARCHAR(100) NULL,
+  \`updated_status_by\` VARCHAR(255) NULL,
   \`credit_added\` TINYINT(1) DEFAULT 0,
+  \`verified_credit_added\` TINYINT(1) DEFAULT 0,
+  \`pending_credit_added\` TINYINT(1) DEFAULT 0,
   \`notes\` TEXT NULL,
   PRIMARY KEY (\`id\`),
   INDEX \`idx_pcu_contact_id\` (\`contact_id\`),
@@ -852,6 +882,26 @@ CREATE TABLE IF NOT EXISTS \`pcu_settlements\` (
   INDEX \`idx_settle_submitter\` (\`submitter\`),
   INDEX \`idx_settle_status\` (\`payment_status\`),
   INDEX \`idx_settle_at\` (\`settled_at\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
+-- 12. Table: pcu_history (Submit PCU Action & Activity Audit Trail)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS \`pcu_history\` (
+  \`id\` VARCHAR(100) PRIMARY KEY,
+  \`action\` VARCHAR(100) NOT NULL,
+  \`record_id\` VARCHAR(100) DEFAULT '',
+  \`patient_name\` VARCHAR(255) NOT NULL,
+  \`barangay\` VARCHAR(255) DEFAULT '',
+  \`submitter\` VARCHAR(255) DEFAULT '',
+  \`performed_by\` VARCHAR(255) NOT NULL,
+  \`previous_status\` VARCHAR(50) DEFAULT '',
+  \`new_status\` VARCHAR(50) DEFAULT '',
+  \`timestamp\` VARCHAR(100) NOT NULL,
+  \`details\` TEXT NULL,
+  INDEX \`idx_hist_time\` (\`timestamp\`),
+  INDEX \`idx_hist_patient\` (\`patient_name\`),
+  INDEX \`idx_hist_action\` (\`action\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- -------------------------------------------------------------------------
@@ -1586,13 +1636,32 @@ export async function fetchAllFromCPanelDb(): Promise<{
     const maxUpdated = contacts.reduce((max, c) => (c.updated_at > max ? c.updated_at : max), '');
     updateLastSyncMetadata(contacts.filter(c => !c.deleted_at).length, maxUpdated, maxId);
 
+    // Fetch PCU Submissions and History from MySQL to ensure zero data loss on application restart or cPanel update
+    let pcuSubmissions: any[] = [];
+    try {
+      pcuSubmissions = await fetchAllPcuSubmissionsFromCPanel();
+      console.log(`[cPanel DB] Loaded ${pcuSubmissions.length} PCU submissions from MySQL pcu_submissions table.`);
+    } catch (pcuErr: any) {
+      console.warn('[cPanel DB] Notice reading pcu_submissions table:', pcuErr.message);
+    }
+
+    let pcuHistory: any[] = [];
+    try {
+      pcuHistory = await fetchPcuHistoryFromCPanel(500);
+      console.log(`[cPanel DB] Loaded ${pcuHistory.length} PCU history entries from MySQL pcu_history table.`);
+    } catch (histErr: any) {
+      console.warn('[cPanel DB] Notice reading pcu_history table:', histErr.message);
+    }
+
     return {
       contacts,
       users,
       existingAccounts,
       barangays,
       activities,
-      settings
+      settings,
+      pcuSubmissions,
+      pcuHistory
     };
   } catch (err: any) {
     console.error('[cPanel DB] Error fetching records from MySQL:', err.message);
@@ -2336,6 +2405,14 @@ export async function savePcuSubmissionToCPanel(submission: {
   uploadedBy?: string;
   uploadedAt?: string;
   status?: string;
+  verified_at?: string | null;
+  verified_by?: string | null;
+  pending_at?: string | null;
+  pending_by?: string | null;
+  updated_status_at?: string | null;
+  updated_status_by?: string | null;
+  verified_credit_added?: boolean | number;
+  pending_credit_added?: boolean | number;
 }): Promise<void> {
   if (!pool || !currentStatus.connected) return;
   try {
@@ -2350,12 +2427,20 @@ export async function savePcuSubmissionToCPanel(submission: {
     const uploadedFiles = submission.uploadedFiles ? JSON.stringify(submission.uploadedFiles) : null;
     const uploadedBy = submission.uploadedBy || 'Admin';
     const uploadedAt = submission.uploadedAt || new Date().toISOString();
-    const status = submission.status || 'SUBMITTED';
+    const status = submission.status || 'FILES';
+    const verifiedAt = submission.verified_at || null;
+    const verifiedBy = submission.verified_by || null;
+    const pendingAt = submission.pending_at || null;
+    const pendingBy = submission.pending_by || null;
+    const updatedStatusAt = submission.updated_status_at || null;
+    const updatedStatusBy = submission.updated_status_by || null;
+    const verifiedCreditAdded = submission.verified_credit_added ? 1 : 0;
+    const pendingCreditAdded = submission.pending_credit_added ? 1 : 0;
 
     await pool.query(
       `INSERT INTO pcu_submissions 
-        (id, contact_id, full_name, barangay, purok, contact_number, file_name, file_url, uploaded_files, uploaded_by, uploaded_at, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, contact_id, full_name, barangay, purok, contact_number, file_name, file_url, uploaded_files, uploaded_by, uploaded_at, status, verified_at, verified_by, pending_at, pending_by, updated_status_at, updated_status_by, verified_credit_added, pending_credit_added)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
         contact_id = VALUES(contact_id),
         full_name = VALUES(full_name),
@@ -2367,12 +2452,132 @@ export async function savePcuSubmissionToCPanel(submission: {
         uploaded_files = VALUES(uploaded_files),
         uploaded_by = VALUES(uploaded_by),
         uploaded_at = VALUES(uploaded_at),
-        status = VALUES(status)`,
-      [id, contactId, fullName, barangay, purok, contactNumber, fileName, fileUrl, uploadedFiles, uploadedBy, uploadedAt, status]
+        status = VALUES(status),
+        verified_at = COALESCE(VALUES(verified_at), verified_at),
+        verified_by = COALESCE(VALUES(verified_by), verified_by),
+        pending_at = COALESCE(VALUES(pending_at), pending_at),
+        pending_by = COALESCE(VALUES(pending_by), pending_by),
+        updated_status_at = COALESCE(VALUES(updated_status_at), updated_status_at),
+        updated_status_by = COALESCE(VALUES(updated_status_by), updated_status_by),
+        verified_credit_added = CASE WHEN VALUES(verified_credit_added) = 1 THEN 1 ELSE verified_credit_added END,
+        pending_credit_added = CASE WHEN VALUES(pending_credit_added) = 1 THEN 1 ELSE pending_credit_added END`,
+      [id, contactId, fullName, barangay, purok, contactNumber, fileName, fileUrl, uploadedFiles, uploadedBy, uploadedAt, status, verifiedAt, verifiedBy, pendingAt, pendingBy, updatedStatusAt, updatedStatusBy, verifiedCreditAdded, pendingCreditAdded]
     );
-    console.log(`[cPanel DB] Saved PCU submission ${id} for "${fullName}" to MySQL database.`);
+    console.log(`[cPanel DB] Saved PCU submission ${id} for "${fullName}" (Status: ${status}) to MySQL database.`);
   } catch (err: any) {
     console.warn('[cPanel DB] Error saving PCU submission to MySQL:', err.message || err);
+  }
+}
+
+/**
+ * Fetches all PCU submissions from cPanel MySQL table `pcu_submissions`.
+ */
+export async function fetchAllPcuSubmissionsFromCPanel(): Promise<any[]> {
+  if (!pool || !currentStatus.connected) return [];
+  try {
+    const [rows]: any = await pool.query('SELECT * FROM pcu_submissions ORDER BY uploaded_at DESC');
+    return (rows || []).map((r: any) => {
+      let uploadedFiles: any[] = [];
+      try {
+        if (r.uploaded_files) {
+          uploadedFiles = typeof r.uploaded_files === 'string' ? JSON.parse(r.uploaded_files) : r.uploaded_files;
+        }
+      } catch {}
+      return {
+        id: String(r.id),
+        contactId: r.contact_id ? String(r.contact_id) : String(r.id),
+        fullName: r.full_name,
+        barangay: r.barangay || 'General / Unassigned',
+        purok: r.purok || '',
+        contactNumber: r.contact_number || '',
+        fileName: r.file_name || (uploadedFiles[0]?.name) || 'PCU Document',
+        fileUrl: r.file_url || (uploadedFiles[0]?.url) || '',
+        uploadedFiles: Array.isArray(uploadedFiles) ? uploadedFiles : [],
+        uploadedBy: r.uploaded_by || 'Admin',
+        uploadedAt: r.uploaded_at || (r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()),
+        status: (r.status || 'FILES').toUpperCase(),
+        verified_at: r.verified_at || null,
+        verified_by: r.verified_by || null,
+        pending_at: r.pending_at || null,
+        pending_by: r.pending_by || null,
+        updated_status_at: r.updated_status_at || null,
+        updated_status_by: r.updated_status_by || null,
+        credit_added: Boolean(r.credit_added),
+        verified_credit_added: Boolean(r.verified_credit_added || r.credit_added),
+        pending_credit_added: Boolean(r.pending_credit_added),
+        notes: r.notes || ''
+      };
+    });
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error fetching PCU submissions from MySQL:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Saves a PCU history / activity action record into cPanel MySQL table `pcu_history`.
+ */
+export async function savePcuHistoryToCPanel(historyItem: {
+  id?: string;
+  action: string;
+  recordId?: string;
+  patientName: string;
+  barangay?: string;
+  submitter?: string;
+  performedBy: string;
+  previousStatus?: string;
+  newStatus: string;
+  timestamp?: string;
+  details?: string;
+}): Promise<void> {
+  if (!pool || !currentStatus.connected) return;
+  try {
+    const id = historyItem.id || crypto.randomUUID();
+    const action = historyItem.action;
+    const recordId = historyItem.recordId || '';
+    const patientName = historyItem.patientName || 'Unknown Patient';
+    const barangay = historyItem.barangay || '';
+    const submitter = historyItem.submitter || '';
+    const performedBy = historyItem.performedBy || 'Admin';
+    const previousStatus = historyItem.previousStatus || '';
+    const newStatus = historyItem.newStatus || '';
+    const timestamp = historyItem.timestamp || new Date().toISOString();
+    const details = historyItem.details || '';
+
+    await pool.query(
+      `INSERT INTO pcu_history (id, action, record_id, patient_name, barangay, submitter, performed_by, previous_status, new_status, timestamp, details)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE action = VALUES(action), details = VALUES(details)`,
+      [id, action, recordId, patientName, barangay, submitter, performedBy, previousStatus, newStatus, timestamp, details]
+    );
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error saving PCU history to MySQL:', err.message);
+  }
+}
+
+/**
+ * Fetches recent PCU history actions from cPanel MySQL table `pcu_history`.
+ */
+export async function fetchPcuHistoryFromCPanel(limit: number = 500): Promise<any[]> {
+  if (!pool || !currentStatus.connected) return [];
+  try {
+    const [rows]: any = await pool.query('SELECT * FROM pcu_history ORDER BY timestamp DESC LIMIT ?', [limit]);
+    return (rows || []).map((r: any) => ({
+      id: String(r.id),
+      action: r.action,
+      recordId: r.record_id,
+      patientName: r.patient_name,
+      barangay: r.barangay,
+      submitter: r.submitter,
+      performedBy: r.performed_by,
+      previousStatus: r.previous_status,
+      newStatus: r.new_status,
+      timestamp: r.timestamp,
+      details: r.details
+    }));
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error fetching PCU history from MySQL:', err.message);
+    return [];
   }
 }
 
@@ -2514,7 +2719,7 @@ export async function deletePcuFileFromCPanel(params: {
 }
 
 /**
- * Updates the verification status of a PCU submission in cPanel MySQL.
+ * Updates the status (VERIFIED, PENDING, UPDATED, or FILES) of a PCU submission in cPanel MySQL.
  */
 export async function updatePcuStatusInCPanel(params: {
   id?: string;
@@ -2525,32 +2730,46 @@ export async function updatePcuStatusInCPanel(params: {
   if (!pool) return false;
   try {
     const { id, fullName, status, username } = params;
-    const verifiedAt = status === 'VERIFIED' ? new Date().toISOString() : null;
-    const verifiedBy = status === 'VERIFIED' ? username : null;
+    const nowIso = new Date().toISOString();
+    const isVerified = status === 'VERIFIED';
+    const isPending = status === 'PENDING';
+    const isUpdated = status === 'UPDATED';
+
+    let sqlFields = 'status = ?';
+    const sqlParams: any[] = [status];
+
+    if (isVerified) {
+      sqlFields += ', verified_at = ?, verified_by = ?, verified_credit_added = 1';
+      sqlParams.push(nowIso, username);
+    } else if (isPending) {
+      sqlFields += ', pending_at = ?, pending_by = ?, pending_credit_added = 1';
+      sqlParams.push(nowIso, username);
+    } else if (isUpdated) {
+      sqlFields += ', updated_status_at = ?, updated_status_by = ?';
+      sqlParams.push(nowIso, username);
+    }
 
     if (id && id !== 'new') {
-      await pool.query(
-        'UPDATE pcu_submissions SET status = ?, verified_at = ?, verified_by = ? WHERE id = ? OR contact_id = ?',
-        [status, verifiedAt, verifiedBy, id, id]
-      ).catch(() => {
-        // Fallback in case verified_at/verified_by columns don't exist yet
-        return pool?.query(
-          'UPDATE pcu_submissions SET status = ? WHERE id = ? OR contact_id = ?',
-          [status, id, id]
+      try {
+        await pool.query(
+          `UPDATE pcu_submissions SET ${sqlFields} WHERE id = ? OR contact_id = ?`,
+          [...sqlParams, id, id]
         );
-      });
+      } catch (e: any) {
+        // Fallback for older schemas without the new columns
+        await pool.query('UPDATE pcu_submissions SET status = ? WHERE id = ? OR contact_id = ?', [status, id, id]).catch(() => {});
+      }
     }
 
     if (fullName && fullName.trim()) {
-      await pool.query(
-        'UPDATE pcu_submissions SET status = ?, verified_at = ?, verified_by = ? WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))',
-        [status, verifiedAt, verifiedBy, fullName.trim()]
-      ).catch(() => {
-        return pool?.query(
-          'UPDATE pcu_submissions SET status = ? WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))',
-          [status, fullName.trim()]
+      try {
+        await pool.query(
+          `UPDATE pcu_submissions SET ${sqlFields} WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))`,
+          [...sqlParams, fullName.trim()]
         );
-      });
+      } catch (e: any) {
+        await pool.query('UPDATE pcu_submissions SET status = ? WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))', [status, fullName.trim()]).catch(() => {});
+      }
     }
 
     console.log(`[cPanel DB] Updated status to "${status}" for PCU submission: ${fullName || id}`);

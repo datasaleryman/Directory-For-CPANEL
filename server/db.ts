@@ -23,6 +23,9 @@ import {
   savePcuSettlementToCPanel,
   fetchPcuSettlementsFromCPanel,
   deletePcuSettlementFromCPanel,
+  fetchAllPcuSubmissionsFromCPanel,
+  savePcuHistoryToCPanel,
+  fetchPcuHistoryFromCPanel,
   fetchAllFromCPanelDb,
   getCPanelDbStatus,
   isCPanelDbConnected,
@@ -233,13 +236,27 @@ export interface PCUUpdate {
   barangay?: string;
   purok?: string;
   fileName: string;
-  fileData: string; // Base64 content
+  fileData: string; // Base64 content or public storage URL
   uploadedAt: string;
   uploadedBy?: string;
   added_from_website?: boolean;
-  status?: string;
+  status?: string; // 'FILES' | 'VERIFIED' | 'PENDING' | 'UPDATED'
   verified_at?: string | null;
   verified_by?: string | null;
+  pending_at?: string | null;
+  pending_by?: string | null;
+  updated_status_at?: string | null;
+  updated_status_by?: string | null;
+  verified_credit_added?: boolean;
+  pending_credit_added?: boolean;
+  credit_added?: boolean;
+  contact_number?: string;
+  uploadedFiles?: {
+    name: string;
+    url: string;
+    uploadedAt: string;
+    uploadedBy?: string;
+  }[];
 }
 
 export interface Activity {
@@ -309,9 +326,26 @@ const ACTIVITIES_FILE = path.join(DATA_DIR, 'activities.json');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SHEETS_CONFIG_FILE = path.join(DATA_DIR, 'sheets_config.json');
 const PCU_UPDATES_FILE = path.join(DATA_DIR, 'pcu_updates.json');
+const PCU_HISTORY_FILE = path.join(DATA_DIR, 'pcu_history.json');
 const PCU_SETTLEMENTS_FILE = path.join(DATA_DIR, 'pcu_settlements.json');
 const PCU_CONFIG_FILE = path.join(DATA_DIR, 'pcu_config.json');
 const EXISTING_ACCOUNTS_FILE = path.join(DATA_DIR, 'existing_accounts.json');
+
+export interface PcuHistoryItem {
+  id: string;
+  action: string;
+  recordId?: string;
+  patientName: string;
+  barangay?: string;
+  submitter?: string;
+  performedBy: string;
+  previousStatus?: string;
+  newStatus: string;
+  timestamp: string;
+  details?: string;
+}
+
+export let pcuHistoryCache: PcuHistoryItem[] = [];
 
 export interface PcuSettlement {
   id: string;
@@ -329,6 +363,7 @@ export interface PcuSettlement {
 }
 
 export let pcuBaseRate: number = 50.00;
+export let pcuPendingBaseRate: number = 25.00;
 export let pcuSettlementsCache: PcuSettlement[] = [];
 const LOGO_DATA_FILE = path.join(DATA_DIR, 'logo_data.txt');
 const FAVICON_DATA_FILE = path.join(DATA_DIR, 'favicon_data.txt');
@@ -1107,23 +1142,47 @@ export function getPcuBaseRate(): number {
   return pcuBaseRate;
 }
 
-export async function setPcuBaseRate(rate: number): Promise<number> {
-  const cleanRate = Math.max(0, Number(rate) || 0);
-  pcuBaseRate = cleanRate;
-  siteSettings.pcuBaseRate = cleanRate;
+export function getPcuPendingBaseRate(): number {
+  return pcuPendingBaseRate;
+}
+
+export function getPcuBaseRates(): { baseRate: number; pendingBaseRate: number } {
+  return { baseRate: pcuBaseRate, pendingBaseRate: pcuPendingBaseRate };
+}
+
+export async function setPcuBaseRate(rate: number, pendingRate?: number): Promise<{ baseRate: number; pendingBaseRate: number }> {
+  if (rate !== undefined && !isNaN(Number(rate))) {
+    const cleanRate = Math.max(0, Number(rate) || 0);
+    pcuBaseRate = cleanRate;
+    siteSettings.pcuBaseRate = cleanRate;
+    try {
+      await saveSettingToCPanel('pcu_base_rate', String(cleanRate));
+      console.log(`[cPanel DB] Verified base rate ${cleanRate} saved permanently to MySQL site_settings.`);
+    } catch (err: any) {
+      console.warn('Error saving base rate to MySQL:', err.message);
+    }
+  }
+
+  if (pendingRate !== undefined && !isNaN(Number(pendingRate))) {
+    const cleanPending = Math.max(0, Number(pendingRate) || 0);
+    pcuPendingBaseRate = cleanPending;
+    siteSettings.pcuPendingBaseRate = cleanPending;
+    try {
+      await saveSettingToCPanel('pcu_pending_base_rate', String(cleanPending));
+      console.log(`[cPanel DB] Pending base rate ${cleanPending} saved permanently to MySQL site_settings.`);
+    } catch (err: any) {
+      console.warn('Error saving pending base rate to MySQL:', err.message);
+    }
+  }
+
   try {
-    safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: cleanRate }, null, 2), 'utf-8');
+    safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: pcuBaseRate, pendingBaseRate: pcuPendingBaseRate }, null, 2), 'utf-8');
     safeWriteFileSync(SETTINGS_FILE, JSON.stringify(siteSettings, null, 2), 'utf-8');
   } catch (err: any) {
     console.warn('Error saving PCU config:', err.message);
   }
-  try {
-    await saveSettingToCPanel('pcu_base_rate', String(cleanRate));
-    console.log(`[cPanel DB] Base rate ${cleanRate} saved permanently to MySQL site_settings.`);
-  } catch (err: any) {
-    console.warn('Error saving base rate to MySQL:', err.message);
-  }
-  return cleanRate;
+
+  return { baseRate: pcuBaseRate, pendingBaseRate: pcuPendingBaseRate };
 }
 
 export function getPcuSettlements(): PcuSettlement[] {
@@ -1466,7 +1525,7 @@ export async function initDb() {
       try {
         const parsed = JSON.parse(content);
         if (Array.isArray(parsed)) {
-          pcuUpdatesCache = parsed.filter(u => u && u.added_from_website && !isBarangayTombstoned(u.barangay));
+          pcuUpdatesCache = parsed.filter(u => u && (u.fullName || u.fileName) && !isBarangayTombstoned(u.barangay));
           safeWriteFileSync(PCU_UPDATES_FILE, JSON.stringify(pcuUpdatesCache, null, 2));
         } else {
           pcuUpdatesCache = [];
@@ -1476,7 +1535,21 @@ export async function initDb() {
       }
     }
 
-    // Init PCU Config (Base Rate)
+    // Init PCU History Log
+    if (!fs.existsSync(PCU_HISTORY_FILE)) {
+      safeWriteFileSync(PCU_HISTORY_FILE, JSON.stringify([], null, 2));
+      pcuHistoryCache = [];
+    } else {
+      try {
+        const rawHist = fs.readFileSync(PCU_HISTORY_FILE, 'utf-8');
+        const parsedHist = JSON.parse(rawHist);
+        pcuHistoryCache = Array.isArray(parsedHist) ? parsedHist : [];
+      } catch (e) {
+        pcuHistoryCache = [];
+      }
+    }
+
+    // Init PCU Config (Verified & Pending Base Rates)
     if (fs.existsSync(PCU_CONFIG_FILE)) {
       try {
         const raw = fs.readFileSync(PCU_CONFIG_FILE, 'utf-8');
@@ -1485,11 +1558,15 @@ export async function initDb() {
           pcuBaseRate = parsed.baseRate;
           siteSettings.pcuBaseRate = pcuBaseRate;
         }
+        if (parsed && typeof parsed.pendingBaseRate === 'number') {
+          pcuPendingBaseRate = parsed.pendingBaseRate;
+          siteSettings.pcuPendingBaseRate = pcuPendingBaseRate;
+        }
       } catch (e: any) {
         console.warn('Failed to read PCU_CONFIG_FILE:', e.message);
       }
     } else {
-      safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: pcuBaseRate }, null, 2));
+      safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: pcuBaseRate, pendingBaseRate: pcuPendingBaseRate }, null, 2));
     }
 
     // Init PCU Settlements Cache
@@ -1703,9 +1780,101 @@ export async function initDb() {
               if (!isNaN(remoteRate) && remoteRate >= 0) {
                 pcuBaseRate = remoteRate;
                 siteSettings.pcuBaseRate = pcuBaseRate;
-                safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: pcuBaseRate }, null, 2));
               }
             }
+            if (cpanelData.settings.pcu_pending_base_rate !== undefined) {
+              const remotePending = Number(cpanelData.settings.pcu_pending_base_rate);
+              if (!isNaN(remotePending) && remotePending >= 0) {
+                pcuPendingBaseRate = remotePending;
+                siteSettings.pcuPendingBaseRate = pcuPendingBaseRate;
+              }
+            }
+            safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: pcuBaseRate, pendingBaseRate: pcuPendingBaseRate }, null, 2));
+          }
+
+          // Sync PCU submissions with MySQL to guarantee zero data loss during application updates
+          try {
+            const remotePcuSubmissions = (cpanelData as any).pcuSubmissions || await fetchAllPcuSubmissionsFromCPanel();
+            if (Array.isArray(remotePcuSubmissions) && remotePcuSubmissions.length > 0) {
+              const pcuMap = new Map<string, PCUUpdate>();
+              // Keep existing local memory records
+              pcuUpdatesCache.forEach(u => pcuMap.set(String(u.id), u));
+              // Authoritative MySQL records override or merge
+              remotePcuSubmissions.forEach(sub => {
+                pcuMap.set(String(sub.id), {
+                  id: String(sub.id),
+                  contactId: sub.contactId || sub.id,
+                  fullName: sub.fullName,
+                  barangay: sub.barangay,
+                  purok: sub.purok || '',
+                  fileName: sub.fileName || 'PCU Document',
+                  fileData: sub.fileUrl || '',
+                  uploadedAt: sub.uploadedAt,
+                  uploadedBy: sub.uploadedBy || 'Admin',
+                  added_from_website: true,
+                  status: sub.status || 'FILES',
+                  verified_at: sub.verified_at || null,
+                  verified_by: sub.verified_by || null,
+                  pending_at: sub.pending_at || null,
+                  pending_by: sub.pending_by || null,
+                  updated_status_at: sub.updated_status_at || null,
+                  updated_status_by: sub.updated_status_by || null,
+                  verified_credit_added: Boolean(sub.verified_credit_added),
+                  pending_credit_added: Boolean(sub.pending_credit_added),
+                  contact_number: sub.contactNumber || '',
+                  uploadedFiles: sub.uploadedFiles || []
+                });
+              });
+              pcuUpdatesCache = Array.from(pcuMap.values()).sort(
+                (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+              );
+              safeWriteFileSync(PCU_UPDATES_FILE, JSON.stringify(pcuUpdatesCache, null, 2));
+              console.log(`[cPanel DB] Protected and synced ${pcuUpdatesCache.length} PCU submissions from MySQL.`);
+            } else if (pcuUpdatesCache.length > 0) {
+              for (const u of pcuUpdatesCache) {
+                await savePcuSubmissionToCPanel({
+                  id: String(u.id),
+                  contactId: u.contactId,
+                  fullName: u.fullName,
+                  barangay: u.barangay || '',
+                  purok: u.purok || '',
+                  contactNumber: (u as any).contact_number || '',
+                  fileName: u.fileName,
+                  fileUrl: u.fileData,
+                  uploadedFiles: (u as any).uploadedFiles,
+                  uploadedBy: u.uploadedBy,
+                  uploadedAt: u.uploadedAt,
+                  status: u.status || 'FILES',
+                  verified_at: u.verified_at,
+                  verified_by: u.verified_by,
+                  pending_at: u.pending_at,
+                  pending_by: u.pending_by,
+                  updated_status_at: u.updated_status_at,
+                  updated_status_by: u.updated_status_by,
+                  verified_credit_added: u.verified_credit_added,
+                  pending_credit_added: u.pending_credit_added
+                });
+              }
+            }
+          } catch (pcuSyncErr: any) {
+            console.warn('[cPanel DB] Error syncing PCU submissions with MySQL:', pcuSyncErr.message);
+          }
+
+          // Sync PCU History log from MySQL
+          try {
+            const remoteHistory = (cpanelData as any).pcuHistory || await fetchPcuHistoryFromCPanel(500);
+            if (Array.isArray(remoteHistory) && remoteHistory.length > 0) {
+              const histMap = new Map<string, PcuHistoryItem>();
+              pcuHistoryCache.forEach(h => histMap.set(h.id, h));
+              remoteHistory.forEach(h => histMap.set(h.id, h));
+              pcuHistoryCache = Array.from(histMap.values()).sort(
+                (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+              );
+              safeWriteFileSync(PCU_HISTORY_FILE, JSON.stringify(pcuHistoryCache, null, 2));
+              console.log(`[cPanel DB] Synced ${pcuHistoryCache.length} PCU history records from MySQL.`);
+            }
+          } catch (histSyncErr: any) {
+            console.warn('[cPanel DB] Error syncing PCU history from MySQL:', histSyncErr.message);
           }
 
           // Sync PCU settlements with MySQL non-destructively
@@ -9025,11 +9194,60 @@ export async function addPCUUpdatesMultiple(
 }
 
 /**
- * Directly submits a contact from the PCU Directory to Base44.
- * Once successfully submitted to Base44, the contact is automatically and permanently
- * deleted from the cPanel MySQL database and the PCU Directory.
+ * Logs a PCU action/status transition into pcuHistoryCache and cPanel MySQL table `pcu_history`.
  */
-export async function submitContactToBase44(contactIdOrName: string | number, username: string = 'Admin') {
+export async function logPcuHistory(item: {
+  action: string;
+  recordId?: string;
+  patientName: string;
+  barangay?: string;
+  submitter?: string;
+  performedBy: string;
+  previousStatus?: string;
+  newStatus: string;
+  details?: string;
+}): Promise<PcuHistoryItem> {
+  const historyEntry: PcuHistoryItem = {
+    id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now() + Math.random()),
+    action: item.action,
+    recordId: item.recordId || '',
+    patientName: item.patientName || 'Unknown Patient',
+    barangay: item.barangay || '',
+    submitter: item.submitter || '',
+    performedBy: item.performedBy || 'Admin',
+    previousStatus: item.previousStatus || '',
+    newStatus: item.newStatus || '',
+    timestamp: new Date().toISOString(),
+    details: item.details || ''
+  };
+
+  pcuHistoryCache.unshift(historyEntry);
+  if (pcuHistoryCache.length > 2000) {
+    pcuHistoryCache = pcuHistoryCache.slice(0, 2000);
+  }
+  await safeWriteFile(PCU_HISTORY_FILE, JSON.stringify(pcuHistoryCache, null, 2), 'utf-8').catch(() => {});
+
+  if (isCPanelDbConnected()) {
+    try {
+      await savePcuHistoryToCPanel(historyEntry);
+    } catch (err: any) {
+      console.warn('[cPanel DB History] Error saving history to MySQL:', err.message);
+    }
+  }
+
+  return historyEntry;
+}
+
+export function getPcuHistory(): PcuHistoryItem[] {
+  return pcuHistoryCache;
+}
+
+/**
+ * Transfers a contact from PCU Directory directly to Submit PCU under its Barangay folder (Files section).
+ * New Workflow: PCU Directory -> Submit PCU -> Barangay Folder -> Files
+ * Removes the old Base44 workflow completely while ensuring 100% data integrity and persistence.
+ */
+export async function transferContactToSubmitPcu(contactIdOrName: string | number, username: string = 'Admin') {
   const idStr = String(contactIdOrName).trim();
   const idNum = !isNaN(Number(contactIdOrName)) ? Number(contactIdOrName) : null;
 
@@ -9046,39 +9264,111 @@ export async function submitContactToBase44(contactIdOrName: string | number, us
     throw new Error(`Contact "${contactIdOrName}" not found in PCU Directory.`);
   }
 
-  const fullName = contact.full_name;
-  const barangay = contact.barangay || '';
+  const fullName = contact.full_name.trim();
+  const barangay = (contact.barangay || 'General / Unassigned').trim();
+  const purok = (contact.purok || '').trim();
+  const contactNumber = (contact.contact_number || '').trim();
+  const submissionId = String(contact.id);
 
-  // 1. Submit to Base44
-  console.log(`[PCU Directory] Submitting contact "${fullName}" to Base44 database...`);
-  contact.isSubmitted = true;
-  contact.submittedAt = new Date().toISOString();
-  contact.status = 'SUBMITTED';
-  contact.updated_at = new Date().toISOString();
+  // Prevent duplicate submissions if already transferred or submitted
+  const isAlreadySubmitted = pcuUpdatesCache.some(p => 
+    String(p.contactId) === submissionId || 
+    String(p.id) === submissionId ||
+    (p.fullName && normalizeCompareName(p.fullName, fullName) && isBarangayMatch(p.barangay || '', barangay))
+  );
 
-  try {
-    await saveContactToBase44(contact, username);
-    console.log(`[PCU Directory] Confirmed: Contact "${fullName}" saved to Base44 database.`);
-  } catch (bErr: any) {
-    console.warn(`[PCU Directory] Notice: Base44 direct cloud write notice: ${bErr.message || bErr}. Operating safely with local and cPanel MySQL persistence.`);
+  if (isAlreadySubmitted) {
+    // If already in Submit PCU, ensure it's safely removed from PCU Directory and notify
+    contactsCache = contactsCache.filter(c => c.id !== contact!.id && !normalizeCompareName(c.full_name, fullName));
+    await saveContacts();
+    if (isCPanelDbConnected()) {
+      deleteContactFromCPanel(contact.id, new Date().toISOString(), fullName, barangay).catch(() => {});
+    }
+    return {
+      success: true,
+      message: `Contact "${fullName}" is already present in Submit PCU under Barangay "${barangay}" (Files section).`,
+      alreadyExisted: true
+    };
   }
 
-  // 2. Permanently delete from cPanel MySQL database
+  // 1. Prepare PCU Submission Record for Submit PCU (Files section)
+  const uploadedAt = new Date().toISOString();
+  const defaultFileName = contact.pcu_file_url 
+    ? 'PCU Document' 
+    : (contact.photo_url ? 'Patient Photo Record' : 'Patient Information Document');
+  const defaultFileUrl = contact.pcu_file_url || contact.photo_url || '';
+
+  const uploadedFiles = contact.uploadedFiles && contact.uploadedFiles.length > 0 
+    ? contact.uploadedFiles 
+    : [{
+        name: defaultFileName,
+        url: defaultFileUrl,
+        uploadedAt,
+        uploadedBy: username
+      }];
+
+  const newSubmission: PCUUpdate = {
+    id: submissionId,
+    contactId: submissionId,
+    fullName,
+    barangay,
+    purok,
+    fileName: uploadedFiles[0]?.name || defaultFileName,
+    fileData: uploadedFiles[0]?.url || defaultFileUrl,
+    uploadedAt,
+    uploadedBy: username,
+    added_from_website: true,
+    status: 'FILES',
+    contact_number: contactNumber,
+    uploadedFiles
+  };
+
+  // 2. Add to pcuUpdatesCache and persist locally
+  pcuUpdatesCache.unshift(newSubmission);
+  await safeWriteFile(PCU_UPDATES_FILE, JSON.stringify(pcuUpdatesCache, null, 2), 'utf-8');
+
+  // 3. Save directly to cPanel MySQL pcu_submissions table
   let cpanelSyncSuccess = true;
   let cpanelSyncWarning: string | null = null;
   if (isCPanelDbConnected()) {
     try {
-      console.log(`[PCU Directory] Permanently deleting contact "${fullName}" from cPanel MySQL database...`);
-      await deleteContactFromCPanel(contact.id, new Date().toISOString(), fullName, barangay);
-      console.log(`[PCU Directory] Confirmed: Contact "${fullName}" deleted from cPanel MySQL database.`);
-    } catch (cErr: any) {
+      await savePcuSubmissionToCPanel({
+        id: submissionId,
+        contactId: submissionId,
+        fullName,
+        barangay,
+        purok,
+        contactNumber,
+        fileName: newSubmission.fileName,
+        fileUrl: newSubmission.fileData,
+        uploadedFiles,
+        uploadedBy: username,
+        uploadedAt,
+        status: 'FILES'
+      });
+      console.log(`[PCU Directory -> Submit PCU] Successfully saved contact "${fullName}" to MySQL pcu_submissions table.`);
+    } catch (saveErr: any) {
       cpanelSyncSuccess = false;
-      cpanelSyncWarning = cErr.message || 'Error deleting from cPanel MySQL database';
-      console.warn('[PCU Directory] Warning deleting from cPanel MySQL:', cpanelSyncWarning);
+      cpanelSyncWarning = saveErr.message || 'Error saving to MySQL pcu_submissions';
+      console.warn('[PCU Transfer Warning] Failed to save to MySQL pcu_submissions:', cpanelSyncWarning);
     }
   }
 
-  // 3. Record tombstone in deletedContactsCache with submitted_to_base44: true
+  // 4. Record action in PCU History log and system activity
+  await logPcuHistory({
+    action: 'TRANSFERRED_FROM_DIRECTORY',
+    recordId: submissionId,
+    patientName: fullName,
+    barangay,
+    submitter: username,
+    performedBy: username,
+    previousStatus: 'DIRECTORY',
+    newStatus: 'FILES',
+    details: `Transferred from PCU Directory to Submit PCU under Barangay Folder "${barangay}" (Files section).`
+  });
+  await addActivity(username, `Transferred contact "${fullName}" from PCU Directory to Submit PCU under Barangay "${barangay}" (Files).`);
+
+  // 5. ONLY AFTER successful persistence in Submit PCU: remove from PCU Directory & record tombstone
   const targetContactId = contact.id;
   deletedContactsCache = deletedContactsCache.filter(d => 
     !(targetContactId && d.id && d.id.toString() === targetContactId.toString()) && 
@@ -9087,33 +9377,37 @@ export async function submitContactToBase44(contactIdOrName: string | number, us
   deletedContactsCache.push({
     id: targetContactId,
     full_name: fullName,
-    barangay: barangay,
-    deletedAt: new Date().toISOString(),
+    barangay,
+    deletedAt: uploadedAt,
     submitted_to_base44: true
   });
   await safeWriteFile(DELETED_CONTACTS_FILE, JSON.stringify(deletedContactsCache, null, 2), 'utf-8');
-  syncDeletedRecordsToGoogleSheets(true).catch(err => console.error('Failed to sync deleted records to Google Sheets:', err));
 
-  // 4. Permanently remove from contactsCache so it NEVER displays in PCU Directory
+  // Remove from contactsCache
   contactsCache = contactsCache.filter(c => 
-    !(targetContactId && c.id && c.id.toString() === targetContactId.toString()) && 
-    !(fullName && c.full_name && normalizeCompareName(c.full_name, fullName))
+    c.id !== targetContactId && !(fullName && c.full_name && normalizeCompareName(c.full_name, fullName))
   );
   await saveContacts();
 
-  // 5. Delete from Google Sheets if enabled
-  if (sheetsConfig.syncEnabled) {
-    deleteContactPermanentlyFromGoogleSheets(contact).catch(() => {});
+  // Permanently delete contact from cPanel MySQL contacts table
+  if (isCPanelDbConnected()) {
+    deleteContactFromCPanel(targetContactId, uploadedAt, fullName, barangay).catch(() => {});
   }
-
-  await addActivity(username, `Submitted contact "${fullName}" to Base44 database and permanently deleted from PCU Directory.`);
 
   return {
     success: true,
-    message: `Contact "${fullName}" successfully submitted to Base44 database and automatically deleted from PCU Directory.`,
+    message: `Contact "${fullName}" successfully transferred to Submit PCU under Barangay "${barangay}" (Files section) and removed from PCU Directory.`,
+    data: newSubmission,
     cpanelSyncSuccess,
     cpanelSyncWarning: cpanelSyncWarning || undefined
   };
+}
+
+/**
+ * Backward compatibility alias: forwards old submitContactToBase44 calls to the new transferContactToSubmitPcu workflow.
+ */
+export async function submitContactToBase44(contactIdOrName: string | number, username: string = 'Admin') {
+  return await transferContactToSubmitPcu(contactIdOrName, username);
 }
 
 // Get all PCU Updates
@@ -9153,7 +9447,8 @@ export function getRecentUploads(params: {
     if (!nameKey.replace(/___/g, '')) continue;
 
     const actualId = (u.contactId && String(u.contactId).toLowerCase() !== 'new' ? u.contactId : u.id) || `pcu_${Date.now()}`;
-    const pcuStatus = (u.status || '').toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'PENDING';
+    const rawStatus = (u.status || 'FILES').toUpperCase();
+    const pcuStatus = (rawStatus === 'VERIFIED' || rawStatus === 'PENDING' || rawStatus === 'UPDATED') ? rawStatus : 'FILES';
 
     if (!updatesByPerson.has(nameKey)) {
       updatesByPerson.set(nameKey, {
@@ -9171,14 +9466,30 @@ export function getRecentUploads(params: {
         isExistingAccount: false,
         category: 'pcu',
         status: pcuStatus,
+        verified_at: (u as any).verified_at || null,
+        verified_by: (u as any).verified_by || null,
+        pending_at: (u as any).pending_at || null,
+        pending_by: (u as any).pending_by || null,
+        updated_status_at: (u as any).updated_status_at || null,
+        updated_status_by: (u as any).updated_status_by || null,
+        verified_credit_added: Boolean((u as any).verified_credit_added),
+        pending_credit_added: Boolean((u as any).pending_credit_added),
         uploadedFiles: []
       });
     }
 
     const item = updatesByPerson.get(nameKey)!;
-    if (pcuStatus === 'VERIFIED') {
-      item.status = 'VERIFIED';
+    if (pcuStatus === 'VERIFIED' || pcuStatus === 'PENDING' || pcuStatus === 'UPDATED') {
+      item.status = pcuStatus;
     }
+    if ((u as any).verified_at) item.verified_at = (u as any).verified_at;
+    if ((u as any).verified_by) item.verified_by = (u as any).verified_by;
+    if ((u as any).pending_at) item.pending_at = (u as any).pending_at;
+    if ((u as any).pending_by) item.pending_by = (u as any).pending_by;
+    if ((u as any).updated_status_at) item.updated_status_at = (u as any).updated_status_at;
+    if ((u as any).updated_status_by) item.updated_status_by = (u as any).updated_status_by;
+    if ((u as any).verified_credit_added) item.verified_credit_added = true;
+    if ((u as any).pending_credit_added) item.pending_credit_added = true;
     if ((!item.barangay || item.barangay === 'Unassigned') && u.barangay) {
       item.barangay = u.barangay;
     }
@@ -9633,32 +9944,55 @@ export async function permanentlyDeletePcuSubmission(params: {
 }
 
 /**
- * Updates the verification status of a PCU submission (VERIFIED or PENDING).
- * Once verified, it transfers to the Verified section and is removed from Pending.
+ * Updates the status of a PCU submission (VERIFIED, PENDING, UPDATED, or FILES).
+ * Handles idempotent credit calculation and logs each action permanently to MySQL pcu_history.
  */
 export async function updatePcuSubmissionStatus(params: {
   id?: string | number;
   fullName?: string;
-  status: 'VERIFIED' | 'PENDING';
+  status: 'VERIFIED' | 'PENDING' | 'UPDATED' | 'FILES' | string;
   username?: string;
-}): Promise<{ success: boolean; status: string; fullName: string; message: string }> {
-  const { id, fullName, status, username = 'Admin' } = params;
+}): Promise<{ success: boolean; status: string; fullName: string; message: string; creditAdded?: boolean }> {
+  const { id, fullName, status: rawStatus, username = 'Admin' } = params;
+  const status = (rawStatus || 'FILES').toUpperCase() as 'VERIFIED' | 'PENDING' | 'UPDATED' | 'FILES';
   const normName = (fullName || '').trim().toLowerCase();
   const idStr = id !== undefined && id !== null ? String(id).trim() : '';
+  const nowIso = new Date().toISOString();
 
-  console.log(`[PCU Verification] Setting status to "${status}" for: id=${idStr}, name=${fullName}`);
+  console.log(`[PCU Status] Setting status to "${status}" for: id=${idStr}, name=${fullName}`);
+
+  let matchedSubmission: PCUUpdate | null = null;
+  let previousStatus = 'FILES';
+  let creditAdded = false;
 
   // 1. Update in local pcuUpdatesCache
-  let updatedCount = 0;
   for (const u of pcuUpdatesCache) {
     if (!u) continue;
     const matchPerson = (idStr && idStr !== 'new' && (String(u.id) === idStr || String(u.contactId) === idStr)) ||
                         (normName && (u.fullName || '').trim().toLowerCase() === normName);
     if (matchPerson) {
+      matchedSubmission = u;
+      previousStatus = (u.status || 'FILES').toUpperCase();
       u.status = status;
-      (u as any).verified_at = status === 'VERIFIED' ? new Date().toISOString() : null;
-      (u as any).verified_by = status === 'VERIFIED' ? username : null;
-      updatedCount++;
+
+      if (status === 'VERIFIED') {
+        u.verified_at = nowIso;
+        u.verified_by = username;
+        if (!u.verified_credit_added) {
+          u.verified_credit_added = true;
+          creditAdded = true;
+        }
+      } else if (status === 'PENDING') {
+        u.pending_at = nowIso;
+        u.pending_by = username;
+        if (!u.pending_credit_added) {
+          u.pending_credit_added = true;
+          creditAdded = true;
+        }
+      } else if (status === 'UPDATED') {
+        u.updated_status_at = nowIso;
+        u.updated_status_by = username;
+      }
     }
   }
 
@@ -9670,49 +10004,77 @@ export async function updatePcuSubmissionStatus(params: {
     if (matchPerson) {
       (c as any).pcu_status = status;
       if (status === 'VERIFIED') {
-        (c as any).verified_at = new Date().toISOString();
+        (c as any).verified_at = nowIso;
         (c as any).verified_by = username;
+      } else if (status === 'PENDING') {
+        (c as any).pending_at = nowIso;
+        (c as any).pending_by = username;
+      } else if (status === 'UPDATED') {
+        (c as any).updated_status_at = nowIso;
+        (c as any).updated_status_by = username;
       }
     }
   }
 
-  // 3. Also update in existingAccountsCache if matching
-  for (const acc of existingAccountsCache) {
-    if (!acc) continue;
-    const matchPerson = (idStr && idStr !== 'new' && String(acc.id) === idStr) ||
-                        (normName && (acc.full_name || '').trim().toLowerCase() === normName);
-    if (matchPerson) {
-      (acc as any).pcu_status = status;
-      acc.status = status;
-    }
-  }
-
-  // 4. Save to local pcu_updates.json
+  // 3. Save to local pcu_updates.json
   await savePCUUpdates();
 
-  // 5. Update in cPanel MySQL database if connected
+  // 4. Update in cPanel MySQL database if connected
   if (isCPanelDbConnected()) {
     try {
       await updatePcuStatusInCPanel({
         id: idStr,
-        fullName: fullName || '',
+        fullName: fullName || matchedSubmission?.fullName || '',
         status,
         username
       });
     } catch (err: any) {
-      console.warn('[PCU Verification Warning] Failed to update in cPanel MySQL:', err.message || err);
+      console.warn('[PCU Status Warning] Failed to update in cPanel MySQL:', err.message || err);
     }
   }
 
-  // 6. Record activity log
-  const actionText = status === 'VERIFIED' ? 'Verified' : 'Moved back to Pending';
-  await addActivity(username, `${actionText} PCU submission for "${fullName || idStr}"`);
+  // 5. Log to pcu_history in MySQL
+  const patName = fullName || matchedSubmission?.fullName || 'Record';
+  const patBarangay = matchedSubmission?.barangay || '';
+  const submitter = matchedSubmission?.uploadedBy || '';
+
+  let actionName = 'STATUS_UPDATED';
+  let detailsText = `Status updated to ${status} by ${username}.`;
+
+  if (status === 'VERIFIED') {
+    actionName = 'VERIFIED';
+    detailsText = `Verified submission by ${username}. 1 Credit × ₱${pcuBaseRate.toFixed(2)} credited to ${submitter}.`;
+  } else if (status === 'PENDING') {
+    actionName = 'MOVED_TO_PENDING';
+    detailsText = `Moved to Pending by ${username}. 1 Credit × ₱${pcuPendingBaseRate.toFixed(2)} credited to ${submitter}.`;
+  } else if (status === 'UPDATED') {
+    actionName = 'MOVED_TO_UPDATED';
+    detailsText = `Updated record by ${username}. Transferred from Pending to Updated.`;
+  } else if (status === 'FILES') {
+    actionName = 'MOVED_TO_FILES';
+    detailsText = `Returned to Files by ${username}.`;
+  }
+
+  await logPcuHistory({
+    action: actionName,
+    recordId: idStr || (matchedSubmission ? String(matchedSubmission.id) : ''),
+    patientName: patName,
+    barangay: patBarangay,
+    submitter,
+    performedBy: username,
+    previousStatus,
+    newStatus: status,
+    details: detailsText
+  });
+
+  await addActivity(username, `${actionName.replace(/_/g, ' ')}: "${patName}" (${previousStatus} -> ${status})`);
 
   return {
     success: true,
     status,
-    fullName: fullName || '',
-    message: `PCU submission for "${fullName || idStr}" is now ${status}.`
+    fullName: patName,
+    message: `Record "${patName}" is now ${status}.`,
+    creditAdded
   };
 }
 

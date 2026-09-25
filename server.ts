@@ -83,10 +83,13 @@ import {
   syncWithCPanelDb,
   syncUsersFromCPanel,
   submitContactToBase44,
+  transferContactToSubmitPcu,
   permanentlyDeletePcuSubmission,
   updatePcuSubmissionStatus,
   getPcuBaseRate,
+  getPcuPendingBaseRate,
   setPcuBaseRate,
+  getPcuHistory,
   getPcuSettlements,
   recordPcuSettlement,
   deletePcuSettlement
@@ -827,7 +830,22 @@ export async function getApp(httpServer?: http.Server) {
     }
   });
 
-  // Submit contact directly to Base44 and permanently delete from PCU Directory and cPanel MySQL
+  // Transfer contact directly from PCU Directory to Submit PCU under its Barangay folder (Files section)
+  app.post('/api/contacts/:id/transfer-to-pcu', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const idRaw = req.params.id;
+      const idNum = parseInt(idRaw, 10);
+      const id = !isNaN(idNum) && String(idNum) === idRaw ? idNum : idRaw;
+      const username = req.user?.username || 'Admin';
+
+      const result = await transferContactToSubmitPcu(id, username);
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Backward compatibility: forwards legacy submit-base44 to the new Submit PCU transfer workflow
   app.post('/api/contacts/:id/submit-base44', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const idRaw = req.params.id;
@@ -835,7 +853,7 @@ export async function getApp(httpServer?: http.Server) {
       const id = !isNaN(idNum) && String(idNum) === idRaw ? idNum : idRaw;
       const username = req.user?.username || 'Admin';
 
-      const result = await submitContactToBase44(id, username);
+      const result = await transferContactToSubmitPcu(id, username);
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -1011,7 +1029,7 @@ export async function getApp(httpServer?: http.Server) {
     }
   });
 
-  // Verify or update status of a PCU Submission (transfers between Pending and Verified - Master Admin only)
+  // Verify or update status of a PCU Submission (Files -> Verified / Pending -> Updated)
   app.post('/api/pcu/verify', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const username = req.user?.username || 'Admin';
@@ -1019,61 +1037,71 @@ export async function getApp(httpServer?: http.Server) {
       const isMasterAdmin = role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username.toLowerCase() === 'admin';
 
       if (!isMasterAdmin) {
-        return res.status(403).json({ error: 'Access Denied: Only Master Admin can verify PCU submissions or modify verification status.' });
+        return res.status(403).json({ error: 'Access Denied: Only Master Admin can modify PCU statuses or verification.' });
       }
 
       const { id, fullName, status = 'VERIFIED' } = req.body;
 
       if (!id && !fullName) {
-        return res.status(400).json({ error: 'Identification (id or fullName) is required to update verification status.' });
+        return res.status(400).json({ error: 'Identification (id or fullName) is required to update status.' });
       }
 
       const result = await updatePcuSubmissionStatus({
         id,
         fullName,
-        status: status === 'PENDING' ? 'PENDING' : 'VERIFIED',
+        status,
         username
       });
 
       res.json(result);
     } catch (err: any) {
-      console.error('[Verify PCU Submission API Error]:', err);
-      res.status(400).json({ error: err.message || 'Failed to update PCU verification status.' });
+      console.error('[Update PCU Submission API Error]:', err);
+      res.status(400).json({ error: err.message || 'Failed to update PCU status.' });
     }
   });
 
-  // Get current PCU Submission Base Rate (saved in MySQL)
+  // Get current PCU Submission Base Rates (Verified & Pending rates saved in MySQL)
   app.get('/api/pcu/base-rate', requireAuth, (req: AuthenticatedRequest, res: Response) => {
     try {
       const baseRate = getPcuBaseRate();
-      res.json({ baseRate });
+      const pendingBaseRate = getPcuPendingBaseRate();
+      res.json({ baseRate, pendingBaseRate });
     } catch (err: any) {
-      res.status(500).json({ error: err.message || 'Failed to fetch base rate.' });
+      res.status(500).json({ error: err.message || 'Failed to fetch base rates.' });
     }
   });
 
-  // Update PCU Submission Base Rate (saved permanently to MySQL)
+  // Update PCU Submission Base Rates (saved permanently to MySQL)
   app.post('/api/pcu/base-rate', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const username = req.user?.username || 'Admin';
-      const { baseRate } = req.body;
-      const rateNum = Number(baseRate);
+      const { baseRate, pendingBaseRate } = req.body;
 
-      if (isNaN(rateNum) || rateNum < 0) {
-        return res.status(400).json({ error: 'Valid base rate greater than or equal to 0 is required.' });
-      }
+      const rateNum = baseRate !== undefined ? Number(baseRate) : undefined;
+      const pendingNum = pendingBaseRate !== undefined ? Number(pendingBaseRate) : undefined;
 
-      const updatedRate = await setPcuBaseRate(rateNum);
-      addActivity(username, `Updated PCU base rate to ₱${updatedRate.toFixed(2)} (saved permanently to MySQL).`);
+      const updatedRates = await setPcuBaseRate(rateNum as any, pendingNum as any);
+      addActivity(username, `Updated PCU base rates: Verified=₱${updatedRates.baseRate.toFixed(2)}, Pending=₱${updatedRates.pendingBaseRate.toFixed(2)} (saved permanently to MySQL).`);
 
       res.json({
         success: true,
-        baseRate: updatedRate,
-        message: `Base rate updated to ₱${updatedRate.toFixed(2)} and saved permanently to MySQL.`
+        baseRate: updatedRates.baseRate,
+        pendingBaseRate: updatedRates.pendingBaseRate,
+        message: `Base rates updated (Verified: ₱${updatedRates.baseRate.toFixed(2)}, Pending: ₱${updatedRates.pendingBaseRate.toFixed(2)}) and saved permanently to MySQL.`
       });
     } catch (err: any) {
       console.error('[PCU Base Rate Update Error]:', err);
       res.status(400).json({ error: err.message || 'Failed to update base rate.' });
+    }
+  });
+
+  // Get PCU History and action logs (Files Section Clickable History)
+  app.get('/api/pcu/history', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const history = getPcuHistory();
+      res.json({ history });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch PCU history.' });
     }
   });
 
