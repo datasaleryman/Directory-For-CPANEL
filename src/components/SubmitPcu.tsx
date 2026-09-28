@@ -2018,8 +2018,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       {/* ========================================================================= */}
       {!isFormOpen && (
         <div className="space-y-4">
-          <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3 neu-raised p-2 sm:p-3 rounded-2xl">
-            <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar py-0.5 max-w-full">
+          <div className="flex items-center justify-between gap-2 sm:gap-3 neu-raised p-2 sm:p-2.5 rounded-2xl">
+            <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar py-0.5 flex-1">
               {/* Tab 1: Files */}
               <button
                 type="button"
@@ -2117,11 +2117,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               )}
             </div>
 
-            {/* Quick Info & Refresh */}
-            <div className="flex items-center justify-between lg:justify-end gap-2 sm:gap-3 px-1 sm:px-0 shrink-0">
-              <span className="text-[11px] sm:text-xs text-slate-500 font-medium truncate">
-                <span className="text-emerald-700 font-bold">{filesRecords.length} Files</span> • <span className="text-emerald-600 font-bold">{verifiedRecords.length} Verified</span> • <span className="text-amber-600 font-bold">{pendingRecords.length} Pending</span> • <span className="text-blue-600 font-bold">{updatedRecords.length} Updated</span>
-              </span>
+            {/* Refresh Button */}
+            <div className="flex items-center justify-end px-1 sm:px-0 shrink-0">
               <button
                 type="button"
                 onClick={() => {
