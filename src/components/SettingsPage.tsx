@@ -170,14 +170,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [rolesList, setRolesList] = useState<string[]>(DEFAULT_ROLES);
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(() => {
     return siteSettings.rolePermissions || {
-      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'bulk', 'print', 'existing-account', 'verification-entry']
+      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry']
     };
   });
 
@@ -1252,7 +1252,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </div>
               <div>
                 <h4 className="font-bold text-slate-800 font-display">Role Page Access Control</h4>
-                <p className="text-[11px] text-slate-500">Configure permitted application pages/tabs for each Base44 database role</p>
+                <p className="text-[11px] text-slate-500">Configure permitted application pages/tabs for each database role</p>
               </div>
             </div>
 

@@ -147,7 +147,11 @@ export default function App() {
                            roleUpper === 'MASTER ADMIN' || 
                            roleUpper === 'ADMINISTRATOR';
 
-    if (isAdminAccount && (targetTabId === 'settings' || targetTabId === 'accounts')) {
+    if (isAdminAccount && (targetTabId === 'settings' || targetTabId === 'accounts' || targetTabId === 'submitted-exist-acc' || targetTabId === 'submit-pcu')) {
+      return true;
+    }
+
+    if (isSuperUser && (targetTabId === 'submitted-exist-acc' || targetTabId === 'submit-pcu')) {
       return true;
     }
 
@@ -159,7 +163,7 @@ export default function App() {
       if (matchingKey) {
         const rolePerms = siteSettings.rolePermissions[matchingKey];
         if (Array.isArray(rolePerms)) {
-          // Respect configured role permissions for submit-pcu and all pages
+          // Respect configured role permissions for submit-pcu, submitted-exist-acc, and all pages
           return rolePerms.includes(tabId) || rolePerms.includes(targetTabId);
         }
       }

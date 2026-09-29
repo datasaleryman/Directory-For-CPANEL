@@ -92,8 +92,35 @@ CREATE TABLE IF NOT EXISTS `submitted_exist_acc_history` (
   INDEX `idx_sea_hist_submitter` (`submitter`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- -----------------------------------------------------------------------------
+-- 4. Update `site_settings` for Navigation and Role Page Access Control
+-- Automatically registers "Submitted Exist. Acc." into Role Page Access Control
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `site_settings` (
+  `setting_key` VARCHAR(100) PRIMARY KEY,
+  `setting_value` LONGTEXT,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO `site_settings` (`setting_key`, `setting_value`)
+VALUES ('nav_submitted_exist_acc', 'Submitted Exist. Acc.')
+ON DUPLICATE KEY UPDATE `setting_value` = 'Submitted Exist. Acc.';
+
+INSERT INTO `site_settings` (`setting_key`, `setting_value`)
+VALUES ('submitted_exist_acc_base_rate', '50')
+ON DUPLICATE KEY UPDATE `setting_value` = `setting_value`;
+
+INSERT INTO `site_settings` (`setting_key`, `setting_value`)
+VALUES ('submitted_exist_acc_pending_base_rate', '50')
+ON DUPLICATE KEY UPDATE `setting_value` = `setting_value`;
+
+INSERT INTO `site_settings` (`setting_key`, `setting_value`)
+VALUES ('role_permissions', '{"MASTER ADMIN":["dashboard","map","directory","submit-pcu","exist-acc-files","submitted-exist-acc","accounts","bulk","print","existing-account","verification-entry","settings"],"IT":["dashboard","map","directory","submit-pcu","exist-acc-files","submitted-exist-acc","accounts","bulk","print","existing-account","verification-entry","settings"],"ADMIN":["dashboard","map","directory","submit-pcu","exist-acc-files","submitted-exist-acc","accounts","bulk","print","existing-account","verification-entry","settings"],"Administrator":["dashboard","map","directory","submit-pcu","exist-acc-files","submitted-exist-acc","accounts","bulk","print","existing-account","verification-entry","settings"],"LEADER":["dashboard","map","directory","submit-pcu","exist-acc-files","submitted-exist-acc","bulk","print","existing-account","verification-entry"],"CO-LEADER":["dashboard","map","directory","submit-pcu","exist-acc-files","submitted-exist-acc","bulk","print","existing-account","verification-entry"],"ENCODER":["dashboard","map","directory","submit-pcu","exist-acc-files","submitted-exist-acc","bulk","print","existing-account","verification-entry"],"STAFF":["dashboard","map","directory","submit-pcu","exist-acc-files","submitted-exist-acc","bulk","print","existing-account","verification-entry"]}')
+ON DUPLICATE KEY UPDATE `setting_value` = VALUES(`setting_value`);
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- =============================================================================
 -- End of Migration Script for Submitted Exist. Acc.
 -- =============================================================================
+

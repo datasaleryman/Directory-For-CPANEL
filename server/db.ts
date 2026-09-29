@@ -191,12 +191,22 @@ try {
   console.warn('[FileSystem Warning] Could not globally patch fs.promises.writeFile:', e.message);
 }
 
-const base44 = createClient({
-  appId: "6a430111a71a741248df97b1",
-  headers: {
-    "api_key": "cc66c96fd80b4fa19ed1ab3f246ab7e3"
+const base44AppId = process.env.BASE44_APP_ID || "";
+const base44 = base44AppId ? createClient({ appId: base44AppId }) : {
+  entities: new Proxy({}, {
+    get: () => ({
+      find: async () => [],
+      findById: async () => null,
+      create: async (data: any) => ({ id: 'local_' + Date.now(), ...data }),
+      update: async (id: any, data: any) => ({ id, ...data }),
+      delete: async () => true,
+      upsert: async () => true
+    })
+  }),
+  files: {
+    upload: async () => ({ file_url: '' })
   }
-});
+} as any;
 
 export interface Contact {
   id: number | string;
@@ -1225,6 +1235,15 @@ export function saveSiteSettings(settings: Partial<SiteSettings>) {
       safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: pcuBaseRate }, null, 2), 'utf-8');
       saveSettingToCPanel('pcu_base_rate', String(pcuBaseRate)).catch(() => {});
     }
+    if (settings.rolePermissions !== undefined) {
+      saveSettingToCPanel('role_permissions', JSON.stringify(siteSettings.rolePermissions)).catch(() => {});
+    }
+    if (settings.navSubmittedExistAcc !== undefined) {
+      saveSettingToCPanel('nav_submitted_exist_acc', siteSettings.navSubmittedExistAcc).catch(() => {});
+    }
+    if (settings.navSubmitPcu !== undefined) {
+      saveSettingToCPanel('nav_submit_pcu', siteSettings.navSubmitPcu).catch(() => {});
+    }
     siteSettingsLoadedFromSheets = true;
     lastSettingsPullTime = Date.now();
     syncSiteSettingsToGoogleSheets().catch(err => console.error('Failed to sync site settings to Sheets:', err));
@@ -1347,6 +1366,18 @@ export async function recordPcuSettlement(data: {
     console.warn('Error saving settlement to MySQL:', err.message);
   }
 
+  await logPcuHistory({
+    action: 'SETTLEMENT_RECORDED',
+    recordId: settlement.id,
+    patientName: `Payroll: ${submitter}`,
+    barangay: 'All Barangays',
+    submitter,
+    performedBy: settledBy,
+    previousStatus: 'UNSETTLED',
+    newStatus: paymentStatus,
+    details: `Recorded payroll settlement: ₱${amountPaid.toFixed(2)} paid for ${totalSubmissions} submissions via ${paymentMethod}.`
+  });
+
   return settlement;
 }
 
@@ -1371,6 +1402,17 @@ export async function deletePcuSettlement(idOrSubmitter: string): Promise<boolea
     } catch (err: any) {
       console.warn('Error deleting settlement from MySQL:', err.message);
     }
+    await logPcuHistory({
+      action: 'SETTLEMENT_DELETED',
+      recordId: found.id,
+      patientName: `Payroll Settlement #${found.id}`,
+      barangay: 'All Barangays',
+      submitter: found.submitter,
+      performedBy: 'Master Admin',
+      previousStatus: 'SETTLED',
+      newStatus: 'DELETED',
+      details: `Deleted salary settlement record #${found.id} for submitter ${found.submitter}.`
+    });
   }
 
   return true;
@@ -1726,11 +1768,22 @@ export async function initDb() {
       }
     }
 
-    // Auto-migrate any existingAccounts that have isSubmitted === true into submittedExistAccountsCache
+    // Clean up and synchronize: Only existing accounts explicitly submitted by a user (isSubmitted === true) from Exist. Acc. Files are permitted in Submitted Exist. Acc.
     if (existingAccountsCache && existingAccountsCache.length > 0) {
-      let migratedAny = false;
+      // 1. Purge any unsubmitted contacts from submittedExistAccountsCache
+      submittedExistAccountsCache = submittedExistAccountsCache.filter(sea => {
+        const matchingExistAcc = existingAccountsCache.find(
+          acc => String(acc.id) === String(sea.existAccountId || sea.id) || normalizeCompareName(acc.full_name, sea.fullName)
+        );
+        if (matchingExistAcc) {
+          return matchingExistAcc.isSubmitted === true;
+        }
+        return (sea as any).isSubmitted !== false;
+      });
+
+      // 2. Add existing accounts that were explicitly submitted by users (isSubmitted === true)
       for (const acc of existingAccountsCache) {
-        if (acc.isSubmitted || (acc.uploadedFiles && acc.uploadedFiles.length > 0)) {
+        if (acc.isSubmitted === true) {
           const already = submittedExistAccountsCache.some(s => String(s.id) === String(acc.id) || String(s.existAccountId) === String(acc.id));
           if (!already) {
             const files = acc.uploadedFiles || [];
@@ -1752,14 +1805,10 @@ export async function initDb() {
               uploadedAt: acc.submittedAt || acc.created_at || new Date().toISOString(),
               status: 'FILES'
             });
-            migratedAny = true;
           }
         }
       }
-      if (migratedAny) {
-        safeWriteFileSync(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2));
-        console.log(`[Init] Auto-migrated submitted existing accounts into Submitted Exist. Acc. store.`);
-      }
+      safeWriteFileSync(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2));
     }
 
     // Init Submitted Exist. Acc. History Log
@@ -1983,7 +2032,21 @@ export async function initDb() {
                 siteSettings.pcuPendingBaseRate = pcuPendingBaseRate;
               }
             }
+            if (cpanelData.settings.role_permissions) {
+              try {
+                siteSettings.rolePermissions = typeof cpanelData.settings.role_permissions === 'string'
+                  ? JSON.parse(cpanelData.settings.role_permissions)
+                  : cpanelData.settings.role_permissions;
+              } catch {}
+            }
+            if (cpanelData.settings.nav_submitted_exist_acc) {
+              siteSettings.navSubmittedExistAcc = cpanelData.settings.nav_submitted_exist_acc;
+            }
+            if (cpanelData.settings.nav_submit_pcu) {
+              siteSettings.navSubmitPcu = cpanelData.settings.nav_submit_pcu;
+            }
             safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: pcuBaseRate, pendingBaseRate: pcuPendingBaseRate }, null, 2));
+            safeWriteFileSync(SETTINGS_FILE, JSON.stringify(siteSettings, null, 2));
           }
 
           // Sync PCU submissions with MySQL to guarantee zero data loss during application updates
@@ -9493,7 +9556,18 @@ export async function addPCUUpdatesMultiple(
     await saveContacts();
 
     const totalUploadedCount = options?.totalFilesCount || files.length;
-    await addActivity(username, `Uploaded ${totalUploadedCount} PCU File(s), submitted to Base44, and permanently deleted from PCU Directory: "${fullName}"`);
+    await addActivity(username, `Uploaded ${totalUploadedCount} PCU File(s) for: "${fullName}"`);
+    await logPcuHistory({
+      action: 'SUBMITTED',
+      recordId: String(targetContactId || contact.id || ''),
+      patientName: fullName,
+      barangay: targetContactBarangay || 'General',
+      submitter: username,
+      performedBy: username,
+      previousStatus: '',
+      newStatus: 'FILES',
+      details: `Uploaded ${totalUploadedCount} attachment(s) for "${fullName}" under Barangay ${targetContactBarangay || 'General'}.`
+    });
 
     return {
       ...contact,
@@ -10253,9 +10327,22 @@ export async function permanentlyDeletePcuSubmission(params: {
     safeWriteFile(DELETED_CONTACTS_FILE, JSON.stringify(deletedContactsCache, null, 2), 'utf-8').catch(() => {});
   }
 
-  // 5. Activity log
+  // 5. Activity log & pcu_history log
   const targetLabel = fileName ? `file "${fileName}" for ${fullName || 'patient'}` : `submission for "${fullName || id}"`;
   await addActivity(username || 'Admin', `Permanently deleted PCU ${targetLabel} from MySQL database.`);
+  await logPcuHistory({
+    action: deleteAll || (!fileName && !fileUrl) ? 'DELETED_SUBMISSION' : 'DELETED_FILE',
+    recordId: String(id || ''),
+    patientName: fullName || (matchingContact ? matchingContact.full_name : 'Patient'),
+    barangay: (matchingContact ? matchingContact.barangay : '') || '',
+    submitter: (matchingContact ? matchingContact.pcu_uploaded_by : '') || '',
+    performedBy: username || 'Admin',
+    previousStatus: ((matchingContact as any)?.pcu_status || (matchingContact as any)?.status || 'FILES'),
+    newStatus: 'DELETED',
+    details: deleteAll || (!fileName && !fileUrl)
+      ? `Permanently deleted submission for "${fullName || id}" by ${username || 'Admin'}.`
+      : `Deleted attachment "${fileName}" for "${fullName || id}" by ${username || 'Admin'}.`
+  });
 
   return {
     success: true,
@@ -11030,7 +11117,16 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
 // =========================================================================
 
 export function getSubmittedExistAccounts(): SubmittedExistAccRecord[] {
-  return submittedExistAccountsCache;
+  return submittedExistAccountsCache.filter(sea => {
+    // Only display contacts that were submitted by users from Exist. Acc. Files page
+    const matchingExistAcc = existingAccountsCache.find(
+      acc => String(acc.id) === String(sea.existAccountId || sea.id) || normalizeCompareName(acc.full_name, sea.fullName)
+    );
+    if (matchingExistAcc) {
+      return matchingExistAcc.isSubmitted === true;
+    }
+    return (sea as any).isSubmitted !== false;
+  });
 }
 
 export function getSubmittedExistAccBaseRates(): { baseRate: number; pendingBaseRate: number } {

@@ -213,6 +213,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const [pcuHistory, setPcuHistory] = useState<PcuHistoryItem[]>([]);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false);
   const [historySearch, setHistorySearch] = useState<string>('');
+  const [historyActionFilter, setHistoryActionFilter] = useState<string>('ALL');
   const [loadingHistory, setLoadingHistory] = useState<boolean>(false);
 
   // Reset pagination and folder when active tab changes
@@ -573,6 +574,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       });
       if (res.ok) {
         await fetchSettlements();
+        fetchHistory();
         showToast(`Settlement for "${settlingSubmitter.name}" saved permanently to MySQL!`, 'success');
         setSettlingSubmitter(null);
       } else {
@@ -600,6 +602,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       });
       if (res.ok) {
         await fetchSettlements();
+        fetchHistory();
         showToast(`Settlement for "${submitterName}" has been reset.`, 'info');
         setSettlingSubmitter(null);
       } else {
@@ -717,6 +720,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   useEffect(() => {
     fetchBarangays();
     fetchUploadedRecords();
+    fetchHistory();
     fetchBaseRate();
     fetchSettlements();
   }, [authToken]);
@@ -851,8 +855,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       // Return to Grid view to see uploaded record
       setIsFormOpen(false);
 
-      // Refresh uploaded records list
+      // Refresh uploaded records list & history
       fetchUploadedRecords();
+      fetchHistory();
     } catch (err: any) {
       showToast(err.message || 'Error submitting PCU documentation.', 'error');
     } finally {
@@ -946,6 +951,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
       setDeleteTarget(null);
       fetchUploadedRecords();
+      fetchHistory();
     } catch (err: any) {
       showToast(err.message || 'Error deleting record from MySQL.', 'error');
     } finally {
@@ -2139,38 +2145,38 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           {/* ========================================================================= */}
           {activeTab === 'files' && (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-              {/* Counter 1: Daily Files Submitted */}
-              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-emerald-500/5 to-teal-500/10 border border-emerald-500/20">
+              {/* Counter 1: Daily (Renamed from Daily Files Submitted with changed color box background) */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-blue-500/10 via-sky-500/10 to-indigo-500/15 border-2 border-sky-400/40 shadow-sm">
                 <div className="space-y-1">
-                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-emerald-800">
-                    Daily Files Submitted
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-sky-900">
+                    Daily
                   </span>
-                  <div className="text-2xl sm:text-3xl font-black text-emerald-950 font-display">
+                  <div className="text-2xl sm:text-3xl font-black text-sky-950 font-display">
                     {dailyFilesSubmitted}
                   </div>
-                  <span className="text-[11px] text-emerald-700 font-medium block">
+                  <span className="text-[11px] text-sky-700 font-medium block">
                     All submissions today • Resets at 12:00 AM
                   </span>
                 </div>
-                <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 shadow-xs">
+                <div className="w-12 h-12 rounded-2xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0 shadow-xs">
                   <CalendarClock className="w-6 h-6" />
                 </div>
               </div>
 
-              {/* Counter 2: Files (remaining in Files section) */}
-              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-white border border-slate-200/80">
+              {/* Counter 2: PENDING FILES (Renamed from Files with green box background) */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-emerald-500/15 via-teal-500/10 to-emerald-600/15 border-2 border-emerald-500/40 shadow-sm">
                 <div className="space-y-1">
-                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-slate-500">
-                    Files
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-emerald-900">
+                    PENDING FILES
                   </span>
-                  <div className="text-2xl sm:text-3xl font-black text-slate-900 font-display">
+                  <div className="text-2xl sm:text-3xl font-black text-emerald-950 font-display">
                     {filesRecords.length}
                   </div>
-                  <span className="text-[11px] text-slate-500 font-medium block">
-                    Records remaining in Files section
+                  <span className="text-[11px] text-emerald-800 font-medium block">
+                    Records remaining in Pending Files
                   </span>
                 </div>
-                <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0 shadow-xs">
+                <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 shadow-xs">
                   <FileText className="w-6 h-6" />
                 </div>
               </div>
@@ -2178,7 +2184,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               {/* Counter 3: History (Clickable Activity Log) */}
               <button
                 type="button"
-                onClick={() => setIsHistoryModalOpen(true)}
+                onClick={() => {
+                  fetchHistory();
+                  setIsHistoryModalOpen(true);
+                }}
                 className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-indigo-50 to-slate-50 border border-indigo-200/60 hover:border-indigo-400 hover:shadow-md transition-all cursor-pointer text-left group"
                 title="Click to view complete Files activity and action log"
               >
@@ -2445,10 +2454,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                         : 'bg-slate-100 text-slate-400'
                                     }`}>
                                       <ImageIcon className="w-3 h-3" />
-                                      <span>{folder.totalFiles} {folder.totalFiles === 1 ? 'file' : 'files'}</span>
+                                      <span>{folder.totalFiles} {folder.totalFiles === 1 ? 'Attachment' : 'Attachments'}</span>
                                     </span>
                                     <span className="block text-[11px] font-bold text-slate-400">
-                                      {folder.totalSubmissions} {folder.totalSubmissions === 1 ? 'patient' : 'patients'}
+                                      {folder.totalSubmissions} {folder.totalSubmissions === 1 ? 'Pending File' : 'Pending Files'}
                                     </span>
                                   </div>
                                 </div>
@@ -2729,10 +2738,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         <h2 className="text-lg sm:text-2xl font-black text-slate-900 flex flex-wrap items-center gap-2">
                           <span>{selectedFolder}</span>
                           <span className="text-[11px] sm:text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
-                            {currentFolderData?.totalFiles || folderRecords.reduce((sum, r) => sum + (r.filesCount || (r.uploadedFiles ? r.uploadedFiles.length : 1)), 0)} Files
+                            {currentFolderData?.totalFiles || folderRecords.reduce((sum, r) => sum + (r.filesCount || (r.uploadedFiles ? r.uploadedFiles.length : 1)), 0)} Attachments
                           </span>
                           <span className="text-[11px] sm:text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                            {folderRecords.length} {folderRecords.length === 1 ? 'Record' : 'Records'}
+                            {folderRecords.length} {folderRecords.length === 1 ? 'Pending File' : 'Pending Files'}
                           </span>
                         </h2>
                       </div>
@@ -4483,6 +4492,282 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       <span>Permanently Delete</span>
                     </>
                   )}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* HISTORY LOG AUDIT MODAL (100% Functional)                                  */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {isHistoryModalOpen && (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-slate-950/70 backdrop-blur-xs no-print"
+            onClick={() => setIsHistoryModalOpen(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.18 }}
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200/90 w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className="p-5 sm:p-6 border-b border-slate-100 flex items-center justify-between gap-4 bg-gradient-to-r from-slate-50 via-white to-indigo-50/30">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-11 h-11 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0 shadow-xs">
+                    <History className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-base sm:text-lg font-black text-slate-900 truncate font-display">
+                        Submit PCU Action History & Audit Log
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-indigo-100 text-indigo-700 border border-indigo-200">
+                        {pcuHistory.length} Total
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 truncate">
+                      Complete immutable audit trail of submissions, status verifications, deletions, and settlements
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => fetchHistory()}
+                    disabled={loadingHistory}
+                    className="p-2 neu-btn-white rounded-xl text-slate-600 hover:text-indigo-600 transition-colors cursor-pointer"
+                    title="Refresh History"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loadingHistory ? 'animate-spin text-indigo-600' : ''}`} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsHistoryModalOpen(false)}
+                    className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                    title="Close History"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Search & Filter Toolbar */}
+              <div className="p-4 border-b border-slate-100 bg-slate-50/60 space-y-3">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                  <div className="relative flex-1">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={historySearch}
+                      onChange={(e) => setHistorySearch(e.target.value)}
+                      placeholder="Search history by patient, barangay, submitter, action, or details..."
+                      className="w-full pl-9 pr-8 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                    />
+                    {historySearch && (
+                      <button
+                        type="button"
+                        onClick={() => setHistorySearch('')}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Filter Chips */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-bold no-scrollbar">
+                  {[
+                    { id: 'ALL', label: 'All Actions' },
+                    { id: 'SUBMITTED', label: 'Submissions' },
+                    { id: 'VERIFIED', label: 'Verified' },
+                    { id: 'PENDING', label: 'Pending' },
+                    { id: 'UPDATED', label: 'Updated' },
+                    { id: 'FILES', label: 'Returned to Files' },
+                    { id: 'DELETED', label: 'Deletions' },
+                    { id: 'SETTLEMENT', label: 'Settlements' }
+                  ].map((filter) => {
+                    const isActive = historyActionFilter === filter.id;
+                    return (
+                      <button
+                        key={filter.id}
+                        type="button"
+                        onClick={() => setHistoryActionFilter(filter.id)}
+                        className={`px-3 py-1 rounded-lg text-[11px] font-bold transition-all shrink-0 cursor-pointer ${
+                          isActive
+                            ? 'bg-indigo-600 text-white shadow-xs shadow-indigo-600/20'
+                            : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100 hover:text-slate-900'
+                        }`}
+                      >
+                        {filter.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* History Items List */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-3 min-h-[300px] max-h-[60vh]">
+                {loadingHistory ? (
+                  <div className="py-16 flex flex-col items-center justify-center gap-3 text-slate-400">
+                    <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+                    <span className="text-xs font-bold">Loading history audit logs...</span>
+                  </div>
+                ) : (() => {
+                  const filtered = pcuHistory.filter(item => {
+                    const q = historySearch.toLowerCase().trim();
+                    const matchesSearch = !q ||
+                      (item.patientName || '').toLowerCase().includes(q) ||
+                      (item.barangay || '').toLowerCase().includes(q) ||
+                      (item.submitter || '').toLowerCase().includes(q) ||
+                      (item.performedBy || '').toLowerCase().includes(q) ||
+                      (item.action || '').toLowerCase().includes(q) ||
+                      (item.details || '').toLowerCase().includes(q);
+
+                    if (!matchesSearch) return false;
+                    if (historyActionFilter === 'ALL') return true;
+                    if (historyActionFilter === 'VERIFIED') return item.action === 'VERIFIED';
+                    if (historyActionFilter === 'PENDING') return item.action === 'MOVED_TO_PENDING';
+                    if (historyActionFilter === 'UPDATED') return item.action === 'MOVED_TO_UPDATED';
+                    if (historyActionFilter === 'FILES') return item.action === 'MOVED_TO_FILES';
+                    if (historyActionFilter === 'SUBMITTED') return item.action === 'SUBMITTED';
+                    if (historyActionFilter === 'DELETED') return item.action === 'DELETED_SUBMISSION' || item.action === 'DELETED_FILE';
+                    if (historyActionFilter === 'SETTLEMENT') return item.action === 'SETTLEMENT_RECORDED' || item.action === 'SETTLEMENT_DELETED';
+                    return true;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="py-16 flex flex-col items-center justify-center gap-3 text-slate-400 text-center">
+                        <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400">
+                          <History className="w-6 h-6" />
+                        </div>
+                        <h4 className="text-sm font-bold text-slate-700">No History Records Found</h4>
+                        <p className="text-xs text-slate-400 max-w-sm">
+                          {historySearch ? 'No action logs matched your search terms.' : 'Action logs will appear here as users submit files, verify records, and process settlements.'}
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  return filtered.map((item) => {
+                    let badgeBg = 'bg-slate-100 text-slate-800 border-slate-200';
+                    let badgeLabel = item.action.replace(/_/g, ' ');
+                    let ActionIcon = History;
+
+                    if (item.action === 'VERIFIED') {
+                      badgeBg = 'bg-emerald-100 text-emerald-800 border-emerald-300';
+                      badgeLabel = 'Verified';
+                      ActionIcon = CheckCircle2;
+                    } else if (item.action === 'MOVED_TO_PENDING') {
+                      badgeBg = 'bg-amber-100 text-amber-800 border-amber-300';
+                      badgeLabel = 'Pending';
+                      ActionIcon = Clock;
+                    } else if (item.action === 'MOVED_TO_UPDATED') {
+                      badgeBg = 'bg-blue-100 text-blue-800 border-blue-300';
+                      badgeLabel = 'Updated';
+                      ActionIcon = Sparkles;
+                    } else if (item.action === 'MOVED_TO_FILES') {
+                      badgeBg = 'bg-teal-100 text-teal-800 border-teal-300';
+                      badgeLabel = 'Returned to Files';
+                      ActionIcon = RotateCcw;
+                    } else if (item.action === 'SUBMITTED') {
+                      badgeBg = 'bg-indigo-100 text-indigo-800 border-indigo-300';
+                      badgeLabel = 'Submission';
+                      ActionIcon = UploadCloud;
+                    } else if (item.action === 'DELETED_SUBMISSION' || item.action === 'DELETED_FILE') {
+                      badgeBg = 'bg-rose-100 text-rose-800 border-rose-300';
+                      badgeLabel = item.action === 'DELETED_FILE' ? 'File Deleted' : 'Record Deleted';
+                      ActionIcon = Trash2;
+                    } else if (item.action === 'SETTLEMENT_RECORDED') {
+                      badgeBg = 'bg-purple-100 text-purple-800 border-purple-300';
+                      badgeLabel = 'Payroll Settled';
+                      ActionIcon = Banknote;
+                    } else if (item.action === 'SETTLEMENT_DELETED') {
+                      badgeBg = 'bg-rose-100 text-rose-800 border-rose-300';
+                      badgeLabel = 'Settlement Removed';
+                      ActionIcon = Trash2;
+                    }
+
+                    return (
+                      <div
+                        key={item.id}
+                        className="p-4 bg-white rounded-2xl border border-slate-200 hover:border-slate-300 shadow-xs hover:shadow-sm transition-all space-y-2.5"
+                      >
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase border ${badgeBg}`}>
+                              <ActionIcon className="w-3 h-3" />
+                              <span>{badgeLabel}</span>
+                            </span>
+                            <span className="text-sm font-black text-slate-900 font-display">
+                              {item.patientName}
+                            </span>
+                            {item.barangay && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                                {item.barangay}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="text-[11px] text-slate-400 font-medium shrink-0 flex items-center gap-1.5">
+                            <Calendar className="w-3 h-3 text-slate-400" />
+                            <span>{formatTimestamp(item.timestamp)}</span>
+                          </div>
+                        </div>
+
+                        {item.details && (
+                          <p className="text-xs text-slate-600 font-normal leading-relaxed bg-slate-50/80 p-2.5 rounded-xl border border-slate-100">
+                            {item.details}
+                          </p>
+                        )}
+
+                        <div className="flex items-center justify-between flex-wrap gap-2 pt-1 text-[11px] text-slate-400">
+                          <div className="flex items-center gap-3">
+                            {item.submitter && (
+                              <span>
+                                Submitter: <strong className="text-slate-700">{item.submitter}</strong>
+                              </span>
+                            )}
+                            {item.performedBy && (
+                              <span>
+                                Action by: <strong className="text-indigo-700">{item.performedBy}</strong>
+                              </span>
+                            )}
+                          </div>
+
+                          {item.previousStatus && item.newStatus && (
+                            <div className="flex items-center gap-1 text-[10px] font-bold text-slate-500">
+                              <span className="px-1.5 py-0.5 rounded bg-slate-100">{item.previousStatus}</span>
+                              <span>➔</span>
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">{item.newStatus}</span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between text-xs">
+                <span className="text-slate-500 font-medium">
+                  Showing {pcuHistory.length} total activity entries
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsHistoryModalOpen(false)}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl transition-colors cursor-pointer"
+                >
+                  Close Log
                 </button>
               </div>
             </motion.div>
