@@ -163,3 +163,70 @@ export interface BulkPreviewResponse {
   };
   detectedSeparator: string;
 }
+
+export interface SubmittedExistAccRecord {
+  id: string;
+  existAccountId: string;
+  fullName: string;
+  barangay: string;
+  purok: string;
+  contactNumber: string;
+  pin: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  geotagged: boolean;
+  facebookLink?: string;
+  uploadedFiles: {
+    name: string;
+    fileName?: string;
+    url: string;
+    fileUrl?: string;
+    fileType?: string;
+    size?: number;
+    uploadedAt?: string;
+    uploadedBy?: string;
+  }[];
+  filesCount: number;
+  uploadedBy: string;
+  uploadedAt: string;
+  status: string; // 'FILES' | 'VERIFIED' | 'PENDING' | 'UPDATED'
+  verified_at?: string | null;
+  verified_by?: string | null;
+  pending_at?: string | null;
+  pending_by?: string | null;
+  updated_status_at?: string | null;
+  updated_status_by?: string | null;
+  verified_credit_added?: boolean;
+  pending_credit_added?: boolean;
+  remarks?: string;
+}
+
+export interface SubmittedExistAccHistoryItem {
+  id: string;
+  action: string;
+  recordId: string;
+  patientName: string;
+  barangay: string;
+  submitter: string;
+  performedBy: string;
+  previousStatus: string;
+  newStatus: string;
+  timestamp: string;
+  details?: string;
+}
+
+export interface SubmittedExistAccSettlement {
+  id: string;
+  submitter: string;
+  totalSubmissions: number;
+  baseRate: number;
+  totalSalary: number;
+  amountPaid: number;
+  paymentStatus: string;
+  paymentMethod: string;
+  referenceNotes?: string;
+  settledBy: string;
+  settledAt: string;
+  createdAt: string;
+}
+

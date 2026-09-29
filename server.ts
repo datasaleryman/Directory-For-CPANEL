@@ -92,7 +92,18 @@ import {
   getPcuHistory,
   getPcuSettlements,
   recordPcuSettlement,
-  deletePcuSettlement
+  deletePcuSettlement,
+  getSubmittedExistAccounts,
+  addOrUpdateSubmittedExistAccount,
+  updateSubmittedExistAccountStatus,
+  deleteSubmittedExistAccount,
+  deleteSubmittedExistAccountFile,
+  getSubmittedExistAccBaseRates,
+  setSubmittedExistAccBaseRates,
+  getSubmittedExistAccHistory,
+  getSubmittedExistAccSettlements,
+  recordSubmittedExistAccSettlement,
+  deleteSubmittedExistAccSettlement
 } from './server/db.js';
 import {
   loadCPanelDbConfig,
@@ -1164,6 +1175,164 @@ export async function getApp(httpServer?: http.Server) {
       addActivity(username, `Deleted salary settlement record #${id}`);
 
       res.json({ success: true, message: 'Settlement record removed successfully.' });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to delete settlement.' });
+    }
+  });
+
+  // --- Submitted Exist. Acc. API Routes ---
+  app.get('/api/submitted-exist-acc', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      let records = getSubmittedExistAccounts();
+      const { barangay, status, search } = req.query;
+
+      if (barangay && typeof barangay === 'string' && barangay !== 'ALL') {
+        const bgUpper = barangay.toUpperCase().trim();
+        records = records.filter(r => (r.barangay || '').toUpperCase().trim() === bgUpper);
+      }
+
+      if (status && typeof status === 'string' && status !== 'ALL') {
+        const stUpper = status.toUpperCase().trim();
+        records = records.filter(r => (r.status || 'FILES').toUpperCase().trim() === stUpper);
+      }
+
+      if (search && typeof search === 'string' && search.trim()) {
+        const q = search.toLowerCase().trim();
+        records = records.filter(r => 
+          (r.fullName || '').toLowerCase().includes(q) ||
+          (r.barangay || '').toLowerCase().includes(q) ||
+          (r.purok || '').toLowerCase().includes(q) ||
+          (r.contactNumber || '').toLowerCase().includes(q) ||
+          (r.pin || '').toLowerCase().includes(q) ||
+          (r.uploadedBy || '').toLowerCase().includes(q)
+        );
+      }
+
+      res.json(records);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch submitted existing accounts.' });
+    }
+  });
+
+  app.post('/api/submitted-exist-acc', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const record = await addOrUpdateSubmittedExistAccount(req.body, username);
+      res.status(201).json(record);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to save submitted existing account.' });
+    }
+  });
+
+  app.put('/api/submitted-exist-acc/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const record = await addOrUpdateSubmittedExistAccount({ ...req.body, id: req.params.id }, username);
+      res.json(record);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to update record.' });
+    }
+  });
+
+  app.put('/api/submitted-exist-acc/:id/status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const { status, details } = req.body;
+      const result = await updateSubmittedExistAccountStatus({
+        id: req.params.id,
+        status,
+        username,
+        details
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to update status.' });
+    }
+  });
+
+  app.delete('/api/submitted-exist-acc/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      await deleteSubmittedExistAccount(req.params.id, username);
+      res.json({ success: true, message: 'Record deleted from Submitted Exist. Acc.' });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to delete record.' });
+    }
+  });
+
+  app.delete('/api/submitted-exist-acc/:id/files/:fileIndex', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const fileIdx = parseInt(req.params.fileIndex, 10);
+      const updated = await deleteSubmittedExistAccountFile(req.params.id, fileIdx, username);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to remove file.' });
+    }
+  });
+
+  app.get('/api/submitted-exist-acc/base-rates', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const rates = getSubmittedExistAccBaseRates();
+      res.json(rates);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to get base rates.' });
+    }
+  });
+
+  app.post('/api/submitted-exist-acc/base-rates', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { baseRate, pendingBaseRate } = req.body;
+      const updated = await setSubmittedExistAccBaseRates(baseRate, pendingBaseRate);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to update base rates.' });
+    }
+  });
+
+  app.get('/api/submitted-exist-acc/history', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const history = getSubmittedExistAccHistory();
+      res.json(history);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to get history logs.' });
+    }
+  });
+
+  app.get('/api/submitted-exist-acc/settlements', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const settlements = getSubmittedExistAccSettlements();
+      res.json(settlements);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to get settlements.' });
+    }
+  });
+
+  app.post('/api/submitted-exist-acc/settlements', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const settlement = await recordSubmittedExistAccSettlement({
+        ...req.body,
+        settledBy: username
+      });
+      res.status(201).json(settlement);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to record settlement.' });
+    }
+  });
+
+  app.delete('/api/submitted-exist-acc/settlements/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const role = (req.user?.role || '').toUpperCase().trim();
+      const isMasterAdmin = role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username.toLowerCase() === 'admin';
+
+      if (!isMasterAdmin) {
+        return res.status(403).json({ error: 'Access Denied: Only Master Admin can remove settlement records.' });
+      }
+
+      await deleteSubmittedExistAccSettlement(req.params.id);
+      res.json({ success: true, message: 'Settlement removed successfully.' });
     } catch (err: any) {
       res.status(400).json({ error: err.message || 'Failed to delete settlement.' });
     }

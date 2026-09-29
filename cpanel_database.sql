@@ -213,4 +213,84 @@ CREATE TABLE IF NOT EXISTS `pcu_settlements` (
   INDEX `idx_settle_at` (`settled_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- -------------------------------------------------------------------------
+-- 12. Table: submitted_exist_acc (Submitted Existing Accounts)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `submitted_exist_acc` (
+  `id` VARCHAR(100) NOT NULL PRIMARY KEY,
+  `exist_account_id` VARCHAR(100) NOT NULL,
+  `full_name` VARCHAR(255) NOT NULL,
+  `barangay` VARCHAR(255) NOT NULL DEFAULT 'General / Unassigned',
+  `purok` VARCHAR(255) DEFAULT '',
+  `contact_number` VARCHAR(100) DEFAULT '',
+  `pin` VARCHAR(100) DEFAULT '',
+  `latitude` DECIMAL(10, 7) NULL,
+  `longitude` DECIMAL(10, 7) NULL,
+  `geotagged` TINYINT(1) DEFAULT 0,
+  `facebook_link` VARCHAR(255) DEFAULT '',
+  `uploaded_files` LONGTEXT NULL,
+  `files_count` INT DEFAULT 0,
+  `uploaded_by` VARCHAR(255) DEFAULT 'Admin',
+  `uploaded_at` VARCHAR(100) DEFAULT '',
+  `status` VARCHAR(50) DEFAULT 'FILES',
+  `verified_at` VARCHAR(100) NULL,
+  `verified_by` VARCHAR(255) NULL,
+  `pending_at` VARCHAR(100) NULL,
+  `pending_by` VARCHAR(255) NULL,
+  `updated_status_at` VARCHAR(100) NULL,
+  `updated_status_by` VARCHAR(255) NULL,
+  `verified_credit_added` TINYINT(1) DEFAULT 0,
+  `pending_credit_added` TINYINT(1) DEFAULT 0,
+  `remarks` TEXT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_sea_barangay` (`barangay`),
+  INDEX `idx_sea_full_name` (`full_name`),
+  INDEX `idx_sea_status` (`status`),
+  INDEX `idx_sea_uploaded_by` (`uploaded_by`),
+  INDEX `idx_sea_uploaded_at` (`uploaded_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
+-- 13. Table: submitted_exist_acc_settlements (Submitted Exist Acc Ledger Settlements)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `submitted_exist_acc_settlements` (
+  `id` VARCHAR(100) NOT NULL PRIMARY KEY,
+  `submitter` VARCHAR(255) NOT NULL,
+  `total_submissions` INT DEFAULT 0,
+  `base_rate` DECIMAL(10,2) DEFAULT 0.00,
+  `total_salary` DECIMAL(12,2) DEFAULT 0.00,
+  `amount_paid` DECIMAL(12,2) DEFAULT 0.00,
+  `payment_status` VARCHAR(50) DEFAULT 'SETTLED',
+  `payment_method` VARCHAR(100) DEFAULT 'CASH',
+  `reference_notes` TEXT,
+  `settled_by` VARCHAR(100) DEFAULT 'Master Admin',
+  `settled_at` VARCHAR(100) NOT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_sea_settle_submitter` (`submitter`),
+  INDEX `idx_sea_settle_status` (`payment_status`),
+  INDEX `idx_sea_settle_at` (`settled_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
+-- 14. Table: submitted_exist_acc_history (Submitted Exist Acc History Logs)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `submitted_exist_acc_history` (
+  `id` VARCHAR(100) NOT NULL PRIMARY KEY,
+  `action` VARCHAR(100) NOT NULL,
+  `record_id` VARCHAR(100) DEFAULT '',
+  `patient_name` VARCHAR(255) NOT NULL,
+  `barangay` VARCHAR(255) DEFAULT '',
+  `submitter` VARCHAR(255) DEFAULT '',
+  `performed_by` VARCHAR(255) NOT NULL,
+  `previous_status` VARCHAR(100) DEFAULT '',
+  `new_status` VARCHAR(100) DEFAULT '',
+  `timestamp` VARCHAR(100) NOT NULL,
+  `details` TEXT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX `idx_sea_hist_time` (`timestamp`),
+  INDEX `idx_sea_hist_patient` (`patient_name`),
+  INDEX `idx_sea_hist_action` (`action`),
+  INDEX `idx_sea_hist_submitter` (`submitter`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;

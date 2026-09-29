@@ -13,12 +13,16 @@
   "navAdmins": "Admin Credentials",
   "navSettings": "Website Settings",
   "navExistingAccount": "Existing Account",
-  "navExistAccFiles": "Exist. Acc. Files",
+  "navSubmitPcu": "Submit PCU",
+  "navSubmittedExistAcc": "Submitted Exist. Acc.",
   "rolePermissions": {
     "MASTER ADMIN": [
       "dashboard",
       "map",
       "directory",
+      "submit-pcu",
+      "exist-acc-files",
+      "submitted-exist-acc",
       "accounts",
       "bulk",
       "print",
@@ -30,25 +34,36 @@
       "dashboard",
       "map",
       "directory",
+      "submit-pcu",
+      "exist-acc-files",
+      "submitted-exist-acc",
       "accounts",
       "bulk",
       "print",
-      "recent-upload"
+      "recent-upload",
+      "settings"
     ],
     "ADMIN": [
       "dashboard",
       "map",
       "directory",
+      "submit-pcu",
+      "exist-acc-files",
+      "submitted-exist-acc",
       "accounts",
       "bulk",
       "print",
       "recent-upload",
+      "settings",
       "existing-account"
     ],
     "Administrator": [
       "dashboard",
       "map",
       "directory",
+      "submit-pcu",
+      "exist-acc-files",
+      "submitted-exist-acc",
       "accounts",
       "bulk",
       "print",
@@ -57,18 +72,46 @@
       "existing-account"
     ],
     "LEADER": [
+      "dashboard",
       "map",
       "directory",
+      "submit-pcu",
+      "exist-acc-files",
+      "submitted-exist-acc",
       "recent-upload",
-      "existing-account"
+      "existing-account",
+      "bulk",
+      "print"
     ],
     "CO-LEADER": [
+      "dashboard",
       "map",
       "directory",
+      "submit-pcu",
+      "exist-acc-files",
+      "submitted-exist-acc",
       "recent-upload",
+      "existing-account",
+      "bulk",
+      "print"
+    ],
+    "ENCODER": [
+      "dashboard",
+      "map",
+      "directory",
+      "submit-pcu",
+      "exist-acc-files",
+      "submitted-exist-acc",
       "existing-account"
     ],
-    "ENCODER": [],
-    "STAFF": []
+    "STAFF": [
+      "dashboard",
+      "map",
+      "directory",
+      "submit-pcu",
+      "exist-acc-files",
+      "submitted-exist-acc",
+      "existing-account"
+    ]
   }
 }

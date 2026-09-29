@@ -1,0 +1,55 @@
+[
+  {
+    "id": "6a9634fd874be7681aaf30d2",
+    "existAccountId": "6a9634fd874be7681aaf30d2",
+    "fullName": "JENNIFER CAPAROSO RADAN",
+    "barangay": "BALANGASAN",
+    "purok": "SANTAN",
+    "contactNumber": "",
+    "pin": "",
+    "latitude": null,
+    "longitude": null,
+    "geotagged": false,
+    "facebookLink": "",
+    "uploadedFiles": [
+      {
+        "name": "JENNIFER.jpg",
+        "url": "https://base44.app/api/apps/6a430111a71a741248df97b1/files/mp/public/6a430111a71a741248df97b1/bb89ad407_JENNIFER.jpg",
+        "uploadedAt": "2026-09-07T00:25:11.005Z",
+        "uploadedBy": "Night Crow"
+      }
+    ],
+    "filesCount": 1,
+    "uploadedBy": "aprilkrishag",
+    "uploadedAt": "2026-09-01T02:14:21.170Z",
+    "status": "FILES"
+  },
+  {
+    "id": "6a90f3f807b86d2ddd3c9f14",
+    "existAccountId": "6a90f3f807b86d2ddd3c9f14",
+    "fullName": "JUAN DELA CRUZ",
+    "barangay": "DAMPALAN",
+    "purok": "Purok Mabuhay",
+    "contactNumber": "09171234567",
+    "pin": "12-345678901-2",
+    "latitude": 8.5234,
+    "longitude": 123.4123,
+    "geotagged": true,
+    "facebookLink": "https://facebook.com/juandelacruz",
+    "uploadedFiles": [
+      {
+        "name": "test_verification_doc.pdf",
+        "url": "https://base44.app/api/apps/6a430111a71a741248df97b1/files/mp/public/6a430111a71a741248df97b1/273ddb250_test_verification_doc.pdf",
+        "uploadedAt": "2026-09-15T03:01:56.410Z",
+        "uploadedBy": "Night Crow"
+      }
+    ],
+    "filesCount": 1,
+    "uploadedBy": "admin",
+    "uploadedAt": "2026-09-15T03:01:56.410Z",
+    "status": "VERIFIED",
+    "verified_at": "2026-09-28T16:45:03.489Z",
+    "verified_by": "admin",
+    "verified_credit_added": true
+  }
+]

@@ -714,7 +714,7 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
   }, [selectedItem, editFullName, editBarangay, editPurok, editContactNumber, editPin, facebookLink, editLatitude, editLongitude, stagedFiles]);
 
   // Save all modified details, geotag telemetry, and attached files
-  const handleSaveRecord = async (submitToBase44: boolean = false) => {
+  const handleSaveRecord = async (submitRecord: boolean = false) => {
     if (!selectedItem) return;
     if (!editFullName.trim()) {
       showToast('Patient full name is required.', 'error');
@@ -731,8 +731,7 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
       const lngNum = editLongitude.trim() ? parseFloat(editLongitude.trim()) : undefined;
       const isGeotagged = !!(latNum !== undefined && !isNaN(latNum) && lngNum !== undefined && !isNaN(lngNum));
 
-      // CRITICAL: Only submit to Base44 if explicitly requested via "Submit to Base44" button
-      const isSubmitting = submitToBase44 === true;
+      const isSubmitting = submitRecord === true;
 
       // Single unified atomic update sending all form fields AND staged files
       const updatePayload = {
@@ -745,7 +744,6 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
         longitude: isGeotagged ? lngNum : undefined,
         geotagged: isGeotagged,
         facebookLink: facebookLink.trim(),
-        submitToBase44: isSubmitting,
         isSubmitted: isSubmitting ? true : selectedItem.isSubmitted,
         files: stagedFiles.map(f => ({ 
           fileName: f.fileName, 
@@ -776,7 +774,7 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
       
       if (isSubmitting) {
         setSelectedItem(null);
-        showToast(`Record for "${updatedData.full_name}" and all attached files & documents successfully saved to Base44 database!`, 'success');
+        showToast(`Record for "${updatedData.full_name}" and all attached documents successfully submitted!`, 'success');
       } else {
         setSelectedItem(updatedData);
         showToast('Patient record details & attached files saved locally.', 'success');
@@ -809,7 +807,7 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
         },
         body: JSON.stringify({
           uploadedFiles: newFiles,
-          submitToBase44: selectedItem.isSubmitted
+          isSubmitted: selectedItem.isSubmitted
         })
       });
 
@@ -1740,11 +1738,11 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
                       </h3>
                       {selectedItem.isSubmitted || (selectedItem.uploadedFiles && selectedItem.uploadedFiles.length > 0) ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-200 border border-emerald-400/30">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-300" /> Submitted to Base44
+                          <CheckCircle2 className="w-3 h-3 text-emerald-300" /> Submitted
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-200 border border-amber-400/30">
-                          <Clock className="w-3 h-3 text-amber-300" /> Not Submitted (Local Only)
+                          <Clock className="w-3 h-3 text-amber-300" /> Pending Submission
                         </span>
                       )}
                     </div>
@@ -2162,7 +2160,7 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
                     onClick={() => handleSaveRecord(false)}
                     disabled={isSavingRecord}
                     className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 font-bold text-xs rounded-xl transition-all flex items-center gap-1.5 cursor-pointer focus:outline-none"
-                    title="Save edits locally without pushing to Base44 database"
+                    title="Save edits locally without submitting"
                   >
                     <Save className="w-3.5 h-3.5 text-slate-600" />
                     <span>Save Changes</span>
@@ -2177,12 +2175,12 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
                     {isSavingRecord ? (
                       <>
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                        <span>Saving & Syncing...</span>
+                        <span>Saving & Submitting...</span>
                       </>
                     ) : (
                       <>
                         <UploadCloud className="w-3.5 h-3.5" />
-                        <span>{selectedItem.isSubmitted ? 'Save & Sync to Base44' : 'Submit to Base44'}</span>
+                        <span>{selectedItem.isSubmitted ? 'Save & Update Record' : 'Submit Account'}</span>
                       </>
                     )}
                   </button>

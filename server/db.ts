@@ -26,6 +26,16 @@ import {
   fetchAllPcuSubmissionsFromCPanel,
   savePcuHistoryToCPanel,
   fetchPcuHistoryFromCPanel,
+  saveSubmittedExistAccToCPanel,
+  fetchAllSubmittedExistAccFromCPanel,
+  deleteSubmittedExistAccFromCPanel,
+  deleteSubmittedExistAccFileFromCPanel,
+  updateSubmittedExistAccStatusInCPanel,
+  saveSubmittedExistAccSettlementToCPanel,
+  fetchSubmittedExistAccSettlementsFromCPanel,
+  deleteSubmittedExistAccSettlementFromCPanel,
+  saveSubmittedExistAccHistoryToCPanel,
+  fetchSubmittedExistAccHistoryFromCPanel,
   fetchAllFromCPanelDb,
   getCPanelDbStatus,
   isCPanelDbConnected,
@@ -330,6 +340,82 @@ const PCU_HISTORY_FILE = path.join(DATA_DIR, 'pcu_history.json');
 const PCU_SETTLEMENTS_FILE = path.join(DATA_DIR, 'pcu_settlements.json');
 const PCU_CONFIG_FILE = path.join(DATA_DIR, 'pcu_config.json');
 const EXISTING_ACCOUNTS_FILE = path.join(DATA_DIR, 'existing_accounts.json');
+const SUBMITTED_EXIST_ACC_FILE = path.join(DATA_DIR, 'submitted_exist_acc.json');
+const SUBMITTED_EXIST_ACC_HISTORY_FILE = path.join(DATA_DIR, 'submitted_exist_acc_history.json');
+const SUBMITTED_EXIST_ACC_SETTLEMENTS_FILE = path.join(DATA_DIR, 'submitted_exist_acc_settlements.json');
+const SUBMITTED_EXIST_ACC_CONFIG_FILE = path.join(DATA_DIR, 'submitted_exist_acc_config.json');
+
+export interface SubmittedExistAccRecord {
+  id: string;
+  existAccountId?: string;
+  fullName: string;
+  barangay: string;
+  purok: string;
+  contactNumber: string;
+  pin: string;
+  latitude: number | null;
+  longitude: number | null;
+  geotagged: boolean;
+  facebookLink: string;
+  uploadedFiles: {
+    name: string;
+    fileName?: string;
+    url: string;
+    fileUrl?: string;
+    fileType?: string;
+    size?: number;
+    uploadedAt: string;
+    uploadedBy?: string;
+  }[];
+  filesCount: number;
+  uploadedBy: string;
+  uploadedAt: string;
+  status: string; // 'FILES' | 'VERIFIED' | 'PENDING' | 'UPDATED'
+  verified_at?: string | null;
+  verified_by?: string | null;
+  pending_at?: string | null;
+  pending_by?: string | null;
+  updated_status_at?: string | null;
+  updated_status_by?: string | null;
+  verified_credit_added?: boolean;
+  pending_credit_added?: boolean;
+  remarks?: string;
+}
+
+export interface SubmittedExistAccHistoryItem {
+  id: string;
+  action: string;
+  recordId?: string;
+  patientName: string;
+  barangay?: string;
+  submitter?: string;
+  performedBy: string;
+  previousStatus?: string;
+  newStatus: string;
+  timestamp: string;
+  details?: string;
+}
+
+export interface SubmittedExistAccSettlement {
+  id: string;
+  submitter: string;
+  totalSubmissions: number;
+  baseRate: number;
+  totalSalary: number;
+  amountPaid: number;
+  paymentStatus: 'SETTLED' | 'PENDING' | string;
+  paymentMethod: string;
+  referenceNotes?: string;
+  settledBy: string;
+  settledAt: string;
+  createdAt?: string;
+}
+
+export let submittedExistAccountsCache: SubmittedExistAccRecord[] = [];
+export let submittedExistAccHistoryCache: SubmittedExistAccHistoryItem[] = [];
+export let submittedExistAccSettlementsCache: SubmittedExistAccSettlement[] = [];
+export let submittedExistAccBaseRate: number = 50.00;
+export let submittedExistAccPendingBaseRate: number = 25.00;
 
 export interface PcuHistoryItem {
   id: string;
@@ -827,14 +913,14 @@ export function getSheetsStatus() {
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'IT': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'ADMIN': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'Administrator': ['dashboard', 'map', 'directory', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'LEADER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account'],
-  'CO-LEADER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account'],
-  'ENCODER': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account'],
-  'STAFF': ['dashboard', 'map', 'directory', 'bulk', 'print', 'existing-account']
+  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account'],
+  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account'],
+  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account'],
+  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account']
 };
 
 export interface SiteSettings {
@@ -846,6 +932,7 @@ export interface SiteSettings {
   navMap?: string;
   navDirectory?: string;
   navRecentUpload?: string;
+  navSubmitPcu?: string;
   navAccounts?: string;
   navBulk?: string;
   navPrint?: string;
@@ -853,9 +940,12 @@ export interface SiteSettings {
   navSettings?: string;
   navExistingAccount?: string;
   navExistAccFiles?: string;
+  navSubmittedExistAcc?: string;
   rolePermissions?: Record<string, string[]>;
   pcuBaseRate?: number;
   pcuPendingBaseRate?: number;
+  submittedExistAccBaseRate?: number;
+  submittedExistAccPendingBaseRate?: number;
 }
 
 const DEFAULT_SITE_LOGO = 'https://www.image2url.com/r2/default/images/1785037750375-501bcf0e-4b15-4e0e-8be2-610bc89d072e.png';
@@ -867,10 +957,13 @@ let siteSettings: SiteSettings = {
   faviconDataUrl: DEFAULT_SITE_LOGO,
   pcuBaseRate: 50.00,
   pcuPendingBaseRate: 25.00,
+  submittedExistAccBaseRate: 50.00,
+  submittedExistAccPendingBaseRate: 25.00,
   navDashboard: 'Dashboard',
   navMap: 'Clinic Map',
   navDirectory: 'Clinic Directory',
   navRecentUpload: 'Recent Upload',
+  navSubmitPcu: 'Submit PCU',
   navAccounts: 'Account Management',
   navBulk: 'Bulk Entry',
   navPrint: 'Print List',
@@ -878,6 +971,7 @@ let siteSettings: SiteSettings = {
   navSettings: 'Website Settings',
   navExistingAccount: 'Existing Account',
   navExistAccFiles: 'Exist. Acc. Files',
+  navSubmittedExistAcc: 'Submitted Exist. Acc.',
   rolePermissions: DEFAULT_ROLE_PERMISSIONS
 };
 
@@ -1618,6 +1712,104 @@ export async function initDb() {
       }
     }
 
+    // Init Submitted Exist. Acc. Records
+    if (!fs.existsSync(SUBMITTED_EXIST_ACC_FILE)) {
+      safeWriteFileSync(SUBMITTED_EXIST_ACC_FILE, JSON.stringify([], null, 2));
+      submittedExistAccountsCache = [];
+    } else {
+      try {
+        const rawSea = fs.readFileSync(SUBMITTED_EXIST_ACC_FILE, 'utf-8');
+        const parsedSea = JSON.parse(rawSea);
+        submittedExistAccountsCache = Array.isArray(parsedSea) ? parsedSea : [];
+      } catch (e) {
+        submittedExistAccountsCache = [];
+      }
+    }
+
+    // Auto-migrate any existingAccounts that have isSubmitted === true into submittedExistAccountsCache
+    if (existingAccountsCache && existingAccountsCache.length > 0) {
+      let migratedAny = false;
+      for (const acc of existingAccountsCache) {
+        if (acc.isSubmitted || (acc.uploadedFiles && acc.uploadedFiles.length > 0)) {
+          const already = submittedExistAccountsCache.some(s => String(s.id) === String(acc.id) || String(s.existAccountId) === String(acc.id));
+          if (!already) {
+            const files = acc.uploadedFiles || [];
+            submittedExistAccountsCache.unshift({
+              id: String(acc.id),
+              existAccountId: String(acc.id),
+              fullName: acc.full_name,
+              barangay: acc.barangay || '',
+              purok: acc.purok || '',
+              contactNumber: acc.contact_number || '',
+              pin: acc.pin || '',
+              latitude: acc.latitude !== undefined && acc.latitude !== null ? Number(acc.latitude) : null,
+              longitude: acc.longitude !== undefined && acc.longitude !== null ? Number(acc.longitude) : null,
+              geotagged: Boolean(acc.geotagged),
+              facebookLink: acc.facebookLink || '',
+              uploadedFiles: files,
+              filesCount: files.length,
+              uploadedBy: acc.submittedBy || 'Admin',
+              uploadedAt: acc.submittedAt || acc.created_at || new Date().toISOString(),
+              status: 'FILES'
+            });
+            migratedAny = true;
+          }
+        }
+      }
+      if (migratedAny) {
+        safeWriteFileSync(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2));
+        console.log(`[Init] Auto-migrated submitted existing accounts into Submitted Exist. Acc. store.`);
+      }
+    }
+
+    // Init Submitted Exist. Acc. History Log
+    if (!fs.existsSync(SUBMITTED_EXIST_ACC_HISTORY_FILE)) {
+      safeWriteFileSync(SUBMITTED_EXIST_ACC_HISTORY_FILE, JSON.stringify([], null, 2));
+      submittedExistAccHistoryCache = [];
+    } else {
+      try {
+        const rawHist = fs.readFileSync(SUBMITTED_EXIST_ACC_HISTORY_FILE, 'utf-8');
+        const parsedHist = JSON.parse(rawHist);
+        submittedExistAccHistoryCache = Array.isArray(parsedHist) ? parsedHist : [];
+      } catch (e) {
+        submittedExistAccHistoryCache = [];
+      }
+    }
+
+    // Init Submitted Exist. Acc. Settlements
+    if (!fs.existsSync(SUBMITTED_EXIST_ACC_SETTLEMENTS_FILE)) {
+      safeWriteFileSync(SUBMITTED_EXIST_ACC_SETTLEMENTS_FILE, JSON.stringify([], null, 2));
+      submittedExistAccSettlementsCache = [];
+    } else {
+      try {
+        const rawSettle = fs.readFileSync(SUBMITTED_EXIST_ACC_SETTLEMENTS_FILE, 'utf-8');
+        const parsedSettle = JSON.parse(rawSettle);
+        submittedExistAccSettlementsCache = Array.isArray(parsedSettle) ? parsedSettle : [];
+      } catch (e) {
+        submittedExistAccSettlementsCache = [];
+      }
+    }
+
+    // Init Submitted Exist. Acc. Config (Base Rates)
+    if (fs.existsSync(SUBMITTED_EXIST_ACC_CONFIG_FILE)) {
+      try {
+        const rawConf = fs.readFileSync(SUBMITTED_EXIST_ACC_CONFIG_FILE, 'utf-8');
+        const parsedConf = JSON.parse(rawConf);
+        if (parsedConf && typeof parsedConf.baseRate === 'number') {
+          submittedExistAccBaseRate = parsedConf.baseRate;
+          siteSettings.submittedExistAccBaseRate = submittedExistAccBaseRate;
+        }
+        if (parsedConf && typeof parsedConf.pendingBaseRate === 'number') {
+          submittedExistAccPendingBaseRate = parsedConf.pendingBaseRate;
+          siteSettings.submittedExistAccPendingBaseRate = submittedExistAccPendingBaseRate;
+        }
+      } catch (e: any) {
+        console.warn('Failed to read SUBMITTED_EXIST_ACC_CONFIG_FILE:', e.message);
+      }
+    } else {
+      safeWriteFileSync(SUBMITTED_EXIST_ACC_CONFIG_FILE, JSON.stringify({ baseRate: submittedExistAccBaseRate, pendingBaseRate: submittedExistAccPendingBaseRate }, null, 2));
+    }
+
     // Init Barangays
     if (fs.existsSync(BARANGAYS_FILE)) {
       try {
@@ -1898,6 +2090,87 @@ export async function initDb() {
             }
           } catch (settleErr: any) {
             console.warn('[cPanel DB] Error syncing settlements with MySQL:', settleErr.message);
+          }
+
+          // Sync Submitted Exist. Acc. records with MySQL
+          try {
+            const remoteSea = (cpanelData as any).submittedExistAcc || await fetchAllSubmittedExistAccFromCPanel();
+            if (Array.isArray(remoteSea) && remoteSea.length > 0) {
+              const seaMap = new Map<string, SubmittedExistAccRecord>();
+              submittedExistAccountsCache.forEach(r => seaMap.set(String(r.id), r));
+              remoteSea.forEach(r => {
+                seaMap.set(String(r.id), {
+                  id: String(r.id),
+                  existAccountId: r.existAccountId || r.id,
+                  fullName: r.fullName,
+                  barangay: r.barangay,
+                  purok: r.purok || '',
+                  contactNumber: r.contactNumber || '',
+                  pin: r.pin || '',
+                  latitude: r.latitude !== null && r.latitude !== undefined ? Number(r.latitude) : null,
+                  longitude: r.longitude !== null && r.longitude !== undefined ? Number(r.longitude) : null,
+                  geotagged: Boolean(r.geotagged),
+                  facebookLink: r.facebookLink || '',
+                  uploadedFiles: r.uploadedFiles || [],
+                  filesCount: (r.uploadedFiles || []).length,
+                  uploadedBy: r.uploadedBy || 'Admin',
+                  uploadedAt: r.uploadedAt,
+                  status: r.status || 'FILES',
+                  verified_at: r.verified_at || null,
+                  verified_by: r.verified_by || null,
+                  pending_at: r.pending_at || null,
+                  pending_by: r.pending_by || null,
+                  updated_status_at: r.updated_status_at || null,
+                  updated_status_by: r.updated_status_by || null,
+                  verified_credit_added: Boolean(r.verified_credit_added),
+                  pending_credit_added: Boolean(r.pending_credit_added),
+                  remarks: r.remarks || ''
+                });
+              });
+              submittedExistAccountsCache = Array.from(seaMap.values()).sort(
+                (a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+              );
+              safeWriteFileSync(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2));
+              console.log(`[cPanel DB] Protected and synced ${submittedExistAccountsCache.length} Submitted Exist. Acc. records from MySQL.`);
+            } else if (submittedExistAccountsCache.length > 0) {
+              for (const r of submittedExistAccountsCache) {
+                await saveSubmittedExistAccToCPanel(r);
+              }
+            }
+          } catch (seaSyncErr: any) {
+            console.warn('[cPanel DB] Error syncing Submitted Exist. Acc. records with MySQL:', seaSyncErr.message);
+          }
+
+          // Sync Submitted Exist. Acc. History from MySQL
+          try {
+            const remoteSeaHist = (cpanelData as any).submittedExistHistory || await fetchSubmittedExistAccHistoryFromCPanel(500);
+            if (Array.isArray(remoteSeaHist) && remoteSeaHist.length > 0) {
+              const histMap = new Map<string, SubmittedExistAccHistoryItem>();
+              submittedExistAccHistoryCache.forEach(h => histMap.set(h.id, h));
+              remoteSeaHist.forEach(h => histMap.set(h.id, h));
+              submittedExistAccHistoryCache = Array.from(histMap.values()).sort(
+                (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+              );
+              safeWriteFileSync(SUBMITTED_EXIST_ACC_HISTORY_FILE, JSON.stringify(submittedExistAccHistoryCache, null, 2));
+            }
+          } catch (histErr: any) {
+            console.warn('[cPanel DB] Error syncing Submitted Exist. Acc. history with MySQL:', histErr.message);
+          }
+
+          // Sync Submitted Exist. Acc. Settlements from MySQL
+          try {
+            const remoteSeaSettlements = (cpanelData as any).submittedExistSettlements || await fetchSubmittedExistAccSettlementsFromCPanel();
+            if (Array.isArray(remoteSeaSettlements) && remoteSeaSettlements.length > 0) {
+              const map = new Map<string, SubmittedExistAccSettlement>();
+              submittedExistAccSettlementsCache.forEach(s => map.set(s.id, s));
+              remoteSeaSettlements.forEach(s => map.set(s.id, s));
+              submittedExistAccSettlementsCache = Array.from(map.values()).sort(
+                (a, b) => new Date(b.settledAt).getTime() - new Date(a.settledAt).getTime()
+              );
+              safeWriteFileSync(SUBMITTED_EXIST_ACC_SETTLEMENTS_FILE, JSON.stringify(submittedExistAccSettlementsCache, null, 2));
+            }
+          } catch (settleErr: any) {
+            console.warn('[cPanel DB] Error syncing Submitted Exist. Acc. settlements with MySQL:', settleErr.message);
           }
 
           // Bidirectional user synchronization to protect new registrations
@@ -10750,10 +11023,409 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
   return existingAccount.id;
 }
 
+// =========================================================================
+// SUBMITTED EXIST. ACC. SYSTEM & REPOSITORY
+// Stores all submitted Existing Accounts with patient details, attachments,
+// barangay folders, verification workflows, history audit, and payroll ledger.
+// =========================================================================
+
+export function getSubmittedExistAccounts(): SubmittedExistAccRecord[] {
+  return submittedExistAccountsCache;
+}
+
+export function getSubmittedExistAccBaseRates(): { baseRate: number; pendingBaseRate: number } {
+  return { baseRate: submittedExistAccBaseRate, pendingBaseRate: submittedExistAccPendingBaseRate };
+}
+
+export async function setSubmittedExistAccBaseRates(rate?: number, pendingRate?: number): Promise<{ baseRate: number; pendingBaseRate: number }> {
+  if (rate !== undefined && !isNaN(Number(rate))) {
+    const cleanRate = Math.max(0, Number(rate) || 0);
+    submittedExistAccBaseRate = cleanRate;
+    siteSettings.submittedExistAccBaseRate = cleanRate;
+    try {
+      await saveSettingToCPanel('submitted_exist_acc_base_rate', String(cleanRate));
+    } catch (err: any) {
+      console.warn('Error saving submitted exist acc base rate to MySQL:', err.message);
+    }
+  }
+
+  if (pendingRate !== undefined && !isNaN(Number(pendingRate))) {
+    const cleanPending = Math.max(0, Number(pendingRate) || 0);
+    submittedExistAccPendingBaseRate = cleanPending;
+    siteSettings.submittedExistAccPendingBaseRate = cleanPending;
+    try {
+      await saveSettingToCPanel('submitted_exist_acc_pending_base_rate', String(cleanPending));
+    } catch (err: any) {
+      console.warn('Error saving submitted exist acc pending base rate to MySQL:', err.message);
+    }
+  }
+
+  try {
+    safeWriteFileSync(SUBMITTED_EXIST_ACC_CONFIG_FILE, JSON.stringify({ baseRate: submittedExistAccBaseRate, pendingBaseRate: submittedExistAccPendingBaseRate }, null, 2), 'utf-8');
+    safeWriteFileSync(SETTINGS_FILE, JSON.stringify(siteSettings, null, 2), 'utf-8');
+  } catch (err: any) {
+    console.warn('Error saving Submitted Exist Acc config:', err.message);
+  }
+
+  return { baseRate: submittedExistAccBaseRate, pendingBaseRate: submittedExistAccPendingBaseRate };
+}
+
+export function getSubmittedExistAccHistory(): SubmittedExistAccHistoryItem[] {
+  return submittedExistAccHistoryCache;
+}
+
+export async function addSubmittedExistAccHistory(item: {
+  action: string;
+  recordId?: string;
+  patientName: string;
+  barangay?: string;
+  submitter?: string;
+  performedBy?: string;
+  previousStatus?: string;
+  newStatus?: string;
+  details?: string;
+}): Promise<SubmittedExistAccHistoryItem> {
+  const historyEntry: SubmittedExistAccHistoryItem = {
+    id: `hist_sea_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    action: item.action,
+    recordId: item.recordId || '',
+    patientName: item.patientName,
+    barangay: item.barangay || '',
+    submitter: item.submitter || '',
+    performedBy: item.performedBy || 'Admin',
+    previousStatus: item.previousStatus || '',
+    newStatus: item.newStatus || '',
+    timestamp: new Date().toISOString(),
+    details: item.details || ''
+  };
+
+  submittedExistAccHistoryCache.unshift(historyEntry);
+  if (submittedExistAccHistoryCache.length > 2000) {
+    submittedExistAccHistoryCache = submittedExistAccHistoryCache.slice(0, 2000);
+  }
+  await safeWriteFile(SUBMITTED_EXIST_ACC_HISTORY_FILE, JSON.stringify(submittedExistAccHistoryCache, null, 2), 'utf-8').catch(() => {});
+
+  if (isCPanelDbConnected()) {
+    try {
+      await saveSubmittedExistAccHistoryToCPanel(historyEntry);
+    } catch (err: any) {
+      console.warn('[cPanel DB History] Error saving Submitted Exist Acc history to MySQL:', err.message);
+    }
+  }
+
+  return historyEntry;
+}
+
+export function getSubmittedExistAccSettlements(): SubmittedExistAccSettlement[] {
+  return submittedExistAccSettlementsCache;
+}
+
+export async function recordSubmittedExistAccSettlement(data: {
+  id?: string;
+  submitter: string;
+  totalSubmissions: number;
+  baseRate?: number;
+  totalSalary?: number;
+  amountPaid?: number;
+  paymentStatus?: string;
+  paymentMethod?: string;
+  referenceNotes?: string;
+  settledBy?: string;
+  settledAt?: string;
+}): Promise<SubmittedExistAccSettlement> {
+  const id = data.id || `set_sea_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const submitter = (data.submitter || '').trim();
+  const totalSubmissions = Number(data.totalSubmissions) || 0;
+  const baseRate = Number(data.baseRate) || submittedExistAccBaseRate;
+  const totalSalary = Number(data.totalSalary) || (totalSubmissions * baseRate);
+  const amountPaid = data.amountPaid !== undefined ? Number(data.amountPaid) : totalSalary;
+  const paymentStatus = data.paymentStatus || 'SETTLED';
+  const paymentMethod = data.paymentMethod || 'CASH';
+  const referenceNotes = data.referenceNotes || '';
+  const settledBy = data.settledBy || 'Master Admin';
+  const settledAt = data.settledAt || new Date().toISOString();
+
+  const settlement: SubmittedExistAccSettlement = {
+    id,
+    submitter,
+    totalSubmissions,
+    baseRate,
+    totalSalary,
+    amountPaid,
+    paymentStatus,
+    paymentMethod,
+    referenceNotes,
+    settledBy,
+    settledAt,
+    createdAt: new Date().toISOString()
+  };
+
+  const existingIdx = submittedExistAccSettlementsCache.findIndex(s => s.id === id || (s.submitter && s.submitter.toLowerCase() === submitter.toLowerCase() && s.settledAt === settledAt));
+  if (existingIdx !== -1) {
+    submittedExistAccSettlementsCache[existingIdx] = settlement;
+  } else {
+    submittedExistAccSettlementsCache.unshift(settlement);
+  }
+
+  await safeWriteFile(SUBMITTED_EXIST_ACC_SETTLEMENTS_FILE, JSON.stringify(submittedExistAccSettlementsCache, null, 2), 'utf-8');
+
+  if (isCPanelDbConnected()) {
+    try {
+      await saveSubmittedExistAccSettlementToCPanel(settlement);
+    } catch (err: any) {
+      console.warn('Error saving Submitted Exist Acc settlement to MySQL:', err.message);
+    }
+  }
+
+  return settlement;
+}
+
+export async function deleteSubmittedExistAccSettlement(id: string): Promise<boolean> {
+  submittedExistAccSettlementsCache = submittedExistAccSettlementsCache.filter(s => s.id !== id);
+  await safeWriteFile(SUBMITTED_EXIST_ACC_SETTLEMENTS_FILE, JSON.stringify(submittedExistAccSettlementsCache, null, 2), 'utf-8');
+
+  if (isCPanelDbConnected()) {
+    try {
+      await deleteSubmittedExistAccSettlementFromCPanel(id);
+    } catch (err: any) {
+      console.warn('Error deleting Submitted Exist Acc settlement from MySQL:', err.message);
+    }
+  }
+  return true;
+}
+
+export async function addOrUpdateSubmittedExistAccount(recordData: Partial<SubmittedExistAccRecord>, username: string = 'Admin'): Promise<SubmittedExistAccRecord> {
+  const id = String(recordData.id || recordData.existAccountId || `sea_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
+  const fullName = (recordData.fullName || '').trim().toUpperCase();
+  const barangay = (recordData.barangay || 'General / Unassigned').trim().toUpperCase();
+  const purok = (recordData.purok || '').trim();
+  const contactNumber = (recordData.contactNumber || '').trim();
+  const pin = (recordData.pin || '').trim();
+  const latitude = recordData.latitude !== undefined && recordData.latitude !== null ? Number(recordData.latitude) : null;
+  const longitude = recordData.longitude !== undefined && recordData.longitude !== null ? Number(recordData.longitude) : null;
+  const geotagged = Boolean(recordData.geotagged && latitude !== null && longitude !== null);
+  const facebookLink = (recordData.facebookLink || '').trim();
+  const uploadedFiles = Array.isArray(recordData.uploadedFiles) ? recordData.uploadedFiles : [];
+  const uploadedBy = recordData.uploadedBy || username;
+  const uploadedAt = recordData.uploadedAt || new Date().toISOString();
+  const status = (recordData.status || 'FILES').toUpperCase();
+
+  const record: SubmittedExistAccRecord = {
+    id,
+    existAccountId: recordData.existAccountId || id,
+    fullName,
+    barangay,
+    purok,
+    contactNumber,
+    pin,
+    latitude,
+    longitude,
+    geotagged,
+    facebookLink,
+    uploadedFiles,
+    filesCount: uploadedFiles.length,
+    uploadedBy,
+    uploadedAt,
+    status,
+    verified_at: recordData.verified_at || null,
+    verified_by: recordData.verified_by || null,
+    pending_at: recordData.pending_at || null,
+    pending_by: recordData.pending_by || null,
+    updated_status_at: recordData.updated_status_at || null,
+    updated_status_by: recordData.updated_status_by || null,
+    verified_credit_added: Boolean(recordData.verified_credit_added),
+    pending_credit_added: Boolean(recordData.pending_credit_added),
+    remarks: recordData.remarks || ''
+  };
+
+  const existingIdx = submittedExistAccountsCache.findIndex(s => s.id === id || (s.existAccountId && s.existAccountId === record.existAccountId) || (normalizeCompareName(s.fullName, fullName) && isBarangayMatch(s.barangay, barangay)));
+  if (existingIdx !== -1) {
+    submittedExistAccountsCache[existingIdx] = {
+      ...submittedExistAccountsCache[existingIdx],
+      ...record
+    };
+  } else {
+    submittedExistAccountsCache.unshift(record);
+  }
+
+  await safeWriteFile(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2), 'utf-8');
+
+  if (isCPanelDbConnected()) {
+    try {
+      await saveSubmittedExistAccToCPanel(record);
+    } catch (err: any) {
+      console.warn('[cPanel DB] Error saving Submitted Exist. Acc. record to MySQL:', err.message);
+    }
+  }
+
+  return record;
+}
+
+export async function updateSubmittedExistAccountStatus(params: {
+  id: string;
+  status: 'VERIFIED' | 'PENDING' | 'UPDATED' | 'FILES' | string;
+  username?: string;
+  details?: string;
+}): Promise<{ success: boolean; record: SubmittedExistAccRecord; message: string }> {
+  const { id, status: rawStatus, username = 'Admin', details } = params;
+  const status = (rawStatus || 'FILES').toUpperCase();
+  const nowIso = new Date().toISOString();
+
+  const record = submittedExistAccountsCache.find(r => r.id === id || r.existAccountId === id);
+  if (!record) {
+    throw new Error(`Record with ID "${id}" not found in Submitted Exist. Acc.`);
+  }
+
+  const previousStatus = (record.status || 'FILES').toUpperCase();
+  record.status = status;
+
+  if (status === 'VERIFIED') {
+    record.verified_at = nowIso;
+    record.verified_by = username;
+    record.verified_credit_added = true;
+  } else if (status === 'PENDING') {
+    record.pending_at = nowIso;
+    record.pending_by = username;
+    record.pending_credit_added = true;
+  } else if (status === 'UPDATED') {
+    record.updated_status_at = nowIso;
+    record.updated_status_by = username;
+  }
+
+  await safeWriteFile(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2), 'utf-8');
+
+  if (isCPanelDbConnected()) {
+    try {
+      await updateSubmittedExistAccStatusInCPanel({
+        id: record.id,
+        status,
+        verified_at: record.verified_at,
+        verified_by: record.verified_by,
+        pending_at: record.pending_at,
+        pending_by: record.pending_by,
+        updated_status_at: record.updated_status_at,
+        updated_status_by: record.updated_status_by,
+        verified_credit_added: record.verified_credit_added,
+        pending_credit_added: record.pending_credit_added
+      });
+    } catch (err: any) {
+      console.warn('[cPanel DB] Error updating Submitted Exist. Acc. status in MySQL:', err.message);
+    }
+  }
+
+  // Action log
+  let actionName = 'STATUS_UPDATED';
+  let detailsText = details || `Status changed from ${previousStatus} to ${status} by ${username}.`;
+  if (status === 'VERIFIED') {
+    actionName = 'VERIFIED';
+    detailsText = `Verified submission by ${username}. 1 Credit × ₱${submittedExistAccBaseRate.toFixed(2)} credited to ${record.uploadedBy}.`;
+  } else if (status === 'PENDING') {
+    actionName = 'MOVED_TO_PENDING';
+    detailsText = `Moved to Pending by ${username}. 1 Credit × ₱${submittedExistAccPendingBaseRate.toFixed(2)} credited to ${record.uploadedBy}.`;
+  } else if (status === 'UPDATED') {
+    actionName = 'MOVED_TO_UPDATED';
+    detailsText = `Updated record by ${username}.`;
+  } else if (status === 'FILES') {
+    actionName = 'MOVED_TO_FILES';
+    detailsText = `Returned to Files by ${username}.`;
+  }
+
+  await addSubmittedExistAccHistory({
+    action: actionName,
+    recordId: record.id,
+    patientName: record.fullName,
+    barangay: record.barangay,
+    submitter: record.uploadedBy,
+    performedBy: username,
+    previousStatus,
+    newStatus: status,
+    details: detailsText
+  });
+
+  await addActivity(username, `[Submitted Exist. Acc.] ${actionName}: "${record.fullName}" (${previousStatus} -> ${status})`);
+
+  return {
+    success: true,
+    record,
+    message: `Record "${record.fullName}" is now ${status}.`
+  };
+}
+
+export async function deleteSubmittedExistAccount(id: string, username: string = 'Admin'): Promise<boolean> {
+  const record = submittedExistAccountsCache.find(r => r.id === id || r.existAccountId === id);
+  const fullName = record?.fullName || id;
+  const barangay = record?.barangay || '';
+
+  submittedExistAccountsCache = submittedExistAccountsCache.filter(r => r.id !== id && r.existAccountId !== id);
+  await safeWriteFile(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2), 'utf-8');
+
+  if (isCPanelDbConnected()) {
+    try {
+      await deleteSubmittedExistAccFromCPanel(id);
+    } catch (err: any) {
+      console.warn('[cPanel DB] Error deleting Submitted Exist. Acc. record from MySQL:', err.message);
+    }
+  }
+
+  await addSubmittedExistAccHistory({
+    action: 'RECORD_DELETED',
+    recordId: id,
+    patientName: fullName,
+    barangay,
+    submitter: record?.uploadedBy || '',
+    performedBy: username,
+    previousStatus: record?.status || 'FILES',
+    newStatus: 'DELETED',
+    details: `Record deleted by ${username}.`
+  });
+
+  await addActivity(username, `[Submitted Exist. Acc.] Deleted record: "${fullName}"`);
+  return true;
+}
+
+export async function deleteSubmittedExistAccountFile(id: string, fileIndex: number, username: string = 'Admin'): Promise<SubmittedExistAccRecord> {
+  const record = submittedExistAccountsCache.find(r => r.id === id || r.existAccountId === id);
+  if (!record) {
+    throw new Error(`Record with ID "${id}" not found.`);
+  }
+
+  if (record.uploadedFiles && fileIndex >= 0 && fileIndex < record.uploadedFiles.length) {
+    const removedFile = record.uploadedFiles[fileIndex];
+    record.uploadedFiles.splice(fileIndex, 1);
+    record.filesCount = record.uploadedFiles.length;
+
+    await safeWriteFile(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2), 'utf-8');
+
+    if (isCPanelDbConnected()) {
+      try {
+        await deleteSubmittedExistAccFileFromCPanel(id, fileIndex);
+      } catch (err: any) {
+        console.warn('[cPanel DB] Error deleting file from MySQL:', err.message);
+      }
+    }
+
+    await addSubmittedExistAccHistory({
+      action: 'FILE_DELETED',
+      recordId: record.id,
+      patientName: record.fullName,
+      barangay: record.barangay,
+      submitter: record.uploadedBy,
+      performedBy: username,
+      previousStatus: record.status,
+      newStatus: record.status,
+      details: `Removed document "${removedFile?.name || 'file'}" by ${username}.`
+    });
+
+    await addActivity(username, `[Submitted Exist. Acc.] Removed document from "${record.fullName}"`);
+  }
+
+  return record;
+}
+
 // Update an existing local account
 export async function updateLocalExistingAccount(
   id: string, 
-  updates: Partial<ExistingAccountItem> & { submitToBase44?: boolean; files?: { fileName: string; fileData: string }[] }, 
+  updates: Partial<ExistingAccountItem> & { submitToBase44?: boolean; files?: { fileName: string; fileData: string; fileType?: string; size?: number }[] }, 
   username: string
 ): Promise<ExistingAccountItem> {
   const accountIndex = existingAccountsCache.findIndex(acc => acc.id === id || (acc as any).localId === id);
@@ -10765,9 +11437,7 @@ export async function updateLocalExistingAccount(
   const userObj = findUser(username);
   const uName = userObj?.fullName || userObj?.displayName || username;
 
-  const isExplicitSubmit = updates.isSubmitted === true || (updates as any).submitToBase44 === true;
-  const isAlreadySubmitted = existingAccount.isSubmitted === true;
-  const shouldSyncToBase44 = isExplicitSubmit || isAlreadySubmitted;
+  const isExplicitSubmit = updates.isSubmitted === true || (updates as any).submitToBase44 === true || (updates as any).submitToSubmittedExistAcc === true;
 
   // Initialize or copy uploadedFiles
   let updatedFiles = existingAccount.uploadedFiles ? [...existingAccount.uploadedFiles] : [];
@@ -10781,15 +11451,8 @@ export async function updateLocalExistingAccount(
   if (Array.isArray(updates.files) && updates.files.length > 0) {
     for (const f of updates.files) {
       const fName = f.fileName || 'document';
-      const mType = (f as any).fileType || getMimeType(fName);
-      let fileUrl = '';
-      try {
-        console.log(`[Base44 Upload] Processing staged file "${fName}" for "${existingAccount.full_name}"...`);
-        fileUrl = await uploadFileToBase44(f.fileData, fName, mType);
-      } catch (err: any) {
-        console.error(`[Base44 Upload Error] Failed to process "${fName}":`, err);
-        fileUrl = f.fileData;
-      }
+      const mType = f.fileType || getMimeType(fName);
+      const fileUrl = f.fileData;
 
       updatedFiles.push({
         name: fName,
@@ -10797,28 +11460,10 @@ export async function updateLocalExistingAccount(
         url: fileUrl,
         fileUrl: fileUrl,
         fileType: mType,
-        size: (f as any).size || 0,
+        size: f.size || 0,
         uploadedAt: new Date().toISOString(),
         uploadedBy: uName
       });
-    }
-  }
-
-  // Ensure any previous data URLs are also migrated to intact static file storage
-  for (let i = 0; i < updatedFiles.length; i++) {
-    const uFile = updatedFiles[i];
-    const curUrl = uFile.fileUrl || uFile.url || '';
-    if (curUrl && curUrl.startsWith('data:')) {
-      try {
-        const fName = uFile.fileName || uFile.name || 'document';
-        const mType = uFile.fileType || getMimeType(fName);
-        console.log(`[Base44 Upload] Converting cached data URL for "${fName}" to intact file storage...`);
-        const cdnUrl = await uploadFileToBase44(curUrl, fName, mType);
-        uFile.url = cdnUrl;
-        uFile.fileUrl = cdnUrl;
-      } catch (err: any) {
-        console.warn(`[Base44 Upload Warning] Failed to convert data URL for "${uFile.name}":`, err);
-      }
     }
   }
 
@@ -10828,23 +11473,50 @@ export async function updateLocalExistingAccount(
     localId: (existingAccount as any).localId || existingAccount.id,
     id: existingAccount.id,
     uploadedFiles: updatedFiles,
-    isSubmitted: shouldSyncToBase44 ? true : (existingAccount.isSubmitted || false),
-    submittedAt: shouldSyncToBase44 ? (existingAccount.submittedAt || new Date().toISOString()) : existingAccount.submittedAt
+    isSubmitted: isExplicitSubmit ? true : (existingAccount.isSubmitted || false),
+    submittedAt: isExplicitSubmit ? (existingAccount.submittedAt || new Date().toISOString()) : existingAccount.submittedAt
   };
 
   // Clean up non-schema fields
   delete (updatedAccount as any).files;
   delete (updatedAccount as any).submitToBase44;
+  delete (updatedAccount as any).submitToSubmittedExistAcc;
 
-  if (shouldSyncToBase44) {
+  // If submitted, automatically save into Submitted Exist. Acc.
+  if (isExplicitSubmit) {
     try {
-      // Sync to Base44 HouseholdSubmission FIRST and get/update the real Base44 ID
-      const realId = await syncToBase44HouseholdSubmission(updatedAccount, username);
-      if (realId && realId !== updatedAccount.id) {
-        updatedAccount.id = realId;
-      }
-    } catch (syncErr: any) {
-      console.warn('[Base44 Sync Warning] HouseholdSubmission sync encountered error (continuing local persistence):', syncErr.message || syncErr);
+      await addOrUpdateSubmittedExistAccount({
+        id: updatedAccount.id,
+        existAccountId: updatedAccount.id,
+        fullName: updatedAccount.full_name,
+        barangay: updatedAccount.barangay || 'General / Unassigned',
+        purok: updatedAccount.purok || '',
+        contactNumber: updatedAccount.contact_number || '',
+        pin: updatedAccount.pin || '',
+        latitude: updatedAccount.latitude,
+        longitude: updatedAccount.longitude,
+        geotagged: Boolean(updatedAccount.geotagged),
+        facebookLink: updatedAccount.facebookLink || '',
+        uploadedFiles: updatedFiles,
+        filesCount: updatedFiles.length,
+        uploadedBy: uName,
+        uploadedAt: updatedAccount.submittedAt || new Date().toISOString(),
+        status: 'FILES'
+      }, username);
+
+      await addSubmittedExistAccHistory({
+        action: 'SUBMITTED',
+        recordId: updatedAccount.id,
+        patientName: updatedAccount.full_name,
+        barangay: updatedAccount.barangay || '',
+        submitter: uName,
+        performedBy: username,
+        previousStatus: 'EXIST_ACC_FILES',
+        newStatus: 'FILES',
+        details: `Submitted account with ${updatedFiles.length} attachment(s) to Submitted Exist. Acc.`
+      });
+    } catch (seaErr: any) {
+      console.warn('[Submitted Exist. Acc. Save Warning]:', seaErr.message);
     }
   }
 
@@ -10858,84 +11530,18 @@ export async function updateLocalExistingAccount(
     const actionStr = updates.addedToFiles ? 'added to' : 'removed from';
     await addActivity(username, `Updated account: ${actionStr} files list for "${existingAccount.full_name}"`);
   } else if (isExplicitSubmit) {
-    await addActivity(username, `Submitted existing account record and attached documents to Base44: "${existingAccount.full_name}"`);
+    await addActivity(username, `Submitted existing account record to Submitted Exist. Acc.: "${existingAccount.full_name}"`);
   } else {
     await addActivity(username, `Updated existing account record: "${existingAccount.full_name}"`);
   }
 
-  if (shouldSyncToBase44) {
-    try {
-      // Permanently save to base44 database at the MemberVerifiedSubmission table
-      await syncToBase44MemberVerifiedSubmission(updatedAccount, username);
-    } catch (memberErr: any) {
-      console.warn('[Base44 Sync Warning] MemberVerifiedSubmission write encountered error:', memberErr.message || memberErr);
-    }
-
-    // Log to Base44 ExistingAccFileUpdate table if files are present or upon explicit submit
-    if (updatedAccount.uploadedFiles && updatedAccount.uploadedFiles.length > 0) {
-      try {
-        console.log(`[Base44 SDK] Saving Existing Account file update metadata to table ExistingAccFileUpdate on verification save...`);
-        const updateEntity = (base44.entities as any).ExistingAccFileUpdate || {
-          create: async (data: any) => {
-            console.log('[Base44 SDK] Simulating ExistingAccFileUpdate creation dynamically');
-            return data;
-          }
-        };
-
-        const base44FormattedFiles = (updatedAccount.uploadedFiles || []).map(f => {
-          const fName = f.fileName || f.name || 'document';
-          const url = f.fileUrl || f.url || '';
-          return {
-            name: `${unescapeHtml(updatedAccount.full_name)} (Member)`,
-            fileName: fName,
-            fileUrl: url,
-            url: url,
-            fileType: f.fileType || getMimeType(fName),
-            size: f.size || 0,
-            uploadedAt: f.uploadedAt || new Date().toISOString(),
-            uploadedBy: f.uploadedBy || uName
-          };
-        }).filter(f => f.fileUrl && !f.fileUrl.startsWith('data:') && f.fileUrl.length <= 2000);
-
-        await updateEntity.create({
-          householdSubmissionId: updatedAccount.id,
-          fullName: updatedAccount.full_name,
-          householdName: updatedAccount.full_name || '',
-          barangay: updatedAccount.barangay || '',
-          purok: updatedAccount.purok || '',
-          contact: updatedAccount.contact_number || '',
-          pin: updatedAccount.pin || '',
-          facebookLink: updatedAccount.facebookLink || '',
-          files: base44FormattedFiles,
-          uploadedFiles: base44FormattedFiles,
-          attachments: base44FormattedFiles,
-          fileUrl: base44FormattedFiles[0]?.fileUrl || null,
-          fileName: base44FormattedFiles[0]?.fileName || null,
-          attachmentUrl: base44FormattedFiles[0]?.fileUrl || null,
-          attachmentName: base44FormattedFiles[0]?.fileName || null,
-          createdBy: uName,
-          updatedBy: uName,
-          updatedAt: new Date().toISOString()
-        });
-        console.log('[Base44 SDK] Successfully saved to Base44 ExistingAccFileUpdate on verification save.');
-      } catch (err: any) {
-        console.warn('[Base44 SDK Warning] Failed to create ExistingAccFileUpdate record on verification save:', err.message);
-      }
-    }
-  } else {
-    console.log(`[Base44 SDK] Account "${existingAccount.full_name}" is saved locally. Skipping Base44 database write because it was not submitted.`);
-  }
-
-  // Sync to Google Sheets
-  syncExistingAccountsToGoogleSheets().catch(err => console.error('Failed to sync existing account to Sheets on update:', err));
-
   return updatedAccount;
 }
 
-// Upload multiple files for an existing account and save them locally & to the Base44 database ONLY if submitted
+// Upload multiple files for an existing account and save them locally & to Submitted Exist. Acc. ONLY if submitted
 export async function uploadFilesForExistingAccount(
   id: string,
-  files: { fileName: string; fileData: string }[],
+  files: { fileName: string; fileData: string; fileType?: string; size?: number }[],
   facebookLink: string | undefined,
   username: string,
   submitToBase44: boolean = false
@@ -10958,66 +11564,67 @@ export async function uploadFilesForExistingAccount(
     existingAccount.uploadedFiles = existingAccount.uploadedFiles || [];
 
     for (const file of files) {
-      try {
-        const fName = file.fileName || 'document';
-        const mType = (file as any).fileType || getMimeType(fName);
-        const fileUrl = await uploadFileToBase44(file.fileData, fName, mType);
-        
-        const fileObj = {
-          name: fName,
-          fileName: fName,
-          url: fileUrl,
-          fileUrl: fileUrl,
-          fileType: mType,
-          size: (file as any).size || 0,
-          uploadedAt: new Date().toISOString(),
-          uploadedBy: uName
-        };
+      const fName = file.fileName || 'document';
+      const mType = file.fileType || getMimeType(fName);
+      const fileUrl = file.fileData;
+      
+      const fileObj = {
+        name: fName,
+        fileName: fName,
+        url: fileUrl,
+        fileUrl: fileUrl,
+        fileType: mType,
+        size: file.size || 0,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: uName
+      };
 
-        existingAccount.uploadedFiles.push(fileObj);
-      } catch (err: any) {
-        console.error(`[Existing Account Upload Error] Failed to process file "${file.fileName}":`, err.message);
-        throw new Error(`Failed to process file "${file.fileName}": ${err.message}`);
-      }
+      existingAccount.uploadedFiles.push(fileObj);
     }
   }
 
-  if (submitToBase44) {
-    // Convert any pre-existing data URLs to intact static storage URLs
-    if (existingAccount.uploadedFiles) {
-      for (let i = 0; i < existingAccount.uploadedFiles.length; i++) {
-        const uFile = existingAccount.uploadedFiles[i];
-        const curUrl = uFile.fileUrl || uFile.url || '';
-        if (curUrl && curUrl.startsWith('data:')) {
-          try {
-            const fName = uFile.fileName || uFile.name || 'document';
-            const mType = uFile.fileType || getMimeType(fName);
-            console.log(`[Base44 Upload] Converting cached data URL for "${fName}" to intact file storage...`);
-            const cdnUrl = await uploadFileToBase44(curUrl, fName, mType);
-            uFile.url = cdnUrl;
-            uFile.fileUrl = cdnUrl;
-          } catch (err: any) {
-            console.warn(`[Base44 Upload Warning] Failed to convert data URL for "${uFile.name}":`, err.message);
-          }
-        }
-      }
-    }
+  const isSubmitting = submitToBase44 === true || existingAccount.isSubmitted === true;
 
-    // Mark as submitted upon explicit submission
+  if (isSubmitting) {
     existingAccount.isSubmitted = true;
     if (!existingAccount.submittedAt) {
       existingAccount.submittedAt = new Date().toISOString();
     }
     (existingAccount as any).localId = (existingAccount as any).localId || existingAccount.id;
 
-    // Sync to Base44 HouseholdSubmission and update Base44 ID
     try {
-      const realId = await syncToBase44HouseholdSubmission(existingAccount, username);
-      if (realId && realId !== existingAccount.id) {
-        existingAccount.id = realId;
-      }
-    } catch (syncErr: any) {
-      console.warn('[Base44 Sync Warning] HouseholdSubmission sync encountered error (continuing local persistence):', syncErr.message || syncErr);
+      await addOrUpdateSubmittedExistAccount({
+        id: existingAccount.id,
+        existAccountId: existingAccount.id,
+        fullName: existingAccount.full_name,
+        barangay: existingAccount.barangay || 'General / Unassigned',
+        purok: existingAccount.purok || '',
+        contactNumber: existingAccount.contact_number || '',
+        pin: existingAccount.pin || '',
+        latitude: existingAccount.latitude,
+        longitude: existingAccount.longitude,
+        geotagged: Boolean(existingAccount.geotagged),
+        facebookLink: existingAccount.facebookLink || '',
+        uploadedFiles: existingAccount.uploadedFiles,
+        filesCount: existingAccount.uploadedFiles?.length || 0,
+        uploadedBy: uName,
+        uploadedAt: existingAccount.submittedAt || new Date().toISOString(),
+        status: 'FILES'
+      }, username);
+
+      await addSubmittedExistAccHistory({
+        action: 'SUBMITTED',
+        recordId: existingAccount.id,
+        patientName: existingAccount.full_name,
+        barangay: existingAccount.barangay || '',
+        submitter: uName,
+        performedBy: username,
+        previousStatus: 'EXIST_ACC_FILES',
+        newStatus: 'FILES',
+        details: `Uploaded ${files?.length || 0} file(s) and submitted to Submitted Exist. Acc.`
+      });
+    } catch (seaErr: any) {
+      console.warn('[Submitted Exist. Acc. Save Warning]:', seaErr.message);
     }
   }
 
@@ -11031,74 +11638,15 @@ export async function uploadFilesForExistingAccount(
   // Persist to cPanel MySQL database
   saveExistingAccountToCPanel(existingAccount).catch(err => console.warn('[cPanel DB Warning] Failed to sync account to cPanel MySQL:', err.message));
 
-  if (submitToBase44) {
+  if (isSubmitting) {
     if (files && files.length > 0) {
-      await addActivity(username, `Uploaded ${files.length} file(s) and submitted existing account to Base44: "${existingAccount.full_name}"`);
+      await addActivity(username, `Uploaded ${files.length} file(s) and submitted existing account to Submitted Exist. Acc.: "${existingAccount.full_name}"`);
     } else {
-      await addActivity(username, `Submitted details for existing account to Base44: "${existingAccount.full_name}"`);
+      await addActivity(username, `Submitted details for existing account to Submitted Exist. Acc.: "${existingAccount.full_name}"`);
     }
-
-    // Save to Base44 ExistingAccFileUpdate table if files are present
-    if (existingAccount.uploadedFiles && existingAccount.uploadedFiles.length > 0) {
-      try {
-        console.log(`[Base44 SDK] Saving Existing Account file update metadata to table ExistingAccFileUpdate...`);
-        const updateEntity = (base44.entities as any).ExistingAccFileUpdate || {
-          create: async (data: any) => {
-            console.log('[Base44 SDK] Simulating ExistingAccFileUpdate creation dynamically');
-            return data;
-          }
-        };
-
-        const base44FormattedFiles = (existingAccount.uploadedFiles || []).map(f => {
-          const fName = f.fileName || f.name || 'document';
-          const url = f.fileUrl || f.url || '';
-          return {
-            name: `${unescapeHtml(existingAccount.full_name)} (Member)`,
-            fileName: fName,
-            fileUrl: url,
-            url: url,
-            fileType: f.fileType || getMimeType(fName),
-            size: f.size || 0,
-            uploadedAt: f.uploadedAt || new Date().toISOString(),
-            uploadedBy: f.uploadedBy || uName
-          };
-        }).filter(f => f.fileUrl && !f.fileUrl.startsWith('data:'));
-
-        await updateEntity.create({
-          householdSubmissionId: existingAccount.id,
-          fullName: existingAccount.full_name,
-          householdName: existingAccount.full_name || '',
-          barangay: existingAccount.barangay || '',
-          purok: existingAccount.purok || '',
-          contact: existingAccount.contact_number || '',
-          pin: existingAccount.pin || '',
-          facebookLink: existingAccount.facebookLink || '',
-          files: base44FormattedFiles,
-          uploadedFiles: base44FormattedFiles,
-          attachments: base44FormattedFiles,
-          fileUrl: base44FormattedFiles[0]?.fileUrl || null,
-          fileName: base44FormattedFiles[0]?.fileName || null,
-          attachmentUrl: base44FormattedFiles[0]?.fileUrl || null,
-          attachmentName: base44FormattedFiles[0]?.fileName || null,
-          createdBy: uName,
-          updatedBy: uName,
-          updatedAt: new Date().toISOString()
-        });
-        console.log('[Base44 SDK] Successfully saved to Base44 ExistingAccFileUpdate.');
-      } catch (err: any) {
-        console.warn('[Base44 SDK Warning] Failed to create ExistingAccFileUpdate record:', err.message);
-      }
-    }
-
-    // Also sync member verification files & data to Base44 MemberVerifiedSubmission table
-    await syncToBase44MemberVerifiedSubmission(existingAccount, username);
   } else {
-    console.log(`[Base44 SDK] Files for "${existingAccount.full_name}" saved locally without Base44 submission.`);
-    await addActivity(username, `Saved ${files?.length || 0} file(s) locally for "${existingAccount.full_name}" (not submitted to Base44)`);
+    await addActivity(username, `Saved ${files?.length || 0} file(s) locally for "${existingAccount.full_name}"`);
   }
-
-  // Sync to Google Sheets
-  syncExistingAccountsToGoogleSheets().catch(err => console.error('Failed to sync existing account files update to Sheets:', err));
 
   return existingAccount;
 }

@@ -297,6 +297,76 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       INDEX idx_hist_time (timestamp),
       INDEX idx_hist_patient (patient_name),
       INDEX idx_hist_action (action)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    // 13. Submitted Exist. Acc. Records Table
+    `CREATE TABLE IF NOT EXISTS submitted_exist_acc (
+      id VARCHAR(100) NOT NULL PRIMARY KEY,
+      exist_account_id VARCHAR(100) DEFAULT '',
+      full_name VARCHAR(255) NOT NULL,
+      barangay VARCHAR(255) NOT NULL DEFAULT '',
+      purok VARCHAR(255) DEFAULT '',
+      contact_number VARCHAR(100) DEFAULT '',
+      pin VARCHAR(100) DEFAULT '',
+      latitude DECIMAL(10, 7) NULL,
+      longitude DECIMAL(10, 7) NULL,
+      geotagged TINYINT(1) DEFAULT 0,
+      facebook_link TEXT NULL,
+      uploaded_files LONGTEXT NULL,
+      uploaded_by VARCHAR(255) DEFAULT 'Admin',
+      uploaded_at VARCHAR(100) DEFAULT '',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      status VARCHAR(50) DEFAULT 'FILES',
+      verified_at VARCHAR(100) NULL,
+      verified_by VARCHAR(255) NULL,
+      pending_at VARCHAR(100) NULL,
+      pending_by VARCHAR(255) NULL,
+      updated_status_at VARCHAR(100) NULL,
+      updated_status_by VARCHAR(255) NULL,
+      verified_credit_added TINYINT(1) DEFAULT 0,
+      pending_credit_added TINYINT(1) DEFAULT 0,
+      remarks TEXT NULL,
+      INDEX idx_sea_barangay (barangay),
+      INDEX idx_sea_full_name (full_name),
+      INDEX idx_sea_uploaded_at (uploaded_at),
+      INDEX idx_sea_status (status)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    // 14. Submitted Exist. Acc. Settlements Table
+    `CREATE TABLE IF NOT EXISTS submitted_exist_acc_settlements (
+      id VARCHAR(100) NOT NULL PRIMARY KEY,
+      submitter VARCHAR(255) NOT NULL,
+      total_submissions INT DEFAULT 0,
+      base_rate DECIMAL(10,2) DEFAULT 0.00,
+      total_salary DECIMAL(12,2) DEFAULT 0.00,
+      amount_paid DECIMAL(12,2) DEFAULT 0.00,
+      payment_status VARCHAR(50) DEFAULT 'SETTLED',
+      payment_method VARCHAR(100) DEFAULT 'CASH',
+      reference_notes TEXT,
+      settled_by VARCHAR(100) DEFAULT 'Master Admin',
+      settled_at VARCHAR(100) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_sea_settle_submitter (submitter),
+      INDEX idx_sea_settle_status (payment_status),
+      INDEX idx_sea_settle_at (settled_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    // 15. Submitted Exist. Acc. Activity and Status History Log Table
+    `CREATE TABLE IF NOT EXISTS submitted_exist_acc_history (
+      id VARCHAR(100) PRIMARY KEY,
+      action VARCHAR(100) NOT NULL,
+      record_id VARCHAR(100) DEFAULT '',
+      patient_name VARCHAR(255) NOT NULL,
+      barangay VARCHAR(255) DEFAULT '',
+      submitter VARCHAR(255) DEFAULT '',
+      performed_by VARCHAR(255) NOT NULL,
+      previous_status VARCHAR(50) DEFAULT '',
+      new_status VARCHAR(50) DEFAULT '',
+      timestamp VARCHAR(100) NOT NULL,
+      details TEXT NULL,
+      INDEX idx_sea_hist_time (timestamp),
+      INDEX idx_sea_hist_patient (patient_name),
+      INDEX idx_sea_hist_action (action)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
   ];
 
@@ -1421,6 +1491,9 @@ export async function fetchAllFromCPanelDb(): Promise<{
   settings: Record<string, any>;
   pcuSubmissions?: any[];
   pcuHistory?: any[];
+  submittedExistAcc?: any[];
+  submittedExistHistory?: any[];
+  submittedExistSettlements?: any[];
 } | null> {
   if (!pool || !currentStatus.connected) return null;
 
@@ -1655,6 +1728,30 @@ export async function fetchAllFromCPanelDb(): Promise<{
       console.warn('[cPanel DB] Notice reading pcu_history table:', histErr.message);
     }
 
+    let submittedExistAcc: any[] = [];
+    try {
+      submittedExistAcc = await fetchAllSubmittedExistAccFromCPanel();
+      console.log(`[cPanel DB] Loaded ${submittedExistAcc.length} Submitted Exist. Acc. records from MySQL submitted_exist_acc table.`);
+    } catch (seaErr: any) {
+      console.warn('[cPanel DB] Notice reading submitted_exist_acc table:', seaErr.message);
+    }
+
+    let submittedExistHistory: any[] = [];
+    try {
+      submittedExistHistory = await fetchSubmittedExistAccHistoryFromCPanel(500);
+      console.log(`[cPanel DB] Loaded ${submittedExistHistory.length} Submitted Exist. Acc. history entries from MySQL.`);
+    } catch (seaHistErr: any) {
+      console.warn('[cPanel DB] Notice reading submitted_exist_acc_history table:', seaHistErr.message);
+    }
+
+    let submittedExistSettlements: any[] = [];
+    try {
+      submittedExistSettlements = await fetchSubmittedExistAccSettlementsFromCPanel();
+      console.log(`[cPanel DB] Loaded ${submittedExistSettlements.length} Submitted Exist. Acc. settlements from MySQL.`);
+    } catch (seaSettleErr: any) {
+      console.warn('[cPanel DB] Notice reading submitted_exist_acc_settlements table:', seaSettleErr.message);
+    }
+
     return {
       contacts,
       users,
@@ -1663,7 +1760,10 @@ export async function fetchAllFromCPanelDb(): Promise<{
       activities,
       settings,
       pcuSubmissions,
-      pcuHistory
+      pcuHistory,
+      submittedExistAcc,
+      submittedExistHistory,
+      submittedExistSettlements
     };
   } catch (err: any) {
     console.error('[cPanel DB] Error fetching records from MySQL:', err.message);
@@ -2876,6 +2976,425 @@ export async function deletePcuSettlementFromCPanel(id: string): Promise<boolean
   }
 }
 
+/**
+ * Saves or updates a Submitted Exist. Acc. record in cPanel MySQL table `submitted_exist_acc`.
+ */
+export async function saveSubmittedExistAccToCPanel(record: {
+  id: string;
+  existAccountId?: string;
+  fullName: string;
+  barangay?: string;
+  purok?: string;
+  contactNumber?: string;
+  pin?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  geotagged?: boolean;
+  facebookLink?: string;
+  uploadedFiles?: any[];
+  uploadedBy?: string;
+  uploadedAt?: string;
+  status?: string;
+  verified_at?: string | null;
+  verified_by?: string | null;
+  pending_at?: string | null;
+  pending_by?: string | null;
+  updated_status_at?: string | null;
+  updated_status_by?: string | null;
+  verified_credit_added?: boolean;
+  pending_credit_added?: boolean;
+  remarks?: string;
+}): Promise<void> {
+  if (!pool || !currentStatus.connected) return;
+  try {
+    const id = String(record.id || crypto.randomUUID());
+    const existAccountId = String(record.existAccountId || '');
+    const fullName = (record.fullName || '').trim().toUpperCase();
+    const barangay = (record.barangay || '').trim().toUpperCase();
+    const purok = (record.purok || '').trim();
+    const contactNumber = (record.contactNumber || '').trim();
+    const pin = (record.pin || '').trim();
+    const latitude = record.latitude !== undefined && record.latitude !== null && !isNaN(Number(record.latitude)) ? Number(record.latitude) : null;
+    const longitude = record.longitude !== undefined && record.longitude !== null && !isNaN(Number(record.longitude)) ? Number(record.longitude) : null;
+    const geotagged = record.geotagged ? 1 : 0;
+    const facebookLink = (record.facebookLink || '').trim();
+    const uploadedFiles = record.uploadedFiles ? JSON.stringify(record.uploadedFiles) : '[]';
+    const uploadedBy = (record.uploadedBy || 'Admin').trim();
+    const uploadedAt = record.uploadedAt || new Date().toISOString();
+    const status = (record.status || 'FILES').toUpperCase();
+    const verifiedAt = record.verified_at || null;
+    const verifiedBy = record.verified_by || null;
+    const pendingAt = record.pending_at || null;
+    const pendingBy = record.pending_by || null;
+    const updatedStatusAt = record.updated_status_at || null;
+    const updatedStatusBy = record.updated_status_by || null;
+    const verifiedCreditAdded = record.verified_credit_added ? 1 : 0;
+    const pendingCreditAdded = record.pending_credit_added ? 1 : 0;
+    const remarks = record.remarks || '';
 
+    await pool.query(
+      `INSERT INTO submitted_exist_acc
+        (id, exist_account_id, full_name, barangay, purok, contact_number, pin, latitude, longitude, geotagged, facebook_link, uploaded_files, uploaded_by, uploaded_at, status, verified_at, verified_by, pending_at, pending_by, updated_status_at, updated_status_by, verified_credit_added, pending_credit_added, remarks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        exist_account_id = VALUES(exist_account_id),
+        full_name = VALUES(full_name),
+        barangay = VALUES(barangay),
+        purok = VALUES(purok),
+        contact_number = VALUES(contact_number),
+        pin = VALUES(pin),
+        latitude = VALUES(latitude),
+        longitude = VALUES(longitude),
+        geotagged = VALUES(geotagged),
+        facebook_link = VALUES(facebook_link),
+        uploaded_files = VALUES(uploaded_files),
+        uploaded_by = VALUES(uploaded_by),
+        uploaded_at = VALUES(uploaded_at),
+        status = VALUES(status),
+        verified_at = VALUES(verified_at),
+        verified_by = VALUES(verified_by),
+        pending_at = VALUES(pending_at),
+        pending_by = VALUES(pending_by),
+        updated_status_at = VALUES(updated_status_at),
+        updated_status_by = VALUES(updated_status_by),
+        verified_credit_added = VALUES(verified_credit_added),
+        pending_credit_added = VALUES(pending_credit_added),
+        remarks = VALUES(remarks)`,
+      [
+        id, existAccountId, fullName, barangay, purok, contactNumber, pin, latitude, longitude, geotagged, facebookLink, uploadedFiles, uploadedBy, uploadedAt, status, verifiedAt, verifiedBy, pendingAt, pendingBy, updatedStatusAt, updatedStatusBy, verifiedCreditAdded, pendingCreditAdded, remarks
+      ]
+    );
+    console.log(`[cPanel DB] Saved Submitted Exist. Acc. record "${fullName}" (${id}) to MySQL.`);
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error saving Submitted Exist. Acc. record to MySQL:', err.message || err);
+  }
+}
 
+/**
+ * Fetches all Submitted Exist. Acc. records from cPanel MySQL table `submitted_exist_acc`.
+ */
+export async function fetchAllSubmittedExistAccFromCPanel(): Promise<any[]> {
+  if (!pool || !currentStatus.connected) return [];
+  try {
+    const [rows]: any = await pool.query('SELECT * FROM submitted_exist_acc ORDER BY uploaded_at DESC');
+    return (rows || []).map((r: any) => {
+      let parsedFiles: any[] = [];
+      if (r.uploaded_files) {
+        try {
+          parsedFiles = typeof r.uploaded_files === 'string' ? JSON.parse(r.uploaded_files) : r.uploaded_files;
+        } catch {
+          parsedFiles = [];
+        }
+      }
 
+      return {
+        id: String(r.id),
+        existAccountId: r.exist_account_id || '',
+        fullName: r.full_name || '',
+        barangay: r.barangay || '',
+        purok: r.purok || '',
+        contactNumber: r.contact_number || '',
+        pin: r.pin || '',
+        latitude: r.latitude !== null && r.latitude !== undefined ? Number(r.latitude) : null,
+        longitude: r.longitude !== null && r.longitude !== undefined ? Number(r.longitude) : null,
+        geotagged: Boolean(r.geotagged),
+        facebookLink: r.facebook_link || '',
+        uploadedFiles: parsedFiles,
+        filesCount: parsedFiles.length,
+        uploadedBy: r.uploaded_by || 'Admin',
+        uploadedAt: r.uploaded_at || (r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()),
+        status: (r.status || 'FILES').toUpperCase(),
+        verified_at: r.verified_at || null,
+        verified_by: r.verified_by || null,
+        pending_at: r.pending_at || null,
+        pending_by: r.pending_by || null,
+        updated_status_at: r.updated_status_at || null,
+        updated_status_by: r.updated_status_by || null,
+        verified_credit_added: Boolean(r.verified_credit_added),
+        pending_credit_added: Boolean(r.pending_credit_added),
+        remarks: r.remarks || ''
+      };
+    });
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error fetching Submitted Exist. Acc. records from MySQL:', err.message || err);
+    return [];
+  }
+}
+
+/**
+ * Permanently deletes a Submitted Exist. Acc. record from cPanel MySQL table `submitted_exist_acc`.
+ */
+export async function deleteSubmittedExistAccFromCPanel(id: string): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    await pool.query('DELETE FROM submitted_exist_acc WHERE id = ? OR exist_account_id = ?', [String(id), String(id)]);
+    console.log(`[cPanel DB] Deleted Submitted Exist. Acc. record ${id} from MySQL.`);
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error deleting Submitted Exist. Acc. record from MySQL:', err.message || err);
+    return false;
+  }
+}
+
+/**
+ * Deletes a single attachment file from a Submitted Exist. Acc. record in cPanel MySQL.
+ */
+export async function deleteSubmittedExistAccFileFromCPanel(id: string, fileIndex: number): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    const [res]: any = await pool.query('SELECT id, uploaded_files FROM submitted_exist_acc WHERE id = ?', [String(id)]);
+    if (!res || res.length === 0) return false;
+    const row = res[0];
+    let files: any[] = [];
+    try {
+      files = typeof row.uploaded_files === 'string' ? JSON.parse(row.uploaded_files) : (row.uploaded_files || []);
+    } catch {
+      files = [];
+    }
+
+    if (fileIndex >= 0 && fileIndex < files.length) {
+      files.splice(fileIndex, 1);
+      await pool.query('UPDATE submitted_exist_acc SET uploaded_files = ? WHERE id = ?', [JSON.stringify(files), row.id]);
+      console.log(`[cPanel DB] Removed attachment #${fileIndex} from Submitted Exist. Acc. record ${id}.`);
+      return true;
+    }
+    return false;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error removing attachment file from MySQL:', err.message || err);
+    return false;
+  }
+}
+
+/**
+ * Updates status (FILES, VERIFIED, PENDING, UPDATED) in MySQL table `submitted_exist_acc`.
+ */
+export async function updateSubmittedExistAccStatusInCPanel(params: {
+  id: string;
+  status: string;
+  verified_at?: string | null;
+  verified_by?: string | null;
+  pending_at?: string | null;
+  pending_by?: string | null;
+  updated_status_at?: string | null;
+  updated_status_by?: string | null;
+  verified_credit_added?: boolean;
+  pending_credit_added?: boolean;
+}): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    const {
+      id,
+      status,
+      verified_at,
+      verified_by,
+      pending_at,
+      pending_by,
+      updated_status_at,
+      updated_status_by,
+      verified_credit_added,
+      pending_credit_added
+    } = params;
+
+    const setClauses: string[] = ['status = ?'];
+    const sqlParams: any[] = [status.toUpperCase()];
+
+    if (verified_at !== undefined) {
+      setClauses.push('verified_at = ?');
+      sqlParams.push(verified_at);
+    }
+    if (verified_by !== undefined) {
+      setClauses.push('verified_by = ?');
+      sqlParams.push(verified_by);
+    }
+    if (pending_at !== undefined) {
+      setClauses.push('pending_at = ?');
+      sqlParams.push(pending_at);
+    }
+    if (pending_by !== undefined) {
+      setClauses.push('pending_by = ?');
+      sqlParams.push(pending_by);
+    }
+    if (updated_status_at !== undefined) {
+      setClauses.push('updated_status_at = ?');
+      sqlParams.push(updated_status_at);
+    }
+    if (updated_status_by !== undefined) {
+      setClauses.push('updated_status_by = ?');
+      sqlParams.push(updated_status_by);
+    }
+    if (verified_credit_added !== undefined) {
+      setClauses.push('verified_credit_added = ?');
+      sqlParams.push(verified_credit_added ? 1 : 0);
+    }
+    if (pending_credit_added !== undefined) {
+      setClauses.push('pending_credit_added = ?');
+      sqlParams.push(pending_credit_added ? 1 : 0);
+    }
+
+    sqlParams.push(String(id));
+    await pool.query(`UPDATE submitted_exist_acc SET ${setClauses.join(', ')} WHERE id = ?`, sqlParams);
+    console.log(`[cPanel DB] Updated status to "${status}" for Submitted Exist. Acc. record: ${id}`);
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error updating Submitted Exist. Acc. status in MySQL:', err.message || err);
+    return false;
+  }
+}
+
+/**
+ * Saves or updates a Submitted Exist. Acc. salary settlement record in MySQL.
+ */
+export async function saveSubmittedExistAccSettlementToCPanel(settlement: {
+  id: string;
+  submitter: string;
+  totalSubmissions: number;
+  baseRate: number;
+  totalSalary: number;
+  amountPaid?: number;
+  paymentStatus?: string;
+  paymentMethod?: string;
+  referenceNotes?: string;
+  settledBy?: string;
+  settledAt: string;
+}): Promise<void> {
+  if (!pool || !currentStatus.connected) return;
+  try {
+    const id = settlement.id || crypto.randomUUID();
+    const submitter = (settlement.submitter || '').trim();
+    const totalSubmissions = Number(settlement.totalSubmissions) || 0;
+    const baseRate = Number(settlement.baseRate) || 0;
+    const totalSalary = Number(settlement.totalSalary) || (totalSubmissions * baseRate);
+    const amountPaid = settlement.amountPaid !== undefined ? Number(settlement.amountPaid) : totalSalary;
+    const paymentStatus = settlement.paymentStatus || 'SETTLED';
+    const paymentMethod = settlement.paymentMethod || 'CASH';
+    const referenceNotes = settlement.referenceNotes || '';
+    const settledBy = settlement.settledBy || 'Master Admin';
+    const settledAt = settlement.settledAt || new Date().toISOString();
+
+    await pool.query(
+      `INSERT INTO submitted_exist_acc_settlements
+        (id, submitter, total_submissions, base_rate, total_salary, amount_paid, payment_status, payment_method, reference_notes, settled_by, settled_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        total_submissions = VALUES(total_submissions),
+        base_rate = VALUES(base_rate),
+        total_salary = VALUES(total_salary),
+        amount_paid = VALUES(amount_paid),
+        payment_status = VALUES(payment_status),
+        payment_method = VALUES(payment_method),
+        reference_notes = VALUES(reference_notes),
+        settled_by = VALUES(settled_by),
+        settled_at = VALUES(settled_at)`,
+      [id, submitter, totalSubmissions, baseRate, totalSalary, amountPaid, paymentStatus, paymentMethod, referenceNotes, settledBy, settledAt]
+    );
+    console.log(`[cPanel DB] Saved Submitted Exist. Acc. settlement ${id} for "${submitter}" to MySQL.`);
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error saving Submitted Exist. Acc. settlement to MySQL:', err.message || err);
+  }
+}
+
+/**
+ * Fetches all Submitted Exist. Acc. salary settlements from MySQL.
+ */
+export async function fetchSubmittedExistAccSettlementsFromCPanel(): Promise<any[]> {
+  if (!pool || !currentStatus.connected) return [];
+  try {
+    const [rows]: any = await pool.query('SELECT * FROM submitted_exist_acc_settlements ORDER BY settled_at DESC');
+    return (rows || []).map((r: any) => ({
+      id: String(r.id),
+      submitter: r.submitter,
+      totalSubmissions: Number(r.total_submissions) || 0,
+      baseRate: Number(r.base_rate) || 0,
+      totalSalary: Number(r.total_salary) || 0,
+      amountPaid: Number(r.amount_paid) || 0,
+      paymentStatus: r.payment_status || 'SETTLED',
+      paymentMethod: r.payment_method || 'CASH',
+      referenceNotes: r.reference_notes || '',
+      settledBy: r.settled_by || 'Master Admin',
+      settledAt: r.settled_at || (r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()),
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()
+    }));
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error fetching Submitted Exist. Acc. settlements from MySQL:', err.message || err);
+    return [];
+  }
+}
+
+/**
+ * Deletes a Submitted Exist. Acc. salary settlement record from MySQL.
+ */
+export async function deleteSubmittedExistAccSettlementFromCPanel(id: string): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    await pool.query('DELETE FROM submitted_exist_acc_settlements WHERE id = ?', [String(id)]);
+    console.log(`[cPanel DB] Deleted Submitted Exist. Acc. settlement ${id} from MySQL.`);
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error deleting Submitted Exist. Acc. settlement from MySQL:', err.message || err);
+    return false;
+  }
+}
+
+/**
+ * Saves a Submitted Exist. Acc. history item to MySQL.
+ */
+export async function saveSubmittedExistAccHistoryToCPanel(item: {
+  id: string;
+  action: string;
+  recordId?: string;
+  patientName: string;
+  barangay?: string;
+  submitter?: string;
+  performedBy: string;
+  previousStatus?: string;
+  newStatus: string;
+  timestamp: string;
+  details?: string;
+}): Promise<void> {
+  if (!pool || !currentStatus.connected) return;
+  try {
+    const id = item.id || crypto.randomUUID();
+    await pool.query(
+      `INSERT INTO submitted_exist_acc_history
+        (id, action, record_id, patient_name, barangay, submitter, performed_by, previous_status, new_status, timestamp, details)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+        action = VALUES(action),
+        previous_status = VALUES(previous_status),
+        new_status = VALUES(new_status),
+        details = VALUES(details)`,
+      [
+        id, item.action, item.recordId || '', item.patientName || '', item.barangay || '', item.submitter || '',
+        item.performedBy || 'Admin', item.previousStatus || '', item.newStatus || '', item.timestamp || new Date().toISOString(), item.details || ''
+      ]
+    );
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error saving Submitted Exist. Acc. history item to MySQL:', err.message || err);
+  }
+}
+
+/**
+ * Fetches Submitted Exist. Acc. history from MySQL.
+ */
+export async function fetchSubmittedExistAccHistoryFromCPanel(limit: number = 500): Promise<any[]> {
+  if (!pool || !currentStatus.connected) return [];
+  try {
+    const [rows]: any = await pool.query('SELECT * FROM submitted_exist_acc_history ORDER BY timestamp DESC LIMIT ?', [limit]);
+    return (rows || []).map((r: any) => ({
+      id: String(r.id),
+      action: r.action,
+      recordId: r.record_id || '',
+      patientName: r.patient_name || '',
+      barangay: r.barangay || '',
+      submitter: r.submitter || '',
+      performedBy: r.performed_by || 'Admin',
+      previousStatus: r.previous_status || '',
+      newStatus: r.new_status || '',
+      timestamp: r.timestamp || (r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()),
+      details: r.details || ''
+    }));
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error fetching Submitted Exist. Acc. history from MySQL:', err.message || err);
+    return [];
+  }
+}

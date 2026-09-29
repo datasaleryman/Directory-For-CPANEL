@@ -1,5 +1,17 @@
 [
   {
+    "id": "b5fd55fa-1ebc-49ab-8d6d-ccc181b33945",
+    "timestamp": "2026-09-28T16:45:03.491Z",
+    "username": "admin",
+    "action": "[Submitted Exist. Acc.] VERIFIED: \"JUAN DELA CRUZ\" (FILES -> VERIFIED)"
+  },
+  {
+    "id": "7f8382f2-e771-48af-897d-8897aad40864",
+    "timestamp": "2026-09-28T16:44:31.227Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
     "id": "f86dcc9b-e3e8-41a8-b843-eb66bd92ab4a",
     "timestamp": "2026-09-23T02:38:52.751Z",
     "username": "admin",

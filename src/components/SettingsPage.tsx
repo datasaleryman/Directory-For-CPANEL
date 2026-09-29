@@ -56,6 +56,7 @@ interface SettingsPageProps {
     navSettings?: string;
     navExistingAccount?: string;
     navExistAccFiles?: string;
+    navSubmittedExistAcc?: string;
     navVerificationEntry?: string;
     rolePermissions?: Record<string, string[]>;
   };
@@ -117,7 +118,9 @@ const APP_PAGES = [
   { id: 'dashboard', name: 'Dashboard', desc: 'Main overview & statistics' },
   { id: 'map', name: 'Clinic Map', desc: 'Geotagged patient map' },
   { id: 'directory', name: 'Clinic Directory', desc: 'Patient records & search' },
+  { id: 'submit-pcu', name: 'Submit PCU', desc: 'Uploaded PCU records, folders & ledger' },
   { id: 'exist-acc-files', name: 'Exist. Acc. Files', desc: 'Patient uploaded archives and records list' },
+  { id: 'submitted-exist-acc', name: 'Submitted Exist. Acc.', desc: 'Submitted existing accounts with barangay folders & ledger' },
   { id: 'member-verification', name: 'Member verification', desc: 'Search and verify clinical or community membership accounts' },
   { id: 'verification-entry', name: 'Verification Entry', desc: 'Sleek interface to search patients and submit a verification entry record' },
   { id: 'accounts', name: 'Account Management', desc: 'User accounts & roles' },
@@ -160,6 +163,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [navSettings, setNavSettings] = useState(siteSettings.navSettings || 'Website Settings');
   const [navExistingAccount, setNavExistingAccount] = useState(siteSettings.navExistingAccount || 'Existing Account');
   const [navExistAccFiles, setNavExistAccFiles] = useState(siteSettings.navExistAccFiles || 'Exist. Acc. Files');
+  const [navSubmittedExistAcc, setNavSubmittedExistAcc] = useState(siteSettings.navSubmittedExistAcc || 'Submitted Exist. Acc.');
   const [navVerificationEntry, setNavVerificationEntry] = useState(siteSettings.navVerificationEntry || 'Verification Entry');
 
   // Roles & Permissions States
@@ -432,6 +436,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setNavSettings(siteSettings.navSettings || 'Website Settings');
     setNavExistingAccount(siteSettings.navExistingAccount || 'Existing Account');
     setNavExistAccFiles(siteSettings.navExistAccFiles || 'Exist. Acc. Files');
+    setNavSubmittedExistAcc(siteSettings.navSubmittedExistAcc || 'Submitted Exist. Acc.');
     setNavVerificationEntry(siteSettings.navVerificationEntry || 'Verification Entry');
     if (siteSettings.rolePermissions) {
       setRolePermissions(siteSettings.rolePermissions);
@@ -595,6 +600,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           navSettings: navSettings.trim() || 'Website Settings',
           navExistingAccount: navExistingAccount.trim() || 'Existing Account',
           navExistAccFiles: navExistAccFiles.trim() || 'Exist. Acc. Files',
+          navSubmittedExistAcc: navSubmittedExistAcc.trim() || 'Submitted Exist. Acc.',
           navVerificationEntry: navVerificationEntry.trim() || 'Verification Entry',
           rolePermissions
         })
@@ -631,6 +637,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setNavSettings('Website Settings');
       setNavExistingAccount('Existing Account');
       setNavExistAccFiles('Exist. Acc. Files');
+      setNavSubmittedExistAcc('Submitted Exist. Acc.');
       setNavVerificationEntry('Verification Entry');
       showToast('Form reset to default presets. Make sure to click Save to persist!', 'info');
     }
@@ -1158,6 +1165,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   value={navExistAccFiles}
                   onChange={(e) => setNavExistAccFiles(e.target.value)}
                   placeholder="e.g. Exist. Acc. Files"
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
+                />
+              </div>
+
+              <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Submitted Exist. Acc. Link Title
+                </label>
+                <input
+                  type="text"
+                  value={navSubmittedExistAcc}
+                  onChange={(e) => setNavSubmittedExistAcc(e.target.value)}
+                  placeholder="e.g. Submitted Exist. Acc."
                   className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
                 />
               </div>
