@@ -167,6 +167,7 @@ export interface BulkPreviewResponse {
 export interface SubmittedExistAccRecord {
   id: string;
   existAccountId: string;
+  submitterId?: string;
   fullName: string;
   barangay: string;
   purok: string;
@@ -199,6 +200,34 @@ export interface SubmittedExistAccRecord {
   verified_credit_added?: boolean;
   pending_credit_added?: boolean;
   remarks?: string;
+  isSubmitted?: boolean;
+}
+
+export interface ReturnedPcuRecord {
+  id: string;
+  contactId?: string;
+  fullName: string;
+  barangay: string;
+  purok: string;
+  contactNumber?: string;
+  fileName?: string;
+  fileUrl?: string;
+  uploadedAt: string;
+  uploadedBy: string;
+  submitter_id?: string;
+  status: string; // 'RETURNED'
+  returned_at?: string | null;
+  returned_by?: string | null;
+  returned_by_id?: string | null;
+  return_reason?: string | null;
+  filesCount: number;
+  uploadedFiles: {
+    name: string;
+    url: string;
+    uploadedAt?: string;
+    uploadedBy?: string;
+    size?: number;
+  }[];
 }
 
 export interface SubmittedExistAccHistoryItem {

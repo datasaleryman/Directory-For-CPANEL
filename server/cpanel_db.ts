@@ -221,6 +221,7 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
     `CREATE TABLE IF NOT EXISTS pcu_submissions (
       id VARCHAR(100) NOT NULL,
       contact_id VARCHAR(100) DEFAULT '',
+      submitter_id VARCHAR(100) DEFAULT '',
       full_name VARCHAR(255) NOT NULL,
       barangay VARCHAR(255) NOT NULL DEFAULT '',
       purok VARCHAR(255) DEFAULT '',
@@ -234,10 +235,21 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       status VARCHAR(50) DEFAULT 'PENDING',
       verified_at VARCHAR(100) NULL,
       verified_by VARCHAR(255) NULL,
+      pending_at VARCHAR(100) NULL,
+      pending_by VARCHAR(255) NULL,
+      updated_status_at VARCHAR(100) NULL,
+      updated_status_by VARCHAR(255) NULL,
+      returned_at VARCHAR(100) NULL,
+      returned_by VARCHAR(255) NULL,
+      returned_by_id VARCHAR(100) NULL,
+      return_reason TEXT NULL,
       credit_added TINYINT(1) DEFAULT 0,
+      verified_credit_added TINYINT(1) DEFAULT 0,
+      pending_credit_added TINYINT(1) DEFAULT 0,
       notes TEXT NULL,
       PRIMARY KEY (id),
       INDEX idx_pcu_contact_id (contact_id),
+      INDEX idx_pcu_submitter_id (submitter_id),
       INDEX idx_pcu_barangay (barangay),
       INDEX idx_pcu_full_name (full_name),
       INDEX idx_pcu_uploaded_at (uploaded_at),
@@ -496,12 +508,17 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
 
       // 2. Check and add missing columns
       const missingPcuCols = [
+        { name: 'submitter_id', type: "VARCHAR(100) DEFAULT ''" },
         { name: 'verified_at', type: "VARCHAR(100) NULL" },
         { name: 'verified_by', type: "VARCHAR(255) NULL" },
         { name: 'pending_at', type: "VARCHAR(100) NULL" },
         { name: 'pending_by', type: "VARCHAR(255) NULL" },
         { name: 'updated_status_at', type: "VARCHAR(100) NULL" },
         { name: 'updated_status_by', type: "VARCHAR(255) NULL" },
+        { name: 'returned_at', type: "VARCHAR(100) NULL" },
+        { name: 'returned_by', type: "VARCHAR(255) NULL" },
+        { name: 'returned_by_id', type: "VARCHAR(100) NULL" },
+        { name: 'return_reason', type: "TEXT NULL" },
         { name: 'credit_added', type: "TINYINT(1) DEFAULT 0" },
         { name: 'verified_credit_added', type: "TINYINT(1) DEFAULT 0" },
         { name: 'pending_credit_added', type: "TINYINT(1) DEFAULT 0" },
@@ -2495,10 +2512,11 @@ export async function deleteBarangayFromCPanel(name: string): Promise<void> {
 }
 
 export async function savePcuSubmissionToCPanel(submission: {
-  id: string;
+  id?: string;
   contactId?: string | number;
+  submitter_id?: string;
   fullName: string;
-  barangay: string;
+  barangay?: string;
   purok?: string;
   contactNumber?: string;
   fileName?: string;
@@ -2513,6 +2531,10 @@ export async function savePcuSubmissionToCPanel(submission: {
   pending_by?: string | null;
   updated_status_at?: string | null;
   updated_status_by?: string | null;
+  returned_at?: string | null;
+  returned_by?: string | null;
+  returned_by_id?: string | null;
+  return_reason?: string | null;
   verified_credit_added?: boolean | number;
   pending_credit_added?: boolean | number;
 }): Promise<void> {
@@ -2520,6 +2542,7 @@ export async function savePcuSubmissionToCPanel(submission: {
   try {
     const id = submission.id || crypto.randomUUID();
     const contactId = submission.contactId !== undefined && submission.contactId !== null ? String(submission.contactId) : '';
+    const submitterId = submission.submitter_id || '';
     const fullName = (submission.fullName || '').trim();
     const barangay = (submission.barangay || '').trim();
     const purok = (submission.purok || '').trim();
@@ -2536,15 +2559,20 @@ export async function savePcuSubmissionToCPanel(submission: {
     const pendingBy = submission.pending_by || null;
     const updatedStatusAt = submission.updated_status_at || null;
     const updatedStatusBy = submission.updated_status_by || null;
+    const returnedAt = submission.returned_at || null;
+    const returnedBy = submission.returned_by || null;
+    const returnedById = submission.returned_by_id || null;
+    const returnReason = submission.return_reason || null;
     const verifiedCreditAdded = submission.verified_credit_added ? 1 : 0;
     const pendingCreditAdded = submission.pending_credit_added ? 1 : 0;
 
     await pool.query(
       `INSERT INTO pcu_submissions 
-        (id, contact_id, full_name, barangay, purok, contact_number, file_name, file_url, uploaded_files, uploaded_by, uploaded_at, status, verified_at, verified_by, pending_at, pending_by, updated_status_at, updated_status_by, verified_credit_added, pending_credit_added)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, contact_id, submitter_id, full_name, barangay, purok, contact_number, file_name, file_url, uploaded_files, uploaded_by, uploaded_at, status, verified_at, verified_by, pending_at, pending_by, updated_status_at, updated_status_by, returned_at, returned_by, returned_by_id, return_reason, verified_credit_added, pending_credit_added)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE
         contact_id = VALUES(contact_id),
+        submitter_id = COALESCE(NULLIF(VALUES(submitter_id), ''), submitter_id),
         full_name = VALUES(full_name),
         barangay = VALUES(barangay),
         purok = VALUES(purok),
@@ -2561,9 +2589,13 @@ export async function savePcuSubmissionToCPanel(submission: {
         pending_by = COALESCE(VALUES(pending_by), pending_by),
         updated_status_at = COALESCE(VALUES(updated_status_at), updated_status_at),
         updated_status_by = COALESCE(VALUES(updated_status_by), updated_status_by),
+        returned_at = COALESCE(VALUES(returned_at), returned_at),
+        returned_by = COALESCE(VALUES(returned_by), returned_by),
+        returned_by_id = COALESCE(VALUES(returned_by_id), returned_by_id),
+        return_reason = COALESCE(VALUES(return_reason), return_reason),
         verified_credit_added = CASE WHEN VALUES(verified_credit_added) = 1 THEN 1 ELSE verified_credit_added END,
         pending_credit_added = CASE WHEN VALUES(pending_credit_added) = 1 THEN 1 ELSE pending_credit_added END`,
-      [id, contactId, fullName, barangay, purok, contactNumber, fileName, fileUrl, uploadedFiles, uploadedBy, uploadedAt, status, verifiedAt, verifiedBy, pendingAt, pendingBy, updatedStatusAt, updatedStatusBy, verifiedCreditAdded, pendingCreditAdded]
+      [id, contactId, submitterId, fullName, barangay, purok, contactNumber, fileName, fileUrl, uploadedFiles, uploadedBy, uploadedAt, status, verifiedAt, verifiedBy, pendingAt, pendingBy, updatedStatusAt, updatedStatusBy, returnedAt, returnedBy, returnedById, returnReason, verifiedCreditAdded, pendingCreditAdded]
     );
     console.log(`[cPanel DB] Saved PCU submission ${id} for "${fullName}" (Status: ${status}) to MySQL database.`);
   } catch (err: any) {
@@ -2588,6 +2620,7 @@ export async function fetchAllPcuSubmissionsFromCPanel(): Promise<any[]> {
       return {
         id: String(r.id),
         contactId: r.contact_id ? String(r.contact_id) : String(r.id),
+        submitter_id: r.submitter_id || '',
         fullName: r.full_name,
         barangay: r.barangay || 'General / Unassigned',
         purok: r.purok || '',
@@ -2604,6 +2637,10 @@ export async function fetchAllPcuSubmissionsFromCPanel(): Promise<any[]> {
         pending_by: r.pending_by || null,
         updated_status_at: r.updated_status_at || null,
         updated_status_by: r.updated_status_by || null,
+        returned_at: r.returned_at || null,
+        returned_by: r.returned_by || null,
+        returned_by_id: r.returned_by_id || null,
+        return_reason: r.return_reason || '',
         credit_added: Boolean(r.credit_added),
         verified_credit_added: Boolean(r.verified_credit_added || r.credit_added),
         pending_credit_added: Boolean(r.pending_credit_added),
@@ -2612,6 +2649,67 @@ export async function fetchAllPcuSubmissionsFromCPanel(): Promise<any[]> {
     });
   } catch (err: any) {
     console.warn('[cPanel DB] Error fetching PCU submissions from MySQL:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Fetches returned PCU submissions specifically belonging to the given user account ID from MySQL.
+ * Strictly enforced at database query level.
+ */
+export async function fetchReturnedPcuSubmissionsFromCPanel(userIdOrUsername: string, isSuperUser: boolean = false): Promise<any[]> {
+  if (!pool || !currentStatus.connected) return [];
+  try {
+    const cleanId = (userIdOrUsername || '').toLowerCase().trim();
+    if (!cleanId && !isSuperUser) return [];
+
+    let query = '';
+    let params: any[] = [];
+    if (isSuperUser) {
+      query = `SELECT * FROM pcu_submissions 
+       WHERE UPPER(status) = 'RETURNED' 
+       ORDER BY returned_at DESC, uploaded_at DESC`;
+    } else {
+      query = `SELECT * FROM pcu_submissions 
+       WHERE UPPER(status) = 'RETURNED' 
+         AND (LOWER(TRIM(submitter_id)) = ? OR LOWER(TRIM(uploaded_by)) = ?)
+       ORDER BY returned_at DESC, uploaded_at DESC`;
+      params = [cleanId, cleanId];
+    }
+
+    const [rows]: any = await pool.query(query, params);
+
+    return (rows || []).map((r: any) => {
+      let uploadedFiles: any[] = [];
+      try {
+        if (r.uploaded_files) {
+          uploadedFiles = typeof r.uploaded_files === 'string' ? JSON.parse(r.uploaded_files) : r.uploaded_files;
+        }
+      } catch {}
+
+      return {
+        id: String(r.id),
+        contactId: r.contact_id ? String(r.contact_id) : String(r.id),
+        submitter_id: r.submitter_id || r.uploaded_by || '',
+        fullName: r.full_name,
+        barangay: r.barangay || 'General / Unassigned',
+        purok: r.purok || '',
+        contactNumber: r.contact_number || '',
+        fileName: r.file_name || (uploadedFiles[0]?.name) || 'PCU Document',
+        fileUrl: r.file_url || (uploadedFiles[0]?.url) || '',
+        uploadedFiles: Array.isArray(uploadedFiles) ? uploadedFiles : [],
+        uploadedBy: r.uploaded_by || 'Admin',
+        uploadedAt: r.uploaded_at || (r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()),
+        status: 'RETURNED',
+        returned_at: r.returned_at || r.updated_status_at || new Date().toISOString(),
+        returned_by: r.returned_by || 'Admin',
+        returned_by_id: r.returned_by_id || '',
+        return_reason: r.return_reason || '',
+        filesCount: Array.isArray(uploadedFiles) ? uploadedFiles.length : 1
+      };
+    });
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error fetching returned PCU submissions from MySQL:', err.message);
     return [];
   }
 }
@@ -2828,14 +2926,17 @@ export async function updatePcuStatusInCPanel(params: {
   fullName?: string;
   status: string;
   username: string;
+  returned_by_id?: string;
+  return_reason?: string;
 }): Promise<boolean> {
   if (!pool) return false;
   try {
-    const { id, fullName, status, username } = params;
+    const { id, fullName, status, username, returned_by_id, return_reason } = params;
     const nowIso = new Date().toISOString();
     const isVerified = status === 'VERIFIED';
     const isPending = status === 'PENDING';
     const isUpdated = status === 'UPDATED';
+    const isReturned = status === 'RETURNED';
 
     let sqlFields = 'status = ?';
     const sqlParams: any[] = [status];
@@ -2849,6 +2950,9 @@ export async function updatePcuStatusInCPanel(params: {
     } else if (isUpdated) {
       sqlFields += ', updated_status_at = ?, updated_status_by = ?';
       sqlParams.push(nowIso, username);
+    } else if (isReturned) {
+      sqlFields += ', returned_at = ?, returned_by = ?, returned_by_id = ?, return_reason = ?';
+      sqlParams.push(nowIso, username, returned_by_id || null, return_reason || null);
     }
 
     if (id && id !== 'new') {

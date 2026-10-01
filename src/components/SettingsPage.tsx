@@ -119,6 +119,7 @@ const APP_PAGES = [
   { id: 'map', name: 'Clinic Map', desc: 'Geotagged patient map' },
   { id: 'directory', name: 'Clinic Directory', desc: 'Patient records & search' },
   { id: 'submit-pcu', name: 'Submit PCU', desc: 'Uploaded PCU records, folders & ledger' },
+  { id: 'returned', name: 'Returned', desc: 'Files returned by administrators to original submitters' },
   { id: 'exist-acc-files', name: 'Exist. Acc. Files', desc: 'Patient uploaded archives and records list' },
   { id: 'submitted-exist-acc', name: 'Submitted Exist. Acc.', desc: 'Submitted existing accounts with barangay folders & ledger' },
   { id: 'member-verification', name: 'Member verification', desc: 'Search and verify clinical or community membership accounts' },
@@ -170,14 +171,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [rolesList, setRolesList] = useState<string[]>(DEFAULT_ROLES);
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(() => {
     return siteSettings.rolePermissions || {
-      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry']
+      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+      'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
+      'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry']
     };
   });
 

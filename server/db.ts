@@ -18,6 +18,7 @@ import {
   saveSettingToCPanel,
   savePcuSubmissionToCPanel,
   updatePcuStatusInCPanel,
+  fetchReturnedPcuSubmissionsFromCPanel,
   deletePcuSubmissionFromCPanel,
   deletePcuFileFromCPanel,
   savePcuSettlementToCPanel,
@@ -259,14 +260,19 @@ export interface PCUUpdate {
   fileData: string; // Base64 content or public storage URL
   uploadedAt: string;
   uploadedBy?: string;
+  submitter_id?: string;
   added_from_website?: boolean;
-  status?: string; // 'FILES' | 'VERIFIED' | 'PENDING' | 'UPDATED'
+  status?: string; // 'FILES' | 'VERIFIED' | 'PENDING' | 'UPDATED' | 'RETURNED'
   verified_at?: string | null;
   verified_by?: string | null;
   pending_at?: string | null;
   pending_by?: string | null;
   updated_status_at?: string | null;
   updated_status_by?: string | null;
+  returned_at?: string | null;
+  returned_by?: string | null;
+  returned_by_id?: string | null;
+  return_reason?: string | null;
   verified_credit_added?: boolean;
   pending_credit_added?: boolean;
   credit_added?: boolean;
@@ -387,6 +393,7 @@ export interface SubmittedExistAccRecord {
   pending_by?: string | null;
   updated_status_at?: string | null;
   updated_status_by?: string | null;
+  isSubmitted?: boolean;
   verified_credit_added?: boolean;
   pending_credit_added?: boolean;
   remarks?: string;
@@ -923,14 +930,14 @@ export function getSheetsStatus() {
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account'],
-  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account'],
-  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account'],
-  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account']
+  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
+  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account'],
+  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account'],
+  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account'],
+  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account']
 };
 
 export interface SiteSettings {
@@ -951,6 +958,7 @@ export interface SiteSettings {
   navExistingAccount?: string;
   navExistAccFiles?: string;
   navSubmittedExistAcc?: string;
+  navReturned?: string;
   rolePermissions?: Record<string, string[]>;
   pcuBaseRate?: number;
   pcuPendingBaseRate?: number;
@@ -982,6 +990,7 @@ let siteSettings: SiteSettings = {
   navExistingAccount: 'Existing Account',
   navExistAccFiles: 'Exist. Acc. Files',
   navSubmittedExistAcc: 'Submitted Exist. Acc.',
+  navReturned: 'Returned',
   rolePermissions: DEFAULT_ROLE_PERMISSIONS
 };
 
@@ -2061,6 +2070,7 @@ export async function initDb() {
                 pcuMap.set(String(sub.id), {
                   id: String(sub.id),
                   contactId: sub.contactId || sub.id,
+                  submitter_id: sub.submitter_id || sub.uploadedBy || '',
                   fullName: sub.fullName,
                   barangay: sub.barangay,
                   purok: sub.purok || '',
@@ -2076,6 +2086,10 @@ export async function initDb() {
                   pending_by: sub.pending_by || null,
                   updated_status_at: sub.updated_status_at || null,
                   updated_status_by: sub.updated_status_by || null,
+                  returned_at: sub.returned_at || null,
+                  returned_by: sub.returned_by || null,
+                  returned_by_id: sub.returned_by_id || null,
+                  return_reason: sub.return_reason || '',
                   verified_credit_added: Boolean(sub.verified_credit_added),
                   pending_credit_added: Boolean(sub.pending_credit_added),
                   contact_number: sub.contactNumber || '',
@@ -9482,6 +9496,7 @@ export async function addPCUUpdatesMultiple(
         await savePcuSubmissionToCPanel({
           id: String(contact.id || crypto.randomUUID()),
           contactId: contact.id,
+          submitter_id: username,
           fullName: contact.full_name || fullName,
           barangay: contact.barangay || options?.barangay || '',
           purok: contact.purok || options?.purok || '',
@@ -9712,6 +9727,7 @@ export async function transferContactToSubmitPcu(contactIdOrName: string | numbe
     fileData: uploadedFiles[0]?.url || defaultFileUrl,
     uploadedAt,
     uploadedBy: username,
+    submitter_id: username,
     added_from_website: true,
     status: 'FILES',
     contact_number: contactNumber,
@@ -9730,6 +9746,7 @@ export async function transferContactToSubmitPcu(contactIdOrName: string | numbe
       await savePcuSubmissionToCPanel({
         id: submissionId,
         contactId: submissionId,
+        submitter_id: username,
         fullName,
         barangay,
         purok,
@@ -9843,6 +9860,8 @@ export function getRecentUploads(params: {
 
     const actualId = (u.contactId && String(u.contactId).toLowerCase() !== 'new' ? u.contactId : u.id) || `pcu_${Date.now()}`;
     const rawStatus = (u.status || 'FILES').toUpperCase();
+    // Do NOT include RETURNED records in Submit PCU recent uploads!
+    if (rawStatus === 'RETURNED') continue;
     const pcuStatus = (rawStatus === 'VERIFIED' || rawStatus === 'PENDING' || rawStatus === 'UPDATED') ? rawStatus : 'FILES';
 
     if (!updatesByPerson.has(nameKey)) {
@@ -9858,6 +9877,7 @@ export function getRecentUploads(params: {
         pcu_file_url: u.fileData || '',
         pcu_uploaded_by: u.uploadedBy || 'Admin',
         pcu_uploaded_at: u.uploadedAt || new Date().toISOString(),
+        submitter_id: (u as any).submitter_id || u.uploadedBy || '',
         isExistingAccount: false,
         category: 'pcu',
         status: pcuStatus,
@@ -9867,6 +9887,10 @@ export function getRecentUploads(params: {
         pending_by: (u as any).pending_by || null,
         updated_status_at: (u as any).updated_status_at || null,
         updated_status_by: (u as any).updated_status_by || null,
+        returned_at: (u as any).returned_at || null,
+        returned_by: (u as any).returned_by || null,
+        returned_by_id: (u as any).returned_by_id || null,
+        return_reason: (u as any).return_reason || null,
         verified_credit_added: Boolean((u as any).verified_credit_added),
         pending_credit_added: Boolean((u as any).pending_credit_added),
         uploadedFiles: []
@@ -9874,7 +9898,7 @@ export function getRecentUploads(params: {
     }
 
     const item = updatesByPerson.get(nameKey)!;
-    if (pcuStatus === 'VERIFIED' || pcuStatus === 'PENDING' || pcuStatus === 'UPDATED') {
+    if (pcuStatus === 'VERIFIED' || pcuStatus === 'PENDING' || pcuStatus === 'UPDATED' || pcuStatus === 'RETURNED') {
       item.status = pcuStatus;
     }
     if ((u as any).verified_at) item.verified_at = (u as any).verified_at;
@@ -9883,6 +9907,11 @@ export function getRecentUploads(params: {
     if ((u as any).pending_by) item.pending_by = (u as any).pending_by;
     if ((u as any).updated_status_at) item.updated_status_at = (u as any).updated_status_at;
     if ((u as any).updated_status_by) item.updated_status_by = (u as any).updated_status_by;
+    if ((u as any).returned_at) item.returned_at = (u as any).returned_at;
+    if ((u as any).returned_by) item.returned_by = (u as any).returned_by;
+    if ((u as any).returned_by_id) item.returned_by_id = (u as any).returned_by_id;
+    if ((u as any).return_reason) item.return_reason = (u as any).return_reason;
+    if ((u as any).submitter_id) item.submitter_id = (u as any).submitter_id;
     if ((u as any).verified_credit_added) item.verified_credit_added = true;
     if ((u as any).pending_credit_added) item.pending_credit_added = true;
     if ((!item.barangay || item.barangay === 'Unassigned') && u.barangay) {
@@ -9904,7 +9933,9 @@ export function getRecentUploads(params: {
     if (!c || !isContactSubmitted(c)) continue;
     const nameKey = `${(c.full_name || '').trim().toLowerCase()}___${(c.barangay || '').trim().toLowerCase()}`;
     if (!nameKey.replace(/___/g, '')) continue;
-    const cStatus = ((c as any).pcu_status || c.status || '').toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'PENDING';
+    const rawCStatus = ((c as any).pcu_status || c.status || '').toUpperCase();
+    if (rawCStatus === 'RETURNED') continue;
+    const cStatus = rawCStatus === 'VERIFIED' ? 'VERIFIED' : 'PENDING';
 
     if (!updatesByPerson.has(nameKey)) {
       const uploadedFiles = c.uploadedFiles && c.uploadedFiles.length > 0 ? c.uploadedFiles : [{
@@ -9951,6 +9982,9 @@ export function getRecentUploads(params: {
     const hasFiles = Boolean(acc.uploadedFiles && acc.uploadedFiles.length > 0);
     if (!hasFiles) return false;
 
+    const accStatus = ((acc as any).pcu_status || (acc as any).status || '').toUpperCase();
+    if (accStatus === 'RETURNED') return false;
+
     const uploader = (acc.uploadedFiles && acc.uploadedFiles.length > 0 ? acc.uploadedFiles[0].uploadedBy : '') || acc.submittedBy || 'Admin';
     const current = (username || '').toLowerCase().trim();
     if (!current || current === 'admin') return true;
@@ -9975,6 +10009,12 @@ export function getRecentUploads(params: {
       isExistingAccount: true,
       category: 'existing_account',
       status: ((acc as any).pcu_status || (acc as any).status || '').toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'PENDING',
+      verified_at: (acc as any).verified_at || null,
+      verified_by: (acc as any).verified_by || null,
+      pending_at: (acc as any).pending_at || null,
+      pending_by: (acc as any).pending_by || null,
+      updated_status_at: (acc as any).updated_status_at || null,
+      updated_status_by: (acc as any).updated_status_by || null,
       pin: acc.pin || '',
       facebookLink: acc.facebookLink || '',
       latitude: acc.latitude,
@@ -10028,8 +10068,27 @@ export function getRecentUploads(params: {
     } else if (sortBy === 'purok') {
       comparison = (a.purok || '').localeCompare(b.purok || '');
     } else {
-      const timeA = new Date(a.pcu_uploaded_at || a.updated_at || a.created_at).getTime();
-      const timeB = new Date(b.pcu_uploaded_at || b.updated_at || b.created_at).getTime();
+      const getLatestActionTime = (x: any) => {
+        const dates = [
+          x.verified_at,
+          x.pending_at,
+          x.updated_status_at,
+          x.returned_at,
+          x.pcu_uploaded_at,
+          x.updated_at,
+          x.created_at
+        ];
+        let max = 0;
+        for (const d of dates) {
+          if (d) {
+            const t = new Date(d).getTime();
+            if (!isNaN(t) && t > max) max = t;
+          }
+        }
+        return max;
+      };
+      const timeA = getLatestActionTime(a);
+      const timeB = getLatestActionTime(b);
       comparison = timeB - timeA;
     }
     return sortOrder === 'asc' ? comparison : -comparison;
@@ -10358,11 +10417,13 @@ export async function permanentlyDeletePcuSubmission(params: {
 export async function updatePcuSubmissionStatus(params: {
   id?: string | number;
   fullName?: string;
-  status: 'VERIFIED' | 'PENDING' | 'UPDATED' | 'FILES' | string;
+  status: 'VERIFIED' | 'PENDING' | 'UPDATED' | 'FILES' | 'RETURNED' | string;
   username?: string;
+  returned_by_id?: string;
+  return_reason?: string;
 }): Promise<{ success: boolean; status: string; fullName: string; message: string; creditAdded?: boolean }> {
-  const { id, fullName, status: rawStatus, username = 'Admin' } = params;
-  const status = (rawStatus || 'FILES').toUpperCase() as 'VERIFIED' | 'PENDING' | 'UPDATED' | 'FILES';
+  const { id, fullName, status: rawStatus, username = 'Admin', returned_by_id, return_reason } = params;
+  const status = (rawStatus || 'FILES').toUpperCase() as 'VERIFIED' | 'PENDING' | 'UPDATED' | 'FILES' | 'RETURNED';
   const normName = (fullName || '').trim().toLowerCase();
   const idStr = id !== undefined && id !== null ? String(id).trim() : '';
   const nowIso = new Date().toISOString();
@@ -10400,6 +10461,11 @@ export async function updatePcuSubmissionStatus(params: {
       } else if (status === 'UPDATED') {
         u.updated_status_at = nowIso;
         u.updated_status_by = username;
+      } else if (status === 'RETURNED') {
+        u.returned_at = nowIso;
+        u.returned_by = username;
+        u.returned_by_id = returned_by_id || username;
+        u.return_reason = return_reason || '';
       }
     }
   }
@@ -10420,6 +10486,11 @@ export async function updatePcuSubmissionStatus(params: {
       } else if (status === 'UPDATED') {
         (c as any).updated_status_at = nowIso;
         (c as any).updated_status_by = username;
+      } else if (status === 'RETURNED') {
+        (c as any).returned_at = nowIso;
+        (c as any).returned_by = username;
+        (c as any).returned_by_id = returned_by_id || username;
+        (c as any).return_reason = return_reason || '';
       }
     }
   }
@@ -10434,7 +10505,9 @@ export async function updatePcuSubmissionStatus(params: {
         id: idStr,
         fullName: fullName || matchedSubmission?.fullName || '',
         status,
-        username
+        username,
+        returned_by_id: returned_by_id || username,
+        return_reason: return_reason || ''
       });
     } catch (err: any) {
       console.warn('[PCU Status Warning] Failed to update in cPanel MySQL:', err.message || err);
@@ -10461,6 +10534,9 @@ export async function updatePcuSubmissionStatus(params: {
   } else if (status === 'FILES') {
     actionName = 'MOVED_TO_FILES';
     detailsText = `Returned to Files by ${username}.`;
+  } else if (status === 'RETURNED') {
+    actionName = 'RETURNED';
+    detailsText = `Returned submission by ${username}.${return_reason ? ` Reason: ${return_reason}` : ''}`;
   }
 
   await logPcuHistory({
@@ -10483,6 +10559,156 @@ export async function updatePcuSubmissionStatus(params: {
     fullName: patName,
     message: `Record "${patName}" is now ${status}.`,
     creditAdded
+  };
+}
+
+/**
+ * Fetches returned PCU submissions strictly belonging to the given user account ID.
+ * Requirements:
+ * 1. Strictly user-specific: A user may only see returned files originally submitted by their account ID.
+ * 2. Enforced at backend / database level.
+ * 3. Preserves all original file and patient information.
+ */
+export async function getReturnedPcuRecords(userIdOrUsername: string, isSuperUser: boolean = false): Promise<any[]> {
+  const normUser = (userIdOrUsername || '').toLowerCase().trim();
+  if (!normUser) return [];
+
+  const userObj = findUser(userIdOrUsername);
+  const userFullName = (userObj?.fullName || userObj?.displayName || '').toLowerCase().trim();
+  const userId = ((userObj as any)?.id ? String((userObj as any).id) : '').toLowerCase().trim();
+
+  // 1. Fetch from cPanel MySQL database if connected
+  let cpanelRecords: any[] = [];
+  if (isCPanelDbConnected()) {
+    try {
+      cpanelRecords = await fetchReturnedPcuSubmissionsFromCPanel(normUser, isSuperUser);
+    } catch (err: any) {
+      console.warn('[Returned PCU] Notice querying MySQL for returned files:', err.message || err);
+    }
+  }
+
+  // 2. Fetch from local cache and merge
+  const map = new Map<string, any>();
+
+  for (const r of cpanelRecords) {
+    const key = `${(r.fullName || '').toLowerCase().trim()}___${(r.barangay || '').toLowerCase().trim()}`;
+    map.set(key, r);
+  }
+
+  for (const u of pcuUpdatesCache) {
+    if (!u) continue;
+    const rawStatus = (u.status || '').toUpperCase();
+    if (rawStatus !== 'RETURNED') continue;
+
+    const subId = ((u as any).submitter_id || u.uploadedBy || '').toLowerCase().trim();
+    const upBy = (u.uploadedBy || '').toLowerCase().trim();
+
+    const isOwner = isSuperUser ||
+                    subId === normUser || upBy === normUser || 
+                    (userId && (subId === userId || upBy === userId)) || 
+                    (userFullName && (upBy === userFullName || subId === userFullName));
+    if (!isOwner) continue;
+
+    const key = `${(u.fullName || '').toLowerCase().trim()}___${(u.barangay || '').toLowerCase().trim()}`;
+    const actualId = (u.contactId && String(u.contactId).toLowerCase() !== 'new' ? String(u.contactId) : String(u.id)) || `ret_${Date.now()}`;
+
+    let filesList: any[] = [];
+    if (Array.isArray(u.uploadedFiles) && u.uploadedFiles.length > 0) {
+      filesList = u.uploadedFiles;
+    } else if (u.fileName || u.fileData) {
+      filesList = [{
+        name: u.fileName || 'PCU Document',
+        url: u.fileData || '',
+        uploadedAt: u.uploadedAt || new Date().toISOString(),
+        uploadedBy: u.uploadedBy || ''
+      }];
+    }
+
+    if (!map.has(key)) {
+      map.set(key, {
+        id: actualId,
+        contactId: u.contactId ? String(u.contactId) : actualId,
+        fullName: u.fullName,
+        barangay: u.barangay || 'General / Unassigned',
+        purok: u.purok || '',
+        contactNumber: (u as any).contact_number || (u as any).contactNumber || '',
+        fileName: u.fileName || (filesList[0]?.name) || 'PCU Document',
+        fileUrl: u.fileData || (filesList[0]?.url) || '',
+        uploadedFiles: filesList,
+        filesCount: filesList.length,
+        uploadedBy: u.uploadedBy || 'Admin',
+        uploadedAt: u.uploadedAt || new Date().toISOString(),
+        submitter_id: (u as any).submitter_id || u.uploadedBy || '',
+        status: 'RETURNED',
+        returned_at: (u as any).returned_at || (u as any).updated_status_at || new Date().toISOString(),
+        returned_by: (u as any).returned_by || 'Admin',
+        returned_by_id: (u as any).returned_by_id || '',
+        return_reason: (u as any).return_reason || ''
+      });
+    } else {
+      const existing = map.get(key)!;
+      for (const f of filesList) {
+        if (!existing.uploadedFiles.some((ef: any) => ef.name === f.name && ef.url === f.url)) {
+          existing.uploadedFiles.push(f);
+        }
+      }
+      existing.filesCount = existing.uploadedFiles.length;
+    }
+  }
+
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.returned_at || b.uploadedAt).getTime() - new Date(a.returned_at || a.uploadedAt).getTime()
+  );
+}
+
+/**
+ * Calculates Today's submission counts per Barangay using Asia/Manila (UTC+8) calendar day.
+ * Requirements:
+ * 1. Counts original submissions belonging to the current day in Asia/Manila timezone.
+ * 2. Status changes (Pending -> Verified, Pending -> Returned) do NOT reduce or alter Today's count.
+ * 3. Includes Verified, Pending, Returned, Updated, and Files submissions.
+ * 4. Based strictly on `submitted_at` / `uploadedAt`, NOT updated_at, verified_at, or returned_at.
+ * 5. Automatically resets at 12:00 midnight without erasing historical records.
+ */
+export function getBarangayTodayCounts(): {
+  date: string;
+  counts: Record<string, number>;
+  totalToday: number;
+} {
+  const manilaDateToday = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+  const counts: Record<string, number> = {};
+  let totalToday = 0;
+  const seenPersons = new Set<string>();
+
+  for (const u of pcuUpdatesCache) {
+    if (!u) continue;
+    const subTime = u.uploadedAt;
+    if (!subTime) continue;
+
+    let subDateManila = '';
+    try {
+      subDateManila = new Date(subTime).toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    } catch {
+      subDateManila = subTime.slice(0, 10);
+    }
+
+    if (subDateManila !== manilaDateToday) continue;
+
+    const bg = (u.barangay || 'General / Unassigned').trim();
+    const bgKey = normalizeBarangayName(bg);
+    const personKey = `${bgKey}___${(u.fullName || '').toLowerCase().trim()}`;
+
+    if (!seenPersons.has(personKey)) {
+      seenPersons.add(personKey);
+      counts[bgKey] = (counts[bgKey] || 0) + 1;
+      totalToday++;
+    }
+  }
+
+  return {
+    date: manilaDateToday,
+    counts,
+    totalToday
   };
 }
 
@@ -11117,16 +11343,44 @@ export async function syncToBase44HouseholdSubmission(existingAccount: ExistingA
 // =========================================================================
 
 export function getSubmittedExistAccounts(): SubmittedExistAccRecord[] {
-  return submittedExistAccountsCache.filter(sea => {
-    // Only display contacts that were submitted by users from Exist. Acc. Files page
+  const seenKeys = new Set<string>();
+  const results: SubmittedExistAccRecord[] = [];
+
+  for (const sea of submittedExistAccountsCache) {
+    if (!sea) continue;
+
     const matchingExistAcc = existingAccountsCache.find(
       acc => String(acc.id) === String(sea.existAccountId || sea.id) || normalizeCompareName(acc.full_name, sea.fullName)
     );
+
+    // Only display contacts that were actually submitted by users from Exist. Acc. Files page
     if (matchingExistAcc) {
-      return matchingExistAcc.isSubmitted === true;
+      if (matchingExistAcc.isSubmitted !== true) {
+        continue; // Exclude unsubmitted contacts
+      }
+      // Preserve original submitter user/account ID
+      if (matchingExistAcc.submittedBy || (matchingExistAcc as any).submitter_id) {
+        (sea as any).submitterId = (sea as any).submitterId || (matchingExistAcc as any).submitter_id || matchingExistAcc.submittedBy;
+        sea.uploadedBy = sea.uploadedBy || matchingExistAcc.submittedBy;
+      }
+    } else {
+      if ((sea as any).isSubmitted !== true) {
+        continue; // Exclude unsubmitted contacts
+      }
     }
-    return (sea as any).isSubmitted !== false;
-  });
+
+    // Deduplicate contacts to prevent duplicate entries after refresh or reopening
+    const dedupKey = (sea.existAccountId && String(sea.existAccountId).trim()) ||
+                     String(sea.id).trim() ||
+                     `${(sea.fullName || '').toLowerCase().trim()}___${(sea.barangay || '').toLowerCase().trim()}`;
+
+    if (!seenKeys.has(dedupKey)) {
+      seenKeys.add(dedupKey);
+      results.push(sea);
+    }
+  }
+
+  return results;
 }
 
 export function getSubmittedExistAccBaseRates(): { baseRate: number; pendingBaseRate: number } {
@@ -11331,6 +11585,7 @@ export async function addOrUpdateSubmittedExistAccount(recordData: Partial<Submi
     updated_status_by: recordData.updated_status_by || null,
     verified_credit_added: Boolean(recordData.verified_credit_added),
     pending_credit_added: Boolean(recordData.pending_credit_added),
+    isSubmitted: true,
     remarks: recordData.remarks || ''
   };
 

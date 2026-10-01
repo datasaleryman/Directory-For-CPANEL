@@ -1,5 +1,17 @@
 [
   {
+    "id": "c464fdbe-1297-4e2c-8302-b0cb2e74c594",
+    "timestamp": "2026-09-30T09:49:14.495Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "edc0c908-e5d8-42ba-8509-c51990d36539",
+    "timestamp": "2026-09-30T09:49:07.951Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
     "id": "b5fd55fa-1ebc-49ab-8d6d-ccc181b33945",
     "timestamp": "2026-09-28T16:45:03.491Z",
     "username": "admin",

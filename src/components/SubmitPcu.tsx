@@ -258,6 +258,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const [settlementNotes, setSettlementNotes] = useState<string>('');
   const [submittingSettlement, setSubmittingSettlement] = useState<boolean>(false);
 
+  // Print PCU Files Ledger Modal & Report Type State
+  const [showPrintLedgerModal, setShowPrintLedgerModal] = useState<boolean>(false);
+  const [printReportType, setPrintReportType] = useState<'pending' | 'verified' | 'all'>('pending');
+
   // Security guard: If a non-master admin somehow has activeTab === 'ledger', force back to 'files'
   useEffect(() => {
     if (!isMasterAdmin && activeTab === 'ledger') {
@@ -323,6 +327,14 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           const rawStatus = (item.status || 'FILES').toUpperCase();
           const normalizedStatus = (rawStatus === 'VERIFIED' || rawStatus === 'PENDING' || rawStatus === 'UPDATED') ? rawStatus : 'FILES';
 
+          // Determine most accurate submission timestamp from item or its uploaded files
+          let accurateUploadedAt = item.pcu_uploaded_at || item.updated_at || item.created_at || new Date().toISOString();
+          for (const f of files) {
+            if (f.uploadedAt && new Date(f.uploadedAt).getTime() > new Date(accurateUploadedAt).getTime()) {
+              accurateUploadedAt = f.uploadedAt;
+            }
+          }
+
           return {
             id: uniqueId,
             fullName: item.full_name || item.fullName || 'Patient',
@@ -331,7 +343,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
             contactNumber: item.contact_number || item.contact || '',
             fileName: files[0]?.name || 'PCU Document',
             fileUrl: files[0]?.url || item.pcu_file_url || '',
-            uploadedAt: item.pcu_uploaded_at || item.updated_at || item.created_at || new Date().toISOString(),
+            uploadedAt: accurateUploadedAt,
             uploadedBy: item.pcu_uploaded_by || 'Staff',
             status: normalizedStatus,
             verified_at: item.verified_at || null,
@@ -854,9 +866,11 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
       // Return to Grid view to see uploaded record
       setIsFormOpen(false);
+      setActiveTab('files');
+      setSelectedFolder(null);
 
       // Refresh uploaded records list & history
-      fetchUploadedRecords();
+      await fetchUploadedRecords();
       fetchHistory();
     } catch (err: any) {
       showToast(err.message || 'Error submitting PCU documentation.', 'error');
@@ -1217,7 +1231,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         const isMatch = (item.id && record.id && item.id === record.id) ||
           (item.fullName && record.fullName && item.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim());
         if (isMatch) {
-          return { ...item, status: 'FILES' };
+          return { ...item, status: 'FILES', uploadedAt: new Date().toISOString() };
         }
         return item;
       }));
@@ -1235,41 +1249,177 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     }
   };
 
-  // Helper to determine if a date is within current day (Philippine / application date)
-  // Automatically resets at 12:00 AM midnight
+  const handleReturnRecord = async (record: UploadedPcuRecord, returnReason: string = '') => {
+    if (!isMasterAdmin) {
+      showToast('Access Denied: Only administrators can return PCU submissions.', 'error');
+      return;
+    }
+    setVerifyingId(record.id);
+    try {
+      const res = await fetch('/api/pcu/return', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          id: record.id,
+          fullName: record.fullName,
+          return_reason: returnReason
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to return submission.');
+      }
+
+      const nowIso = new Date().toISOString();
+      const adminName = currentUser?.username || 'Admin';
+
+      // Update state locally so record status changes to RETURNED without deleting original record
+      setUploadedRecords(prev => prev.map(item => {
+        const isMatch = (item.id && record.id && item.id === record.id) ||
+          (item.fullName && record.fullName && item.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim());
+        if (isMatch) {
+          return {
+            ...item,
+            status: 'RETURNED',
+            returned_at: nowIso,
+            returned_by: adminName,
+            returned_by_id: adminName,
+            return_reason: returnReason
+          };
+        }
+        return item;
+      }));
+
+      if (selectedRecord && (selectedRecord.id === record.id || selectedRecord.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim())) {
+        setSelectedRecord(prev => prev ? {
+          ...prev,
+          status: 'RETURNED',
+          returned_at: nowIso,
+          returned_by: adminName,
+          returned_by_id: adminName,
+          return_reason: returnReason
+        } : null);
+      }
+
+      showToast(`Record "${record.fullName}" has been returned. Visible only on the submitter's Returned page.`, 'success');
+      fetchHistory();
+      fetchUploadedRecords();
+    } catch (err: any) {
+      showToast(err.message || 'Error returning PCU submission', 'error');
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
+  // Helper to determine if a date is within current day (Philippine Asia/Manila UTC+8 timezone)
+  // Automatically resets at 12:00 AM midnight without erasing historical records
   const isToday = (dateString?: string | null): boolean => {
     if (!dateString) return false;
-    const d = new Date(dateString);
-    if (isNaN(d.getTime())) return false;
-    const now = new Date(nowTick);
-    return (
-      d.getFullYear() === now.getFullYear() &&
-      d.getMonth() === now.getMonth() &&
-      d.getDate() === now.getDate()
-    );
+    try {
+      const d = new Date(dateString);
+      if (isNaN(d.getTime())) return false;
+      const recDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(d);
+      const todayManila = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(nowTick));
+      return recDate === todayManila;
+    } catch {
+      return false;
+    }
   };
 
   // =========================================================================
-  // SEPARATE UPLOADED RECORDS INTO 4 TAB GROUPS:
+  // SORTING HELPERS:
+  // - Newly submitted contacts on top (by uploadedAt / newest file timestamp)
+  // - Newly verified contacts on top (by verified_at, falling back to uploadedAt)
+  // - Newly pending contacts on top (by pending_at, falling back to uploadedAt)
+  // - Newly updated contacts on top (by updated_status_at, falling back to uploadedAt)
+  // =========================================================================
+  const getSubmittedTimestamp = (record: UploadedPcuRecord): number => {
+    let latest = record.uploadedAt ? new Date(record.uploadedAt).getTime() : 0;
+    if (Array.isArray(record.uploadedFiles) && record.uploadedFiles.length > 0) {
+      for (const f of record.uploadedFiles) {
+        if (f.uploadedAt) {
+          const t = new Date(f.uploadedAt).getTime();
+          if (!isNaN(t) && t > latest) latest = t;
+        }
+      }
+    }
+    return isNaN(latest) ? 0 : latest;
+  };
+
+  const getVerifiedTimestamp = (record: UploadedPcuRecord): number => {
+    if (record.verified_at) {
+      const t = new Date(record.verified_at).getTime();
+      if (!isNaN(t)) return t;
+    }
+    return getSubmittedTimestamp(record);
+  };
+
+  const getPendingTimestamp = (record: UploadedPcuRecord): number => {
+    if (record.pending_at) {
+      const t = new Date(record.pending_at).getTime();
+      if (!isNaN(t)) return t;
+    }
+    return getSubmittedTimestamp(record);
+  };
+
+  const getUpdatedTimestamp = (record: UploadedPcuRecord): number => {
+    if (record.updated_status_at) {
+      const t = new Date(record.updated_status_at).getTime();
+      if (!isNaN(t)) return t;
+    }
+    if (record.pending_at) {
+      const t = new Date(record.pending_at).getTime();
+      if (!isNaN(t)) return t;
+    }
+    return getSubmittedTimestamp(record);
+  };
+
+  const sortTabRecords = (records: UploadedPcuRecord[], tab: string): UploadedPcuRecord[] => {
+    if (tab === 'verified') {
+      return [...records].sort((a, b) => getVerifiedTimestamp(b) - getVerifiedTimestamp(a));
+    }
+    if (tab === 'pending') {
+      return [...records].sort((a, b) => getPendingTimestamp(b) - getPendingTimestamp(a));
+    }
+    if (tab === 'updated') {
+      return [...records].sort((a, b) => getUpdatedTimestamp(b) - getUpdatedTimestamp(a));
+    }
+    return [...records].sort((a, b) => getSubmittedTimestamp(b) - getSubmittedTimestamp(a));
+  };
+
+  // =========================================================================
+  // SEPARATE UPLOADED RECORDS INTO 4 TAB GROUPS (SORTED WITH NEWEST ON TOP):
   // Files | Verified | Pending | Updated
   // =========================================================================
   const filesRecords = React.useMemo(() => {
-    return uploadedRecords.filter(r => {
-      const s = (r.status || '').toUpperCase();
-      return s === 'FILES' || (!s && s !== 'VERIFIED' && s !== 'PENDING' && s !== 'UPDATED');
-    });
+    return uploadedRecords
+      .filter(r => {
+        const s = (r.status || '').toUpperCase();
+        return s === 'FILES' || (!s && s !== 'VERIFIED' && s !== 'PENDING' && s !== 'UPDATED');
+      })
+      .sort((a, b) => getSubmittedTimestamp(b) - getSubmittedTimestamp(a));
   }, [uploadedRecords]);
 
   const verifiedRecords = React.useMemo(() => {
-    return uploadedRecords.filter(r => (r.status || '').toUpperCase() === 'VERIFIED');
+    return uploadedRecords
+      .filter(r => (r.status || '').toUpperCase() === 'VERIFIED')
+      .sort((a, b) => getVerifiedTimestamp(b) - getVerifiedTimestamp(a));
   }, [uploadedRecords]);
 
   const pendingRecords = React.useMemo(() => {
-    return uploadedRecords.filter(r => (r.status || '').toUpperCase() === 'PENDING');
+    return uploadedRecords
+      .filter(r => (r.status || '').toUpperCase() === 'PENDING')
+      .sort((a, b) => getPendingTimestamp(b) - getPendingTimestamp(a));
   }, [uploadedRecords]);
 
   const updatedRecords = React.useMemo(() => {
-    return uploadedRecords.filter(r => (r.status || '').toUpperCase() === 'UPDATED');
+    return uploadedRecords
+      .filter(r => (r.status || '').toUpperCase() === 'UPDATED')
+      .sort((a, b) => getUpdatedTimestamp(b) - getUpdatedTimestamp(a));
   }, [uploadedRecords]);
 
   // Current tab records based on active tab
@@ -1327,6 +1477,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   // =========================================================================
   // BARANGAY FOLDERS COMPUTATION (ACCURATELY DISPLAYED BASE ON BARANGAY)
   // Distributes the current tab's records into their respective Barangay folders
+  // Computes Today submission count per folder based on original submitted_at (Asia/Manila UTC+8)
+  // Status changes (Pending -> Verified, Pending -> Returned) do not reduce Today's count
   // =========================================================================
   const barangayFolders = React.useMemo(() => {
     const map = new Map<string, {
@@ -1335,6 +1487,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       records: UploadedPcuRecord[];
       totalSubmissions: number;
       totalFiles: number;
+      todayCount: number;
       latestUploadedAt: string | null;
       submitters: Set<string>;
     }>();
@@ -1351,6 +1504,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           records: [],
           totalSubmissions: 0,
           totalFiles: 0,
+          todayCount: 0,
           latestUploadedAt: null,
           submitters: new Set<string>()
         });
@@ -1369,6 +1523,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           records: [],
           totalSubmissions: 0,
           totalFiles: 0,
+          todayCount: 0,
           latestUploadedAt: null,
           submitters: new Set<string>()
         });
@@ -1380,19 +1535,64 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       const count = rec.filesCount || (rec.uploadedFiles ? rec.uploadedFiles.length : 1);
       folder.totalFiles += count;
       if (rec.uploadedBy) folder.submitters.add(rec.uploadedBy);
-      if (!folder.latestUploadedAt || new Date(rec.uploadedAt).getTime() > new Date(folder.latestUploadedAt).getTime()) {
-        folder.latestUploadedAt = rec.uploadedAt;
+
+      // Track the latest contact activity timestamp in this folder
+      const actionTime = rec.verified_at || rec.pending_at || rec.updated_status_at || rec.uploadedAt;
+      if (actionTime) {
+        if (!folder.latestUploadedAt || new Date(actionTime).getTime() > new Date(folder.latestUploadedAt).getTime()) {
+          folder.latestUploadedAt = actionTime;
+        }
       }
     });
 
-    // Sort: folders with submissions first, then alphabetically
-    return Array.from(map.values()).sort((a, b) => {
-      if (b.totalSubmissions !== a.totalSubmissions) {
-        return b.totalSubmissions - a.totalSubmissions;
+    // Ensure contacts inside each folder are sorted according to active tab (newest on top)
+    map.forEach((folder) => {
+      folder.records = sortTabRecords(folder.records, activeTab);
+    });
+
+    // 3. Calculate Today's submission count per Barangay across ALL records (Verified, Pending, Returned, Files)
+    // Based strictly on original submission date/time (uploadedAt) in Asia/Manila (UTC+8)
+    const seenTodayPersons = new Set<string>();
+    const todayCountsByBarangay = new Map<string, number>();
+
+    uploadedRecords.forEach((rec) => {
+      if (!isToday(rec.uploadedAt)) return;
+
+      const bgName = (rec.barangay || 'General / Unassigned').trim();
+      const key = normalizeBarangayNameKey(bgName);
+      const personKey = `${key}___${(rec.fullName || '').toLowerCase().trim()}`;
+
+      if (!seenTodayPersons.has(personKey)) {
+        seenTodayPersons.add(personKey);
+        todayCountsByBarangay.set(key, (todayCountsByBarangay.get(key) || 0) + 1);
       }
+    });
+
+    map.forEach((folder, key) => {
+      folder.todayCount = todayCountsByBarangay.get(key) || 0;
+    });
+
+    // Sort: folders with submissions first, ordered by latest contact activity (newest on top), then alphabetically
+    return Array.from(map.values()).sort((a, b) => {
+      const aHas = a.totalSubmissions > 0;
+      const bHas = b.totalSubmissions > 0;
+      if (aHas && !bHas) return -1;
+      if (!aHas && bHas) return 1;
+
+      if (aHas && bHas) {
+        const timeA = a.latestUploadedAt ? new Date(a.latestUploadedAt).getTime() : 0;
+        const timeB = b.latestUploadedAt ? new Date(b.latestUploadedAt).getTime() : 0;
+        if (timeA !== timeB) {
+          return timeB - timeA;
+        }
+        if (b.totalSubmissions !== a.totalSubmissions) {
+          return b.totalSubmissions - a.totalSubmissions;
+        }
+      }
+
       return a.name.localeCompare(b.name);
     });
-  }, [barangaysList, currentTabRecords]);
+  }, [barangaysList, currentTabRecords, uploadedRecords, nowTick, activeTab]);
 
   // Filtered Barangay Folders list based on folder search
   const filteredBarangayFolders = React.useMemo(() => {
@@ -1536,6 +1736,340 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     showToast('Submitters Tallies & Payroll Ledger exported to CSV successfully', 'success');
   };
 
+  // Helper to format date for Ledger Print View matching official PDF format (e.g. "October 1, 2026 at 9:09 AM")
+  const formatPrintDate = (d: Date = new Date()) => {
+    try {
+      const monthDayYear = d.toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+      });
+      const timeStr = d.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+      return `${monthDayYear} at ${timeStr}`;
+    } catch {
+      return d.toLocaleDateString();
+    }
+  };
+
+  // Computed data for the Print Ledger formatted report
+  const printLedgerData = React.useMemo(() => {
+    let list: {
+      name: string;
+      households: number;
+      payout: number;
+    }[] = [];
+
+    let sectionTitle = 'PENDING PAYOUT';
+    let reportSubtitle = 'Patient Care Units — Pending Payout Report';
+    let rateLabel = `Base Rate per Household: PHP ${pendingBaseRate.toFixed(2)}`;
+    let householdLabel = 'TOTAL PENDING HOUSEHOLDS';
+    let payoutLabel = 'TOTAL PENDING PAYOUT';
+
+    if (printReportType === 'pending') {
+      sectionTitle = 'PENDING PAYOUT';
+      reportSubtitle = 'Patient Care Units — Pending Payout Report';
+      rateLabel = `Base Rate per Household: PHP ${pendingBaseRate.toFixed(2)}`;
+      householdLabel = 'TOTAL PENDING HOUSEHOLDS';
+      payoutLabel = 'TOTAL PENDING PAYOUT';
+      list = submittersLedger
+        .filter(sub => sub.pendingCount > 0)
+        .map(sub => ({
+          name: sub.name,
+          households: sub.pendingCount,
+          payout: sub.pendingSalary
+        }))
+        .sort((a, b) => b.households - a.households || b.payout - a.payout);
+    } else if (printReportType === 'verified') {
+      sectionTitle = 'VERIFIED PAYOUT';
+      reportSubtitle = 'Patient Care Units — Verified Payout Report';
+      rateLabel = `Base Rate per Household: PHP ${baseRate.toFixed(2)}`;
+      householdLabel = 'TOTAL VERIFIED HOUSEHOLDS';
+      payoutLabel = 'TOTAL VERIFIED PAYOUT';
+      list = submittersLedger
+        .filter(sub => sub.verifiedCount > 0)
+        .map(sub => ({
+          name: sub.name,
+          households: sub.verifiedCount,
+          payout: sub.verifiedSalary
+        }))
+        .sort((a, b) => b.households - a.households || b.payout - a.payout);
+    } else {
+      sectionTitle = 'COMBINED PCU PAYOUT';
+      reportSubtitle = 'Patient Care Units — Total Contributor Payroll Ledger';
+      rateLabel = `Base Rates: Verified PHP ${baseRate.toFixed(2)} | Pending PHP ${pendingBaseRate.toFixed(2)}`;
+      householdLabel = 'TOTAL SUBMITTED HOUSEHOLDS';
+      payoutLabel = 'TOTAL COMPUTED PAYOUT';
+      list = submittersLedger
+        .filter(sub => (sub.verifiedCount + sub.pendingCount) > 0)
+        .map(sub => ({
+          name: sub.name,
+          households: sub.verifiedCount + sub.pendingCount,
+          payout: sub.totalSalary
+        }))
+        .sort((a, b) => b.households - a.households || b.payout - a.payout);
+    }
+
+    const totalHouseholds = list.reduce((sum, item) => sum + item.households, 0);
+    const totalPayout = list.reduce((sum, item) => sum + item.payout, 0);
+
+    return {
+      list,
+      sectionTitle,
+      reportSubtitle,
+      rateLabel,
+      householdLabel,
+      payoutLabel,
+      totalHouseholds,
+      totalPayout
+    };
+  }, [submittersLedger, printReportType, pendingBaseRate, baseRate]);
+
+  // Execute High-Fidelity Print formatted identically to official Saint Francis Clinic PDF
+  const handleExecutePrintLedger = () => {
+    const printFrame = document.createElement('iframe');
+    printFrame.style.position = 'fixed';
+    printFrame.style.top = '-9999px';
+    printFrame.style.left = '-9999px';
+    printFrame.style.width = '0';
+    printFrame.style.height = '0';
+    printFrame.style.border = 'none';
+    document.body.appendChild(printFrame);
+
+    const formattedDate = formatPrintDate(new Date());
+
+    const rowsHtml = printLedgerData.list.map(item => `
+      <tr>
+        <td class="col-sub">${item.name}</td>
+        <td class="col-hh">${item.households}</td>
+        <td class="col-pay">PHP ${item.payout.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+      </tr>
+    `).join('');
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>PCU Files Ledger - ${printLedgerData.sectionTitle}</title>
+        <style>
+          @page {
+            size: portrait;
+            margin: 15mm 18mm;
+          }
+          * { box-sizing: border-box; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #0f172a;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .ledger-page {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 8px 0;
+          }
+          .clinic-brand {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.32em;
+            color: #475569;
+            text-align: center;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+          }
+          .main-title {
+            font-size: 26px;
+            font-weight: 800;
+            color: #0f172a;
+            text-align: center;
+            margin: 0 0 6px 0;
+            letter-spacing: -0.02em;
+          }
+          .subtitle {
+            font-size: 13px;
+            font-weight: 500;
+            color: #475569;
+            text-align: center;
+            margin: 0 0 28px 0;
+          }
+          .meta-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            font-weight: 500;
+            color: #334155;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e2e8f0;
+            margin-bottom: 24px;
+          }
+          .section-title {
+            font-size: 12.5px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            color: #0f172a;
+            text-transform: uppercase;
+            margin-bottom: 14px;
+          }
+          .summary-cards {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 28px;
+          }
+          .summary-card {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 16px 20px;
+            background: #ffffff;
+          }
+          .card-label {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: #64748b;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+          }
+          .card-value {
+            font-size: 28px;
+            font-weight: 800;
+            color: #0f172a;
+            margin: 0;
+            line-height: 1.2;
+          }
+          .card-value.payout {
+            color: #059669;
+          }
+          .ledger-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 32px;
+          }
+          .ledger-table th {
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: #64748b;
+            padding: 12px 4px;
+            border-bottom: 1px solid #cbd5e1;
+          }
+          .ledger-table th.col-sub {
+            text-align: left;
+            width: 45%;
+          }
+          .ledger-table th.col-hh {
+            text-align: left;
+            width: 25%;
+            padding-left: 8px;
+          }
+          .ledger-table th.col-pay {
+            text-align: right;
+            width: 30%;
+            padding-right: 4px;
+          }
+          .ledger-table td {
+            padding: 11px 4px;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 12px;
+          }
+          .ledger-table td.col-sub {
+            font-weight: 600;
+            color: #0f172a;
+            text-align: left;
+          }
+          .ledger-table td.col-hh {
+            font-weight: 500;
+            color: #475569;
+            text-align: left;
+            padding-left: 8px;
+          }
+          .ledger-table td.col-pay {
+            font-weight: 700;
+            color: #059669;
+            text-align: right;
+            padding-right: 4px;
+          }
+          .ledger-footer {
+            font-size: 10.5px;
+            color: #94a3b8;
+            text-align: center;
+            padding-top: 20px;
+            margin-top: 24px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="ledger-page">
+          <div class="clinic-brand">S A I N T &nbsp; F R A N C I S &nbsp; C L I N I C &nbsp; ( S F C )</div>
+          <h1 class="main-title">PCU Files Ledger</h1>
+          <div class="subtitle">${printLedgerData.reportSubtitle}</div>
+
+          <div class="meta-bar">
+            <span>${printLedgerData.rateLabel}</span>
+            <span>Generated: ${formattedDate}</span>
+          </div>
+
+          <div class="section-title">${printLedgerData.sectionTitle}</div>
+
+          <div class="summary-cards">
+            <div class="summary-card">
+              <div class="card-label">${printLedgerData.householdLabel}</div>
+              <div class="card-value">${printLedgerData.totalHouseholds}</div>
+            </div>
+            <div class="summary-card">
+              <div class="card-label">${printLedgerData.payoutLabel}</div>
+              <div class="card-value payout">PHP ${printLedgerData.totalPayout.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            </div>
+          </div>
+
+          <table class="ledger-table">
+            <thead>
+              <tr>
+                <th class="col-sub">SUBMITTED BY</th>
+                <th class="col-hh">HOUSEHOLDS SUBMITTED</th>
+                <th class="col-pay">TOTAL PAYOUT</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml || '<tr><td colspan="3" style="text-align:center; padding:24px; color:#94a3b8;">No submissions recorded.</td></tr>'}
+            </tbody>
+          </table>
+
+          <div class="ledger-footer">
+            Saint Francis Clinic — PCU Files Ledger &middot; Generated ${formattedDate}
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const doc = printFrame.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(html);
+      doc.close();
+      setTimeout(() => {
+        printFrame.contentWindow?.focus();
+        printFrame.contentWindow?.print();
+        setTimeout(() => {
+          if (document.body.contains(printFrame)) {
+            document.body.removeChild(printFrame);
+          }
+        }, 2000);
+      }, 300);
+    } else {
+      window.print();
+    }
+  };
+
   // Filtered records for Grid when inside a folder or in all-grid mode
   const currentFolderData = React.useMemo(() => {
     if (!selectedFolder) return null;
@@ -1549,16 +2083,20 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
   // Records belonging to the currently selected folder (or all current tab records if no folder selected)
   const folderRecords = React.useMemo(() => {
-    if (!selectedFolder) return currentTabRecords;
-    if (currentFolderData && currentFolderData.records && currentFolderData.records.length > 0) {
-      return currentFolderData.records;
+    let records: UploadedPcuRecord[] = [];
+    if (!selectedFolder) {
+      records = currentTabRecords;
+    } else if (currentFolderData && currentFolderData.records && currentFolderData.records.length > 0) {
+      records = currentFolderData.records;
+    } else {
+      const targetKey = normalizeBarangayNameKey(selectedFolder);
+      records = currentTabRecords.filter(r => 
+        normalizeBarangayNameKey(r.barangay) === targetKey ||
+        (r.barangay && r.barangay.toLowerCase().trim() === selectedFolder.toLowerCase().trim())
+      );
     }
-    const targetKey = normalizeBarangayNameKey(selectedFolder);
-    return currentTabRecords.filter(r => 
-      normalizeBarangayNameKey(r.barangay) === targetKey ||
-      (r.barangay && r.barangay.toLowerCase().trim() === selectedFolder.toLowerCase().trim())
-    );
-  }, [selectedFolder, currentFolderData, currentTabRecords]);
+    return sortTabRecords(records, activeTab);
+  }, [selectedFolder, currentFolderData, currentTabRecords, activeTab]);
 
   // Filtered records for Grid (search and barangay filters)
   const filteredRecords = React.useMemo(() => {
@@ -1805,46 +2343,69 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     const isVerified = s === 'VERIFIED';
     const isPending = s === 'PENDING';
     const isUpdated = s === 'UPDATED';
+    const isReturned = s === 'RETURNED';
 
     if (isFiles) {
       return (
-        <div className="flex items-center gap-1.5 pt-1">
+        <div className="space-y-1.5 pt-1">
           {isMasterAdmin ? (
             <>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setVerifyTarget(record);
-                }}
-                disabled={verifyingId === record.id}
-                className="flex-1 py-2 px-2 min-h-[38px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-[11px] font-black shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
-                title="Verify submission: 1 Credit × Verified Base Rate credited to submitter"
-              >
-                {verifyingId === record.id ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                )}
-                <span>Verify</span>
-              </button>
+              {/* Verify & Pending Action Buttons */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setVerifyTarget(record);
+                  }}
+                  disabled={verifyingId === record.id}
+                  className="flex-1 py-2 px-2 min-h-[38px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-[11px] font-black shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                  title="Verify submission: 1 Credit × Verified Base Rate credited to submitter"
+                >
+                  {verifyingId === record.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  )}
+                  <span>Verify</span>
+                </button>
 
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleMoveToPendingRecord(record);
+                  }}
+                  disabled={verifyingId === record.id}
+                  className="flex-1 py-2 px-2 min-h-[38px] bg-amber-500 hover:bg-amber-600 active:scale-98 text-white rounded-xl text-[11px] font-black shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                  title="Move to Pending: 1 Credit × Pending Base Rate credited to submitter"
+                >
+                  {verifyingId === record.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Clock className="w-3.5 h-3.5" />
+                  )}
+                  <span>Pending</span>
+                </button>
+              </div>
+
+              {/* Return Button Directly Below Verify & Pending */}
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleMoveToPendingRecord(record);
+                  handleReturnRecord(record);
                 }}
                 disabled={verifyingId === record.id}
-                className="flex-1 py-2 px-2 min-h-[38px] bg-amber-500 hover:bg-amber-600 active:scale-98 text-white rounded-xl text-[11px] font-black shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
-                title="Move to Pending: 1 Credit × Pending Base Rate credited to submitter"
+                className="w-full py-2 px-2 min-h-[38px] bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 active:scale-98 text-white rounded-xl text-[11px] font-black shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
+                title="Return file: Mark as Returned and make visible on the Returned page for the submitting user"
               >
                 {verifyingId === record.id ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 ) : (
-                  <Clock className="w-3.5 h-3.5" />
+                  <RotateCcw className="w-3.5 h-3.5" />
                 )}
-                <span>Pending</span>
+                <span>Return</span>
               </button>
             </>
           ) : (
@@ -1853,6 +2414,17 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               <span>Files Submitted</span>
             </div>
           )}
+        </div>
+      );
+    }
+
+    if (isReturned) {
+      return (
+        <div className="flex items-center justify-between gap-2 pt-1">
+          <span className="flex-1 py-2 px-2 min-h-[38px] bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-[11px] font-black flex items-center justify-center gap-1.5">
+            <RotateCcw className="w-3.5 h-3.5 text-rose-600" />
+            <span>Returned</span>
+          </span>
         </div>
       );
     }
@@ -2445,32 +3017,32 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                     <Folder className="w-6 h-6" />
                                   </div>
 
-                                  <div className="text-right space-y-1">
-                                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-black ${
-                                      hasFiles 
-                                        ? activeTab === 'verified'
-                                          ? 'bg-emerald-50 text-emerald-800 border border-emerald-200/60'
-                                          : 'bg-amber-50 text-amber-800 border border-amber-200/60'
-                                        : 'bg-slate-100 text-slate-400'
-                                    }`}>
-                                      <ImageIcon className="w-3 h-3" />
-                                      <span>{folder.totalFiles} {folder.totalFiles === 1 ? 'Attachment' : 'Attachments'}</span>
-                                    </span>
-                                    <span className="block text-[11px] font-bold text-slate-400">
-                                      {folder.totalSubmissions} {folder.totalSubmissions === 1 ? 'Pending File' : 'Pending Files'}
+                                  <div className="text-right">
+                                    {/* Highlight Badge: Pending (Warm Amber highlight) */}
+                                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-black bg-amber-500/15 text-amber-900 border border-amber-300 shadow-2xs">
+                                      <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                      <span>{folder.totalSubmissions} Pending</span>
                                     </span>
                                   </div>
                                 </div>
 
-                                {/* Barangay Name & Info */}
-                                <div className="space-y-1">
-                                  <h3 className="text-base font-black text-slate-900 group-hover:text-emerald-700 transition-colors flex items-center gap-1.5">
-                                    <span>{folder.name}</span>
+                                {/* Barangay Name & Today Count Display */}
+                                <div className="space-y-1.5">
+                                  <h3 className="text-base font-black text-slate-900 group-hover:text-emerald-700 transition-colors flex items-center justify-between gap-1.5">
+                                    <span className="truncate">{folder.name}</span>
                                   </h3>
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="font-black text-blue-700 bg-blue-50/80 px-2 py-0.5 rounded-md border border-blue-100">
+                                      Today: {folder.todayCount}
+                                    </span>
+                                    <span className="text-[11px] text-teal-700 font-bold bg-teal-50/80 px-2 py-0.5 rounded-md border border-teal-100">
+                                      {folder.totalFiles} {folder.totalFiles === 1 ? 'Attachment' : 'Attachments'}
+                                    </span>
+                                  </div>
                                   <p className="text-[11px] text-slate-400 line-clamp-1">
                                     {hasFiles 
                                       ? `Staff: ${Array.from(folder.submitters).slice(0, 2).join(', ')}${folder.submitters.size > 2 ? '...' : ''}` 
-                                      : `No ${activeTab === 'verified' ? 'verified' : 'pending'} PCU files`}
+                                      : `No PCU files`}
                                   </p>
                                 </div>
                               </div>
@@ -2737,11 +3309,14 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         </div>
                         <h2 className="text-lg sm:text-2xl font-black text-slate-900 flex flex-wrap items-center gap-2">
                           <span>{selectedFolder}</span>
+                          <span className="text-[11px] sm:text-xs font-black px-2.5 py-1 rounded-full bg-blue-50 text-blue-800 border border-blue-200">
+                            Today: {currentFolderData?.todayCount || 0}
+                          </span>
                           <span className="text-[11px] sm:text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200">
                             {currentFolderData?.totalFiles || folderRecords.reduce((sum, r) => sum + (r.filesCount || (r.uploadedFiles ? r.uploadedFiles.length : 1)), 0)} Attachments
                           </span>
-                          <span className="text-[11px] sm:text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                            {folderRecords.length} {folderRecords.length === 1 ? 'Pending File' : 'Pending Files'}
+                          <span className="text-[11px] sm:text-xs font-bold px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                            {folderRecords.length} Pending
                           </span>
                         </h2>
                       </div>
@@ -2758,7 +3333,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         >
                           {barangayFolders.map((f) => (
                             <option key={f.name} value={f.name}>
-                              Folder: {f.name} ({f.totalFiles} files)
+                              Folder: {f.name} ({f.totalFiles} {f.totalFiles === 1 ? 'attachment' : 'attachments'})
                             </option>
                           ))}
                         </select>
@@ -3031,11 +3606,21 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-3 shrink-0 w-full sm:w-auto">
+                  <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 shrink-0 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={() => setShowPrintLedgerModal(true)}
+                      className="flex-1 sm:flex-initial neu-btn-white inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl sm:rounded-2xl text-emerald-950 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer min-h-[44px] hover:text-emerald-700 shadow-md"
+                      title="Print PCU Files Ledger (Official Formatted Report)"
+                    >
+                      <Printer className="w-4 h-4 text-emerald-600" />
+                      <span>Print Ledger</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={exportLedgerToCsv}
-                      className="w-full sm:w-auto neu-btn-green inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl sm:rounded-2xl text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer min-h-[44px]"
+                      className="flex-1 sm:flex-initial neu-btn-green inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl sm:rounded-2xl text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer min-h-[44px]"
                     >
                       <Download className="w-4 h-4" />
                       <span>Export Payroll CSV</span>
@@ -3306,9 +3891,20 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     </div>
                   </div>
 
-                  <span className="text-xs font-bold text-slate-500 self-start sm:self-auto">
-                    {submittersLedger.length} Registered Submitters
-                  </span>
+                  <div className="flex items-center gap-2.5 self-start sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setShowPrintLedgerModal(true)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl neu-btn-white text-emerald-950 font-bold text-xs transition-all cursor-pointer shadow-xs hover:text-emerald-700 min-h-[38px]"
+                      title="Print PCU Files Ledger report"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>Print Ledger</span>
+                    </button>
+                    <span className="text-xs font-bold text-slate-500">
+                      {submittersLedger.length} Registered Submitters
+                    </span>
+                  </div>
                 </div>
 
                 {/* Mobile Cards View (sm/xs screens) */}
@@ -4057,6 +4653,24 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     )
                   )}
 
+                  {/* Return Button inside Modal Header Actions */}
+                  {isMasterAdmin && selectedRecord.status !== 'RETURNED' && (
+                    <button
+                      type="button"
+                      onClick={() => handleReturnRecord(selectedRecord)}
+                      disabled={verifyingId === selectedRecord.id}
+                      className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] bg-rose-600 hover:bg-rose-500 active:scale-95 text-white rounded-xl text-xs font-black transition-all shadow-md cursor-pointer disabled:opacity-50"
+                      title="Return submission to original submitter"
+                    >
+                      {verifyingId === selectedRecord.id ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <RotateCcw className="w-3.5 h-3.5" />
+                      )}
+                      <span>Return</span>
+                    </button>
+                  )}
+
                   {/* Delete Entire Submission Button (Master Admin only) */}
                   {isMasterAdmin && (
                     <button
@@ -4769,6 +5383,189 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 >
                   Close Log
                 </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* PRINT PCU FILES LEDGER MODAL (MATCHING OFFICIAL CLINIC PDF FORMAT)        */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {showPrintLedgerModal && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-hidden">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 16 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden border border-slate-200"
+            >
+              {/* Modal Header Toolbar */}
+              <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50/90 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center shadow-xs">
+                    <Printer className="w-5 h-5 text-emerald-700" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-slate-900 text-base sm:text-lg">
+                      Print PCU Files Ledger
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Official formatted PDF & Print preview
+                    </p>
+                  </div>
+                </div>
+
+                {/* Report Type Selector Pills */}
+                <div className="flex items-center gap-1.5 bg-slate-200/70 p-1 rounded-xl self-start sm:self-auto text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setPrintReportType('pending')}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      printReportType === 'pending'
+                        ? 'bg-white text-emerald-950 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Pending Payout
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrintReportType('verified')}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      printReportType === 'verified'
+                        ? 'bg-white text-emerald-950 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Verified Payout
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrintReportType('all')}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      printReportType === 'all'
+                        ? 'bg-white text-emerald-950 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Combined
+                  </button>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={handleExecutePrintLedger}
+                    className="neu-btn-green inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-md"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Document</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowPrintLedgerModal(false)}
+                    className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                    title="Close Print Preview"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Scrollable Printable Document Preview (Designed exactly as the PDF) */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-slate-100">
+                <div className="bg-white rounded-xl shadow-lg border border-slate-200/80 p-6 sm:p-10 md:p-14 max-w-2xl mx-auto space-y-6 text-slate-800">
+                  {/* Header Subtitle / Clinic Branding */}
+                  <div className="text-center font-semibold text-[11px] sm:text-xs tracking-[0.3em] text-slate-500 uppercase">
+                    S A I N T &nbsp; F R A N C I S &nbsp; C L I N I C &nbsp; ( S F C )
+                  </div>
+
+                  {/* Document Title */}
+                  <div className="text-center space-y-1">
+                    <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+                      PCU Files Ledger
+                    </h2>
+                    <p className="text-xs sm:text-sm font-medium text-slate-500">
+                      {printLedgerData.reportSubtitle}
+                    </p>
+                  </div>
+
+                  {/* Metadata Bar */}
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-600 border-b border-slate-200 pb-3 pt-2">
+                    <span>{printLedgerData.rateLabel}</span>
+                    <span>Generated: {formatPrintDate(new Date())}</span>
+                  </div>
+
+                  {/* Section Title */}
+                  <div className="text-xs sm:text-sm font-black uppercase tracking-wider text-slate-900 pt-1">
+                    {printLedgerData.sectionTitle}
+                  </div>
+
+                  {/* Two KPI Summary Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="border border-slate-200 rounded-xl p-4 bg-white">
+                      <div className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                        {printLedgerData.householdLabel}
+                      </div>
+                      <div className="text-2xl sm:text-3xl font-black text-slate-900">
+                        {printLedgerData.totalHouseholds}
+                      </div>
+                    </div>
+                    <div className="border border-slate-200 rounded-xl p-4 bg-white">
+                      <div className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                        {printLedgerData.payoutLabel}
+                      </div>
+                      <div className="text-2xl sm:text-3xl font-black text-emerald-600">
+                        PHP {printLedgerData.totalPayout.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Ledger Table */}
+                  <div className="pt-2">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-500 uppercase tracking-wider text-[10.5px] font-bold">
+                          <th className="py-3 text-left w-1/2">SUBMITTED BY</th>
+                          <th className="py-3 text-left w-1/4 pl-2">HOUSEHOLDS SUBMITTED</th>
+                          <th className="py-3 text-right w-1/4">TOTAL PAYOUT</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {printLedgerData.list.length === 0 ? (
+                          <tr>
+                            <td colSpan={3} className="py-8 text-center text-slate-400 font-medium">
+                              No submissions found for this report.
+                            </td>
+                          </tr>
+                        ) : (
+                          printLedgerData.list.map((item, idx) => (
+                            <tr key={`${item.name}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="py-3 text-slate-900 font-semibold text-xs sm:text-[13px]">
+                                {item.name}
+                              </td>
+                              <td className="py-3 text-slate-600 font-medium pl-2 text-xs sm:text-[13px]">
+                                {item.households}
+                              </td>
+                              <td className="py-3 text-right font-bold text-emerald-600 text-xs sm:text-[13px]">
+                                PHP {item.payout.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Centered Document Footer */}
+                  <div className="text-[11px] text-slate-400 text-center pt-6 border-t border-slate-100">
+                    Saint Francis Clinic — PCU Files Ledger &middot; Generated {formatPrintDate(new Date())}
+                  </div>
+                </div>
               </div>
             </motion.div>
           </div>

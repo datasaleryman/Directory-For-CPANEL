@@ -93,6 +93,8 @@ import {
   getPcuSettlements,
   recordPcuSettlement,
   deletePcuSettlement,
+  getReturnedPcuRecords,
+  getBarangayTodayCounts,
   getSubmittedExistAccounts,
   addOrUpdateSubmittedExistAccount,
   updateSubmittedExistAccountStatus,
@@ -1051,7 +1053,7 @@ export async function getApp(httpServer?: http.Server) {
         return res.status(403).json({ error: 'Access Denied: Only Master Admin can modify PCU statuses or verification.' });
       }
 
-      const { id, fullName, status = 'VERIFIED' } = req.body;
+      const { id, fullName, status = 'VERIFIED', return_reason } = req.body;
 
       if (!id && !fullName) {
         return res.status(400).json({ error: 'Identification (id or fullName) is required to update status.' });
@@ -1061,13 +1063,78 @@ export async function getApp(httpServer?: http.Server) {
         id,
         fullName,
         status,
-        username
+        username,
+        returned_by_id: username,
+        return_reason: return_reason || ''
       });
 
       res.json(result);
     } catch (err: any) {
       console.error('[Update PCU Submission API Error]:', err);
       res.status(400).json({ error: err.message || 'Failed to update PCU status.' });
+    }
+  });
+
+  // Dedicated Return endpoint: Admin returns a file from Submit PCU -> Files
+  app.post('/api/pcu/return', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const role = (req.user?.role || '').toUpperCase().trim();
+      const isMasterAdmin = role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || role === 'ADMIN' || username.toLowerCase() === 'admin';
+
+      if (!isMasterAdmin) {
+        return res.status(403).json({ error: 'Access Denied: Only administrators can return PCU submissions.' });
+      }
+
+      const { id, fullName, return_reason } = req.body;
+
+      if (!id && !fullName) {
+        return res.status(400).json({ error: 'Identification (id or fullName) is required to return file.' });
+      }
+
+      const result = await updatePcuSubmissionStatus({
+        id,
+        fullName,
+        status: 'RETURNED',
+        username,
+        returned_by_id: username,
+        return_reason: return_reason || ''
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('[Return PCU Submission API Error]:', err);
+      res.status(400).json({ error: err.message || 'Failed to return PCU submission.' });
+    }
+  });
+
+  // User-Specific Returned Files API: strictly filtered for authenticated user's account ID
+  app.get('/api/pcu/returned', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || '';
+      if (!username) {
+        return res.status(401).json({ error: 'User session required.' });
+      }
+
+      const role = (req.user?.role || '').toUpperCase().trim();
+      const isSuperUser = role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN';
+
+      // Strictly filtered at database/backend level by the submitting user's account ID (strictly user-specific)
+      const records = await getReturnedPcuRecords(username, isSuperUser);
+      res.json(records);
+    } catch (err: any) {
+      console.error('[Get Returned PCU API Error]:', err);
+      res.status(500).json({ error: err.message || 'Failed to fetch returned files.' });
+    }
+  });
+
+  // Today's Submission Counts per Barangay (Asia/Manila UTC+8 timezone)
+  app.get('/api/pcu/barangay-today-counts', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const data = getBarangayTodayCounts();
+      res.json(data);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to calculate today submission counts.' });
     }
   });
 
