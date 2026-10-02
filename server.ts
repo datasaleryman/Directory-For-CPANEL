@@ -94,6 +94,7 @@ import {
   recordPcuSettlement,
   deletePcuSettlement,
   getReturnedPcuRecords,
+  resubmitPcuSubmission,
   getBarangayTodayCounts,
   getSubmittedExistAccounts,
   addOrUpdateSubmittedExistAccount,
@@ -1080,13 +1081,13 @@ export async function getApp(httpServer?: http.Server) {
     try {
       const username = req.user?.username || 'Admin';
       const role = (req.user?.role || '').toUpperCase().trim();
-      const isMasterAdmin = role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || role === 'ADMIN' || username.toLowerCase() === 'admin';
+      const isMasterAdmin = role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || role === 'ADMIN' || role === 'ADMINISTRATOR' || username.toLowerCase() === 'admin';
 
       if (!isMasterAdmin) {
         return res.status(403).json({ error: 'Access Denied: Only administrators can return PCU submissions.' });
       }
 
-      const { id, fullName, return_reason } = req.body;
+      const { id, fullName, return_reason, submitter, submitter_id } = req.body;
 
       if (!id && !fullName) {
         return res.status(400).json({ error: 'Identification (id or fullName) is required to return file.' });
@@ -1098,7 +1099,8 @@ export async function getApp(httpServer?: http.Server) {
         status: 'RETURNED',
         username,
         returned_by_id: username,
-        return_reason: return_reason || ''
+        return_reason: return_reason || '',
+        submitter: submitter || submitter_id || ''
       });
 
       res.json(result);
@@ -1108,7 +1110,7 @@ export async function getApp(httpServer?: http.Server) {
     }
   });
 
-  // User-Specific Returned Files API: strictly filtered for authenticated user's account ID
+  // User-Specific Returned Files API: strictly filtered for authenticated user's account ID (or all for admins)
   app.get('/api/pcu/returned', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const username = req.user?.username || '';
@@ -1117,7 +1119,7 @@ export async function getApp(httpServer?: http.Server) {
       }
 
       const role = (req.user?.role || '').toUpperCase().trim();
-      const isSuperUser = role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN';
+      const isSuperUser = role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || role === 'ADMIN' || role === 'ADMINISTRATOR' || username.toLowerCase() === 'admin';
 
       // Strictly filtered at database/backend level by the submitting user's account ID (strictly user-specific)
       const records = await getReturnedPcuRecords(username, isSuperUser);
@@ -1125,6 +1127,34 @@ export async function getApp(httpServer?: http.Server) {
     } catch (err: any) {
       console.error('[Get Returned PCU API Error]:', err);
       res.status(500).json({ error: err.message || 'Failed to fetch returned files.' });
+    }
+  });
+
+  // Resubmit a returned PCU submission: Moves from Returned back to Submit PCU (Files tab)
+  app.post('/api/pcu/resubmit', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Staff';
+      const { id, contactId, fullName, barangay, purok, contact_number, files } = req.body;
+
+      if (!fullName || typeof fullName !== 'string' || !fullName.trim()) {
+        return res.status(400).json({ error: 'Patient full name is required for resubmission.' });
+      }
+
+      const result = await resubmitPcuSubmission({
+        id,
+        contactId,
+        fullName: fullName.trim(),
+        barangay,
+        purok,
+        contact_number,
+        files: Array.isArray(files) ? files : [],
+        username
+      });
+
+      res.json(result);
+    } catch (err: any) {
+      console.error('[Resubmit PCU API Error]:', err);
+      res.status(400).json({ error: err.message || 'Failed to resubmit PCU submission.' });
     }
   });
 

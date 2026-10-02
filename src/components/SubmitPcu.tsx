@@ -209,6 +209,51 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     return () => clearInterval(timer);
   }, []);
 
+  const [serverDailyCount, setServerDailyCount] = useState<number | null>(null);
+
+  // Persistent daily submitted patient keys for the current day (Asia/Manila time)
+  // Automatically cleared at 12:00 AM midnight reset without decreasing when contacts are returned or status updated
+  const [dailySubmittedKeys, setDailySubmittedKeys] = useState<string[]>(() => {
+    try {
+      const todayManila = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+      const savedDate = localStorage.getItem('pcu_daily_counter_date');
+      if (savedDate === todayManila) {
+        const raw = localStorage.getItem('pcu_daily_counter_keys');
+        return raw ? JSON.parse(raw) : [];
+      }
+    } catch {}
+    return [];
+  });
+
+  // Check midnight reset whenever nowTick updates
+  useEffect(() => {
+    try {
+      const todayManila = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(nowTick));
+      const savedDate = localStorage.getItem('pcu_daily_counter_date');
+      if (savedDate && savedDate !== todayManila) {
+        localStorage.setItem('pcu_daily_counter_date', todayManila);
+        localStorage.setItem('pcu_daily_counter_keys', JSON.stringify([]));
+        setDailySubmittedKeys([]);
+        setServerDailyCount(0);
+      }
+    } catch {}
+  }, [nowTick]);
+
+  const recordPatientSubmittedToday = (name: string, brgy: string = '') => {
+    if (!name || !name.trim()) return;
+    const key = `${name.trim().toLowerCase()}___${(brgy || '').trim().toLowerCase()}`;
+    setDailySubmittedKeys(prev => {
+      if (prev.includes(key)) return prev;
+      const updated = [...prev, key];
+      try {
+        const todayManila = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
+        localStorage.setItem('pcu_daily_counter_date', todayManila);
+        localStorage.setItem('pcu_daily_counter_keys', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  };
+
   // History Log state (clickable Files History counter)
   const [pcuHistory, setPcuHistory] = useState<PcuHistoryItem[]>([]);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState<boolean>(false);
@@ -262,6 +307,10 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const [showPrintLedgerModal, setShowPrintLedgerModal] = useState<boolean>(false);
   const [printReportType, setPrintReportType] = useState<'pending' | 'verified' | 'all'>('pending');
 
+  // Return PCU Submission Confirmation Modal State
+  const [returnTarget, setReturnTarget] = useState<UploadedPcuRecord | null>(null);
+  const [returnReasonInput, setReturnReasonInput] = useState<string>('');
+
   // Security guard: If a non-master admin somehow has activeTab === 'ledger', force back to 'files'
   useEffect(() => {
     if (!isMasterAdmin && activeTab === 'ledger') {
@@ -305,7 +354,13 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         const data = await res.json();
         const contactsList = Array.isArray(data.contacts) ? data.contacts : [];
         
-        const formatted: UploadedPcuRecord[] = contactsList.map((item: any, idx: number) => {
+        // Exclude any returned records from Submit PCU - they are transferred out to Returned page
+        const activeContacts = contactsList.filter((item: any) => {
+          const raw = ((item.status || item.pcu_status || '') as string).toUpperCase().trim();
+          return raw !== 'RETURNED';
+        });
+
+        const formatted: UploadedPcuRecord[] = activeContacts.map((item: any, idx: number) => {
           let files: UploadedFileItem[] = [];
           if (Array.isArray(item.uploadedFiles) && item.uploadedFiles.length > 0) {
             files = item.uploadedFiles.map((f: any) => ({
@@ -367,7 +422,11 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         if (fallbackRes.ok) {
           const fallbackData = await fallbackRes.json();
           const rawList = Array.isArray(fallbackData) ? fallbackData : (fallbackData.updates || []);
-          const formatted: UploadedPcuRecord[] = rawList.map((item: any, idx: number) => {
+          const activeUpdates = rawList.filter((item: any) => {
+            const raw = ((item.status || '') as string).toUpperCase().trim();
+            return raw !== 'RETURNED';
+          });
+          const formatted: UploadedPcuRecord[] = activeUpdates.map((item: any, idx: number) => {
             const fileItem: UploadedFileItem = {
               name: item.fileName || 'PCU Document',
               url: item.fileData || '',
@@ -1277,35 +1336,22 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       const nowIso = new Date().toISOString();
       const adminName = currentUser?.username || 'Admin';
 
-      // Update state locally so record status changes to RETURNED without deleting original record
-      setUploadedRecords(prev => prev.map(item => {
+      // Immediately transfer record out of Submit PCU records list so it is removed from Submit PCU
+      setUploadedRecords(prev => prev.filter(item => {
         const isMatch = (item.id && record.id && item.id === record.id) ||
           (item.fullName && record.fullName && item.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim());
-        if (isMatch) {
-          return {
-            ...item,
-            status: 'RETURNED',
-            returned_at: nowIso,
-            returned_by: adminName,
-            returned_by_id: adminName,
-            return_reason: returnReason
-          };
-        }
-        return item;
+        return !isMatch;
       }));
 
-      if (selectedRecord && (selectedRecord.id === record.id || selectedRecord.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim())) {
-        setSelectedRecord(prev => prev ? {
-          ...prev,
-          status: 'RETURNED',
-          returned_at: nowIso,
-          returned_by: adminName,
-          returned_by_id: adminName,
-          return_reason: returnReason
-        } : null);
+      // Close the detail modal if this record was open
+      if (selectedRecord && (selectedRecord.id === record.id || selectedRecord.fullName?.toLowerCase().trim() === record.fullName?.toLowerCase().trim())) {
+        setSelectedRecord(null);
       }
 
-      showToast(`Record "${record.fullName}" has been returned. Visible only on the submitter's Returned page.`, 'success');
+      setReturnTarget(null);
+      setReturnReasonInput('');
+
+      showToast(`Record "${record.fullName}" has been returned and transferred to the Returned page for resubmission.`, 'success');
       fetchHistory();
       fetchUploadedRecords();
     } catch (err: any) {
@@ -1399,7 +1445,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     return uploadedRecords
       .filter(r => {
         const s = (r.status || '').toUpperCase();
-        return s === 'FILES' || (!s && s !== 'VERIFIED' && s !== 'PENDING' && s !== 'UPDATED');
+        return s !== 'RETURNED' && (s === 'FILES' || (!s && s !== 'VERIFIED' && s !== 'PENDING' && s !== 'UPDATED'));
       })
       .sort((a, b) => getSubmittedTimestamp(b) - getSubmittedTimestamp(a));
   }, [uploadedRecords]);
@@ -2394,11 +2440,12 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleReturnRecord(record);
+                  setReturnTarget(record);
+                  setReturnReasonInput('');
                 }}
                 disabled={verifyingId === record.id}
                 className="w-full py-2 px-2 min-h-[38px] bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 active:scale-98 text-white rounded-xl text-[11px] font-black shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
-                title="Return file: Mark as Returned and make visible on the Returned page for the submitting user"
+                title="Return file: Transfer out to Returned page for resubmission by the user"
               >
                 {verifyingId === record.id ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -4657,10 +4704,13 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   {isMasterAdmin && selectedRecord.status !== 'RETURNED' && (
                     <button
                       type="button"
-                      onClick={() => handleReturnRecord(selectedRecord)}
+                      onClick={() => {
+                        setReturnTarget(selectedRecord);
+                        setReturnReasonInput('');
+                      }}
                       disabled={verifyingId === selectedRecord.id}
                       className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[40px] bg-rose-600 hover:bg-rose-500 active:scale-95 text-white rounded-xl text-xs font-black transition-all shadow-md cursor-pointer disabled:opacity-50"
-                      title="Return submission to original submitter"
+                      title="Return submission and transfer to Returned page for resubmission"
                     >
                       {verifyingId === selectedRecord.id ? (
                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -5382,6 +5432,141 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl transition-colors cursor-pointer"
                 >
                   Close Log
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* RETURN PCU SUBMISSION CONFIRMATION MODAL                                  */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {returnTarget && (
+          <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-rose-200"
+            >
+              {/* Header */}
+              <div className="p-5 bg-gradient-to-r from-rose-600 to-rose-700 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-white/20 text-white flex items-center justify-center shadow-xs">
+                    <RotateCcw className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold font-display">Return PCU Submission</h3>
+                    <p className="text-xs text-rose-100 font-medium">
+                      Transfers file out to the Returned page for resubmission
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setReturnTarget(null)}
+                  disabled={verifyingId === returnTarget.id}
+                  className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 space-y-4 text-slate-800">
+                {/* Target Patient Card */}
+                <div className="p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Patient / Household
+                    </div>
+                    <div className="text-sm font-extrabold text-slate-900 truncate">
+                      {returnTarget.fullName}
+                    </div>
+                    <div className="text-xs font-semibold text-slate-500 flex items-center gap-1.5 mt-0.5">
+                      <Building2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>{returnTarget.barangay}</span>
+                      {returnTarget.purok && <span>• {returnTarget.purok}</span>}
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <span className="inline-block px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-200">
+                      To Be Returned
+                    </span>
+                    <div className="text-[10px] text-slate-400 font-bold mt-1">
+                      Submitted by: {returnTarget.uploadedBy || 'Staff'}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Return Reason Field */}
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Reason for Return <span className="text-slate-400 font-normal">(visible to submitter on Returned page)</span>:
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={returnReasonInput}
+                    onChange={(e) => setReturnReasonInput(e.target.value)}
+                    placeholder="e.g. Unclear or blurry image attachment, missing signature, or incorrect purok. Please upload a clear copy..."
+                    className="w-full px-3.5 py-2.5 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500 bg-white resize-none shadow-xs"
+                  />
+
+                  {/* Quick Preset Reason Tags */}
+                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                    <span className="text-[10px] font-bold text-slate-400">Presets:</span>
+                    {[
+                      'Blurry / unreadable image',
+                      'Missing required document',
+                      'Incorrect Barangay / Purok',
+                      'Incomplete household details'
+                    ].map((preset, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setReturnReasonInput(preset)}
+                        className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-rose-50 hover:text-rose-700 border border-slate-200 hover:border-rose-200 text-slate-600 transition-colors cursor-pointer"
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Explanatory Notice */}
+                <div className="p-3 bg-amber-50 border border-amber-200/80 rounded-xl text-[11px] text-amber-900 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span>
+                    When returned, this contact will immediately leave Submit PCU and be transferred to the <strong>Returned</strong> page. The submitting user can review your notes and resubmit corrected files.
+                  </span>
+                </div>
+              </div>
+
+              {/* Footer Actions */}
+              <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setReturnTarget(null)}
+                  disabled={verifyingId === returnTarget.id}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleReturnRecord(returnTarget, returnReasonInput)}
+                  disabled={verifyingId === returnTarget.id}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-rose-600 to-rose-700 hover:from-rose-500 hover:to-rose-600 active:scale-98 text-white font-extrabold text-xs shadow-md transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {verifyingId === returnTarget.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RotateCcw className="w-4 h-4" />
+                  )}
+                  <span>Confirm Return & Transfer Out</span>
                 </button>
               </div>
             </motion.div>

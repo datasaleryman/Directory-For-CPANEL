@@ -20,7 +20,10 @@ import {
   ExternalLink, 
   UploadCloud, 
   ShieldAlert,
-  FolderOpen
+  FolderOpen,
+  Loader2,
+  CheckCircle2,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReturnedPcuRecord } from '../types.js';
@@ -50,12 +53,107 @@ export const Returned: React.FC<ReturnedProps> = ({
   const [selectedBarangay, setSelectedBarangay] = useState('ALL');
   const [selectedRecord, setSelectedRecord] = useState<ReturnedPcuRecord | null>(null);
 
+  // Resubmission Modal State
+  const [resubmitTarget, setResubmitTarget] = useState<ReturnedPcuRecord | null>(null);
+  const [resubmitFullName, setResubmitFullName] = useState<string>('');
+  const [resubmitBarangay, setResubmitBarangay] = useState<string>('');
+  const [resubmitPurok, setResubmitPurok] = useState<string>('');
+  const [resubmitContactNumber, setResubmitContactNumber] = useState<string>('');
+  const [resubmitFiles, setResubmitFiles] = useState<{ fileName: string; fileData: string; size?: number }[]>([]);
+  const [isResubmitting, setIsResubmitting] = useState<boolean>(false);
+
   // File Preview Modal State
   const [previewFile, setPreviewFile] = useState<{
     name: string;
     url: string;
     type?: string;
   } | null>(null);
+
+  // Open Resubmission modal pre-populated
+  const handleOpenResubmit = (record: ReturnedPcuRecord) => {
+    setResubmitTarget(record);
+    setResubmitFullName(record.fullName || '');
+    setResubmitBarangay(record.barangay || '');
+    setResubmitPurok(record.purok || '');
+    setResubmitContactNumber(record.contactNumber || '');
+    setResubmitFiles([]);
+  };
+
+  // Staging new files for resubmission
+  const handleFilesSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const fileList = e.target.files;
+    if (!fileList || fileList.length === 0) return;
+
+    Array.from(fileList).forEach((file: File) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === 'string') {
+          setResubmitFiles(prev => [
+            ...prev,
+            {
+              fileName: file.name,
+              fileData: reader.result as string,
+              size: file.size
+            }
+          ]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleRemoveStagedFile = (index: number) => {
+    setResubmitFiles(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Submit resubmission to backend
+  const handleExecuteResubmit = async () => {
+    if (!resubmitTarget) return;
+    if (!resubmitFullName.trim()) {
+      showToast('Patient full name is required for resubmission.', 'warning');
+      return;
+    }
+
+    setIsResubmitting(true);
+    try {
+      const payload = {
+        id: resubmitTarget.id,
+        contactId: resubmitTarget.contactId,
+        fullName: resubmitFullName.trim(),
+        barangay: resubmitBarangay.trim(),
+        purok: resubmitPurok.trim(),
+        contact_number: resubmitContactNumber.trim(),
+        files: resubmitFiles
+      };
+
+      const res = await fetch('/api/pcu/resubmit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to resubmit PCU submission.');
+      }
+
+      showToast(`Record "${resubmitFullName}" has been resubmitted successfully to Submit PCU!`, 'success');
+      // Immediately remove from returned records list
+      setRecords(prev => prev.filter(r => r.id !== resubmitTarget.id));
+      if (selectedRecord && selectedRecord.id === resubmitTarget.id) {
+        setSelectedRecord(null);
+      }
+      setResubmitTarget(null);
+      setResubmitFiles([]);
+    } catch (err: any) {
+      showToast(err.message || 'Error resubmitting record', 'error');
+    } finally {
+      setIsResubmitting(false);
+    }
+  };
 
   // Fetch returned files strictly for the logged-in user
   const fetchReturnedRecords = async (silent = false) => {
@@ -402,15 +500,25 @@ export const Returned: React.FC<ReturnedProps> = ({
                   </div>
                 </div>
 
-                {/* Card Footer: View Details Modal */}
+                {/* Card Footer: Details & Resubmit Buttons */}
                 <div className="p-3 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2">
                   <button
                     type="button"
                     onClick={() => setSelectedRecord(record)}
-                    className="w-full py-2 px-3 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                    className="flex-1 py-2 px-2.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-colors"
                   >
-                    <span>View Full Details</span>
+                    <span>Details</span>
                     <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleOpenResubmit(record)}
+                    className="flex-1 py-2 px-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-sm transition-all"
+                    title="Resubmit file: Transfer back to Submit PCU"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>Resubmit</span>
                   </button>
                 </div>
               </motion.div>
@@ -560,19 +668,212 @@ export const Returned: React.FC<ReturnedProps> = ({
                 >
                   Close
                 </button>
-                {onNavigateToSubmitPcu && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedRecord(null);
-                      onNavigateToSubmitPcu();
-                    }}
-                    className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold text-xs cursor-pointer shadow-sm hover:from-emerald-500 hover:to-teal-500 transition-all flex items-center gap-1.5"
-                  >
-                    <UploadCloud className="w-3.5 h-3.5" />
-                    <span>Upload Corrected File</span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rec = selectedRecord;
+                    setSelectedRecord(null);
+                    handleOpenResubmit(rec);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-extrabold text-xs cursor-pointer shadow-sm hover:from-emerald-500 hover:to-teal-500 transition-all flex items-center gap-1.5"
+                >
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  <span>Resubmit Documentation</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* RESUBMIT PCU DOCUMENTATION MODAL                                          */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {resubmitTarget && (
+          <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-3xl shadow-2xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden border border-emerald-200"
+            >
+              {/* Header */}
+              <div className="p-5 bg-gradient-to-r from-emerald-700 to-teal-700 text-white flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-white/20 text-white flex items-center justify-center shadow-xs">
+                    <UploadCloud className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold font-display">Resubmit PCU Documentation</h3>
+                    <p className="text-xs text-emerald-100 font-medium">
+                      Correct information & upload updated files for verification
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setResubmitTarget(null)}
+                  disabled={isResubmitting}
+                  className="p-2 text-white/80 hover:text-white hover:bg-white/10 rounded-xl transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Body */}
+              <div className="p-6 overflow-y-auto space-y-4 text-slate-800">
+                {/* Feedback Note from Admin */}
+                <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-xs space-y-1">
+                  <div className="flex items-center gap-1.5 text-rose-800 font-bold">
+                    <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                    <span>Admin's Return Feedback (What to Fix):</span>
+                  </div>
+                  <p className="text-rose-950 font-medium pl-5 leading-relaxed text-[11px]">
+                    {resubmitTarget.return_reason || 'Please verify the documents and resubmit corrected files.'}
+                  </p>
+                </div>
+
+                {/* Form Fields for Patient Correction */}
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Patient Full Name <span className="text-rose-500">*</span>:
+                    </label>
+                    <input
+                      type="text"
+                      value={resubmitFullName}
+                      onChange={(e) => setResubmitFullName(e.target.value)}
+                      placeholder="e.g. Juan Dela Cruz"
+                      className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white shadow-xs font-medium"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Barangay:
+                      </label>
+                      <input
+                        type="text"
+                        value={resubmitBarangay}
+                        onChange={(e) => setResubmitBarangay(e.target.value)}
+                        placeholder="e.g. Central"
+                        className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white shadow-xs font-medium"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Purok / Zone:
+                      </label>
+                      <input
+                        type="text"
+                        value={resubmitPurok}
+                        onChange={(e) => setResubmitPurok(e.target.value)}
+                        placeholder="e.g. Purok 3"
+                        className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white shadow-xs font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Contact Number:
+                    </label>
+                    <input
+                      type="text"
+                      value={resubmitContactNumber}
+                      onChange={(e) => setResubmitContactNumber(e.target.value)}
+                      placeholder="e.g. 09123456789"
+                      className="w-full px-3.5 py-2 text-xs rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 bg-white shadow-xs font-mono font-medium"
+                    />
+                  </div>
+                </div>
+
+                {/* Upload New / Corrected Files */}
+                <div className="space-y-2 pt-2 border-t border-slate-100">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Upload Corrected or Additional Attachments:
+                    </label>
+                    <span className="text-[10px] text-slate-400 font-bold">Images, PDFs, Docs</span>
+                  </div>
+
+                  <div className="relative border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/40 rounded-2xl p-4 text-center cursor-pointer transition-colors">
+                    <input
+                      type="file"
+                      multiple
+                      accept="image/*,application/pdf"
+                      onChange={handleFilesSelected}
+                      className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                    />
+                    <UploadCloud className="w-6 h-6 text-emerald-600 mx-auto mb-1" />
+                    <p className="text-xs font-bold text-emerald-950">Click or Drag & Drop new files here</p>
+                    <p className="text-[10px] text-slate-500">Supports PNG, JPG, JPEG, PDF up to 15MB each</p>
+                  </div>
+
+                  {/* List of newly staged files */}
+                  {resubmitFiles.length > 0 && (
+                    <div className="space-y-1.5 pt-2">
+                      <div className="text-[11px] font-bold text-emerald-800 flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Ready to upload ({resubmitFiles.length} new file{resubmitFiles.length > 1 ? 's' : ''}):</span>
+                      </div>
+                      <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
+                        {resubmitFiles.map((file, idx) => (
+                          <div
+                            key={idx}
+                            className="flex items-center justify-between p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-xs"
+                          >
+                            <div className="flex items-center gap-2 truncate pr-2">
+                              <FileText className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              <span className="font-semibold text-emerald-950 truncate text-[11px]">{file.fileName}</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveStagedFile(idx)}
+                              className="p-1 text-slate-400 hover:text-rose-600 hover:bg-white rounded-lg transition-colors cursor-pointer"
+                              title="Remove file"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Existing Files indicator */}
+                  <div className="pt-2 text-[11px] text-slate-500">
+                    <span className="font-bold">Existing attachments ({resubmitTarget.uploadedFiles?.length || 1}):</span>
+                    <span className="ml-1 text-slate-400">will remain retained alongside any new documents uploaded.</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setResubmitTarget(null)}
+                  disabled={isResubmitting}
+                  className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs cursor-pointer transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteResubmit}
+                  disabled={isResubmitting}
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white font-extrabold text-xs shadow-md transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isResubmitting ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <UploadCloud className="w-4 h-4" />
+                  )}
+                  <span>Resubmit to Submit PCU</span>
+                </button>
               </div>
             </motion.div>
           </div>

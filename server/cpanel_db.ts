@@ -2657,7 +2657,11 @@ export async function fetchAllPcuSubmissionsFromCPanel(): Promise<any[]> {
  * Fetches returned PCU submissions specifically belonging to the given user account ID from MySQL.
  * Strictly enforced at database query level.
  */
-export async function fetchReturnedPcuSubmissionsFromCPanel(userIdOrUsername: string, isSuperUser: boolean = false): Promise<any[]> {
+export async function fetchReturnedPcuSubmissionsFromCPanel(
+  userIdOrUsername: string, 
+  isSuperUser: boolean = false,
+  alternateIdentifiers: string[] = []
+): Promise<any[]> {
   if (!pool || !currentStatus.connected) return [];
   try {
     const cleanId = (userIdOrUsername || '').toLowerCase().trim();
@@ -2670,11 +2674,13 @@ export async function fetchReturnedPcuSubmissionsFromCPanel(userIdOrUsername: st
        WHERE UPPER(status) = 'RETURNED' 
        ORDER BY returned_at DESC, uploaded_at DESC`;
     } else {
+      const matchTargets = Array.from(new Set([cleanId, ...alternateIdentifiers.map(i => (i || '').toLowerCase().trim()).filter(Boolean)]));
+      const placeholders = matchTargets.map(() => '?').join(', ');
       query = `SELECT * FROM pcu_submissions 
        WHERE UPPER(status) = 'RETURNED' 
-         AND (LOWER(TRIM(submitter_id)) = ? OR LOWER(TRIM(uploaded_by)) = ?)
+         AND (LOWER(TRIM(submitter_id)) IN (${placeholders}) OR LOWER(TRIM(uploaded_by)) IN (${placeholders}))
        ORDER BY returned_at DESC, uploaded_at DESC`;
-      params = [cleanId, cleanId];
+      params = [...matchTargets, ...matchTargets];
     }
 
     const [rows]: any = await pool.query(query, params);
@@ -2928,10 +2934,11 @@ export async function updatePcuStatusInCPanel(params: {
   username: string;
   returned_by_id?: string;
   return_reason?: string;
+  submitter?: string;
 }): Promise<boolean> {
   if (!pool) return false;
   try {
-    const { id, fullName, status, username, returned_by_id, return_reason } = params;
+    const { id, fullName, status, username, returned_by_id, return_reason, submitter } = params;
     const nowIso = new Date().toISOString();
     const isVerified = status === 'VERIFIED';
     const isPending = status === 'PENDING';
@@ -2953,6 +2960,10 @@ export async function updatePcuStatusInCPanel(params: {
     } else if (isReturned) {
       sqlFields += ', returned_at = ?, returned_by = ?, returned_by_id = ?, return_reason = ?';
       sqlParams.push(nowIso, username, returned_by_id || null, return_reason || null);
+      if (submitter && submitter.trim()) {
+        sqlFields += ', submitter_id = COALESCE(NULLIF(submitter_id, ""), ?), uploaded_by = COALESCE(NULLIF(uploaded_by, ""), ?)';
+        sqlParams.push(submitter.trim(), submitter.trim());
+      }
     }
 
     if (id && id !== 'new') {
@@ -2975,6 +2986,15 @@ export async function updatePcuStatusInCPanel(params: {
         );
       } catch (e: any) {
         await pool.query('UPDATE pcu_submissions SET status = ? WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))', [status, fullName.trim()]).catch(() => {});
+      }
+    }
+
+    if (isReturned) {
+      if (id && id !== 'new') {
+        await pool.query("UPDATE contacts SET status = 'RETURNED', pcu_file_url = NULL WHERE id = ?", [id]).catch(() => {});
+      }
+      if (fullName && fullName.trim()) {
+        await pool.query("UPDATE contacts SET status = 'RETURNED', pcu_file_url = NULL WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))", [fullName.trim()]).catch(() => {});
       }
     }
 
