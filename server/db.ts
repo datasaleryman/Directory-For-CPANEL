@@ -12,6 +12,7 @@ import {
   deleteUserFromCPanel,
   saveExistingAccountToCPanel,
   deleteExistingAccountFromCPanel,
+  clearAllExistingAccountsFromCPanel,
   saveBarangayToCPanel,
   deleteBarangayFromCPanel,
   saveActivityToCPanel,
@@ -455,7 +456,10 @@ export interface PcuSettlement {
   id: string;
   submitter: string;
   totalSubmissions: number;
+  verifiedCount?: number;
+  pendingCount?: number;
   baseRate: number;
+  pendingBaseRate?: number;
   totalSalary: number;
   amountPaid: number;
   paymentStatus: 'SETTLED' | 'PENDING' | string;
@@ -1318,7 +1322,10 @@ export async function recordPcuSettlement(data: {
   id?: string;
   submitter: string;
   totalSubmissions: number;
+  verifiedCount?: number;
+  pendingCount?: number;
   baseRate: number;
+  pendingBaseRate?: number;
   totalSalary: number;
   amountPaid?: number;
   paymentStatus?: string;
@@ -1330,7 +1337,10 @@ export async function recordPcuSettlement(data: {
   const id = data.id || `set_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const submitter = (data.submitter || '').trim();
   const totalSubmissions = Number(data.totalSubmissions) || 0;
+  const verifiedCount = Number(data.verifiedCount) || 0;
+  const pendingCount = Number(data.pendingCount) || 0;
   const baseRate = Number(data.baseRate) || pcuBaseRate;
+  const pendingBaseRate = Number(data.pendingBaseRate) || pcuPendingBaseRate;
   const totalSalary = Number(data.totalSalary) || (totalSubmissions * baseRate);
   const amountPaid = data.amountPaid !== undefined ? Number(data.amountPaid) : totalSalary;
   const paymentStatus = data.paymentStatus || 'SETTLED';
@@ -1343,7 +1353,10 @@ export async function recordPcuSettlement(data: {
     id,
     submitter,
     totalSubmissions,
+    verifiedCount,
+    pendingCount,
     baseRate,
+    pendingBaseRate,
     totalSalary,
     amountPaid,
     paymentStatus,
@@ -1354,9 +1367,7 @@ export async function recordPcuSettlement(data: {
     createdAt: new Date().toISOString()
   };
 
-  const existingIdx = pcuSettlementsCache.findIndex(
-    s => (s.id && s.id === id) || (s.submitter && s.submitter.toLowerCase() === submitter.toLowerCase())
-  );
+  const existingIdx = data.id ? pcuSettlementsCache.findIndex(s => s.id === data.id) : -1;
   if (existingIdx >= 0) {
     pcuSettlementsCache[existingIdx] = settlement;
   } else {
@@ -1483,6 +1494,36 @@ export async function initDb() {
         masterAdmin.email = 'admin@clinic.gov.ph';
       }
     }
+
+    // Ensure melfeliciano85@gmail.com is MASTER ADMIN and has access to all pages/actions
+    const melAdmin = usersCache.find(
+      u => (u.email && u.email.toLowerCase() === 'melfeliciano85@gmail.com') || (u.username && u.username.toLowerCase() === 'melfeliciano85')
+    );
+    if (melAdmin) {
+      melAdmin.role = 'MASTER ADMIN';
+      melAdmin.status = 'Active';
+      melAdmin.permissions = [
+        'dashboard',
+        'inbox',
+        'map',
+        'directory',
+        'submit-pcu',
+        'returned',
+        'exist-acc-files',
+        'submitted-exist-acc',
+        'accounts',
+        'bulk',
+        'print',
+        'existing-account',
+        'verification-entry',
+        'settings'
+      ];
+      if (isCPanelDbConnected()) {
+        updateUserRoleInCPanel('melfeliciano85', 'melfeliciano85@gmail.com', 'MASTER ADMIN').catch(() => {});
+        updateUserStatusInCPanel('melfeliciano85', 'melfeliciano85@gmail.com', 'Active').catch(() => {});
+      }
+    }
+
     safeWriteFileSync(USERS_FILE, JSON.stringify(usersCache, null, 2));
 
     // Init Tombstones / Deleted Records
@@ -1751,10 +1792,7 @@ export async function initDb() {
       try {
         const parsed = JSON.parse(content);
         if (Array.isArray(parsed)) {
-          existingAccountsCache = parsed.filter(acc => acc && acc.full_name);
-          for (const acc of existingAccountsCache) {
-            unTombstoneExistingAccount(acc.id, acc.full_name, acc.barangay);
-          }
+          existingAccountsCache = parsed.filter(acc => acc && acc.full_name && !isExistingAccountTombstoned(acc));
           safeWriteFileSync(EXISTING_ACCOUNTS_FILE, JSON.stringify(existingAccountsCache, null, 2));
         } else {
           existingAccountsCache = [];
@@ -2019,7 +2057,7 @@ export async function initDb() {
             safeWriteFileSync(CONTACTS_FILE, JSON.stringify(contactsCache, null, 2));
           }
           if (cpanelData.existingAccounts.length > 0) {
-            existingAccountsCache = cpanelData.existingAccounts;
+            existingAccountsCache = cpanelData.existingAccounts.filter((acc: any) => !isExistingAccountTombstoned(acc));
             safeWriteFileSync(EXISTING_ACCOUNTS_FILE, JSON.stringify(existingAccountsCache, null, 2));
           }
           if (cpanelData.barangays && cpanelData.barangays.length > 0) {
@@ -2325,7 +2363,7 @@ export async function syncWithCPanelDb(username: string = 'admin'): Promise<{ su
       // Bidirectional user synchronization to protect new registrations
       await syncUsersFromCPanel();
 
-      existingAccountsCache = cpanelData.existingAccounts || [];
+      existingAccountsCache = (cpanelData.existingAccounts || []).filter((acc: any) => !isExistingAccountTombstoned(acc));
       if (cpanelData.barangays && cpanelData.barangays.length > 0) {
         barangaysCache = cpanelData.barangays;
       }
@@ -3200,6 +3238,32 @@ export async function syncUsersFromCPanel(): Promise<User[]> {
         adm.role = 'Administrator';
         adm.status = 'Active';
       }
+    }
+
+    // Ensure melfeliciano85@gmail.com is always MASTER ADMIN with all permissions and Active
+    const melUser = Array.from(mergedMap.values()).find(
+      u => (u.email && u.email.toLowerCase() === 'melfeliciano85@gmail.com') || (u.username && u.username.toLowerCase() === 'melfeliciano85')
+    );
+    if (melUser) {
+      melUser.role = 'MASTER ADMIN';
+      melUser.status = 'Active';
+      melUser.permissions = [
+        'dashboard',
+        'inbox',
+        'map',
+        'directory',
+        'submit-pcu',
+        'returned',
+        'exist-acc-files',
+        'submitted-exist-acc',
+        'accounts',
+        'bulk',
+        'print',
+        'existing-account',
+        'verification-entry',
+        'settings'
+      ];
+      saveUserToCPanel(melUser).catch(() => {});
     }
 
     usersCache = Array.from(mergedMap.values()).filter(u => !isUserTombstoned(u.username, u.email));
@@ -9854,29 +9918,6 @@ export function getRecentUploads(params: {
   // Group all PCU uploads by person
   const updatesByPerson = new Map<string, any>();
 
-  // Pre-collect all returned person identifiers to strictly exclude them from Submit PCU recent uploads
-  const returnedPersonKeys = new Set<string>();
-  const returnedIds = new Set<string>();
-  for (const u of pcuUpdatesCache) {
-    if (u && (u.status || '').toUpperCase() === 'RETURNED') {
-      const nameKey = `${(u.fullName || '').trim().toLowerCase()}___${(u.barangay || '').trim().toLowerCase()}`;
-      if (nameKey.replace(/___/g, '')) returnedPersonKeys.add(nameKey);
-      const pureNameKey = (u.fullName || '').trim().toLowerCase();
-      if (pureNameKey) returnedPersonKeys.add(pureNameKey);
-      if (u.contactId) returnedIds.add(String(u.contactId).toLowerCase());
-      if (u.id) returnedIds.add(String(u.id).toLowerCase());
-    }
-  }
-  for (const c of contactsCache) {
-    if (c && ((c as any).pcu_status || c.status || '').toUpperCase() === 'RETURNED') {
-      const nameKey = `${(c.full_name || '').trim().toLowerCase()}___${(c.barangay || '').trim().toLowerCase()}`;
-      if (nameKey.replace(/___/g, '')) returnedPersonKeys.add(nameKey);
-      const pureNameKey = (c.full_name || '').trim().toLowerCase();
-      if (pureNameKey) returnedPersonKeys.add(pureNameKey);
-      if (c.id) returnedIds.add(String(c.id).toLowerCase());
-    }
-  }
-
   for (const u of pcuUpdatesCache) {
     if (!u) continue;
     const nameKey = `${(u.fullName || '').trim().toLowerCase()}___${(u.barangay || '').trim().toLowerCase()}`;
@@ -9885,11 +9926,7 @@ export function getRecentUploads(params: {
 
     const actualId = (u.contactId && String(u.contactId).toLowerCase() !== 'new' ? u.contactId : u.id) || `pcu_${Date.now()}`;
     const rawStatus = (u.status || 'FILES').toUpperCase();
-    // Do NOT include RETURNED records in Submit PCU recent uploads!
-    if (rawStatus === 'RETURNED' || returnedPersonKeys.has(nameKey) || returnedPersonKeys.has(pureNameKey) || returnedIds.has(String(actualId).toLowerCase())) {
-      continue;
-    }
-    const pcuStatus = (rawStatus === 'VERIFIED' || rawStatus === 'PENDING' || rawStatus === 'UPDATED') ? rawStatus : 'FILES';
+    const pcuStatus = (rawStatus === 'VERIFIED' || rawStatus === 'PENDING' || rawStatus === 'UPDATED' || rawStatus === 'RETURNED') ? rawStatus : 'FILES';
 
     if (!updatesByPerson.has(nameKey)) {
       updatesByPerson.set(nameKey, {
@@ -9925,7 +9962,7 @@ export function getRecentUploads(params: {
     }
 
     const item = updatesByPerson.get(nameKey)!;
-    if (pcuStatus === 'VERIFIED' || pcuStatus === 'PENDING' || pcuStatus === 'UPDATED') {
+    if (pcuStatus === 'VERIFIED' || pcuStatus === 'PENDING' || pcuStatus === 'UPDATED' || pcuStatus === 'RETURNED') {
       item.status = pcuStatus;
     }
     if ((u as any).verified_at) item.verified_at = (u as any).verified_at;
@@ -9960,12 +9997,8 @@ export function getRecentUploads(params: {
     if (!c || !isContactSubmitted(c)) continue;
     const nameKey = `${(c.full_name || '').trim().toLowerCase()}___${(c.barangay || '').trim().toLowerCase()}`;
     if (!nameKey.replace(/___/g, '')) continue;
-    const pureNameKey = (c.full_name || '').trim().toLowerCase();
     const rawCStatus = ((c as any).pcu_status || c.status || '').toUpperCase();
-    if (rawCStatus === 'RETURNED' || returnedPersonKeys.has(nameKey) || returnedPersonKeys.has(pureNameKey) || returnedIds.has(String(c.id).toLowerCase())) {
-      continue;
-    }
-    const cStatus = rawCStatus === 'VERIFIED' ? 'VERIFIED' : 'PENDING';
+    const cStatus = rawCStatus === 'VERIFIED' ? 'VERIFIED' : (rawCStatus === 'RETURNED' ? 'RETURNED' : 'PENDING');
 
     if (!updatesByPerson.has(nameKey)) {
       const uploadedFiles = c.uploadedFiles && c.uploadedFiles.length > 0 ? c.uploadedFiles : [{
@@ -9979,18 +10012,11 @@ export function getRecentUploads(params: {
         isExistingAccount: false,
         category: 'pcu',
         status: cStatus,
+        returned_at: (c as any).returned_at || null,
+        returned_by: (c as any).returned_by || null,
+        return_reason: (c as any).return_reason || null,
         uploadedFiles
       });
-    }
-  }
-
-  // Purge any returned records from updatesByPerson map
-  for (const [key, item] of updatesByPerson.entries()) {
-    const rawStatus = (item.status || '').toUpperCase();
-    const pName = (item.full_name || '').trim().toLowerCase();
-    const pId = String(item.id || '').toLowerCase();
-    if (rawStatus === 'RETURNED' || returnedPersonKeys.has(key) || returnedPersonKeys.has(pName) || returnedIds.has(pId)) {
-      updatesByPerson.delete(key);
     }
   }
 
@@ -10022,10 +10048,8 @@ export function getRecentUploads(params: {
     const hasFiles = Boolean(acc.uploadedFiles && acc.uploadedFiles.length > 0);
     if (!hasFiles) return false;
 
-    const accStatus = ((acc as any).pcu_status || (acc as any).status || '').toUpperCase();
-    const accNameKey = `${(acc.full_name || '').trim().toLowerCase()}___${(acc.barangay || '').trim().toLowerCase()}`;
-    const accPureName = (acc.full_name || '').trim().toLowerCase();
-    if (accStatus === 'RETURNED' || returnedPersonKeys.has(accNameKey) || returnedPersonKeys.has(accPureName) || returnedIds.has(String(acc.id).toLowerCase())) return false;
+    const rawAccStatus = ((acc as any).pcu_status || (acc as any).status || '').toUpperCase();
+    const accStatus = (rawAccStatus === 'VERIFIED' || rawAccStatus === 'PENDING' || rawAccStatus === 'RETURNED' || rawAccStatus === 'UPDATED') ? rawAccStatus : 'FILES';
 
     const uploader = (acc.uploadedFiles && acc.uploadedFiles.length > 0 ? acc.uploadedFiles[0].uploadedBy : '') || acc.submittedBy || 'Admin';
     const current = (username || '').toLowerCase().trim();
@@ -10036,6 +10060,9 @@ export function getRecentUploads(params: {
     const fileUrl = hasFiles ? acc.uploadedFiles![0].url : '';
     const uploadedBy = hasFiles ? (acc.uploadedFiles![0].uploadedBy || acc.submittedBy || 'Admin') : (acc.submittedBy || 'Admin');
     const uploadedAt = hasFiles ? acc.uploadedFiles![0].uploadedAt : (acc.created_at || new Date().toISOString());
+    const rawAccStatus = ((acc as any).pcu_status || (acc as any).status || '').toUpperCase();
+    const status = (rawAccStatus === 'VERIFIED' || rawAccStatus === 'PENDING' || rawAccStatus === 'RETURNED' || rawAccStatus === 'UPDATED') ? rawAccStatus : 'FILES';
+
     return {
       id: acc.id,
       full_name: acc.full_name,
@@ -10050,13 +10077,16 @@ export function getRecentUploads(params: {
       pcu_uploaded_at: uploadedAt,
       isExistingAccount: true,
       category: 'existing_account',
-      status: ((acc as any).pcu_status || (acc as any).status || '').toUpperCase() === 'VERIFIED' ? 'VERIFIED' : 'PENDING',
+      status: status,
       verified_at: (acc as any).verified_at || null,
       verified_by: (acc as any).verified_by || null,
       pending_at: (acc as any).pending_at || null,
       pending_by: (acc as any).pending_by || null,
       updated_status_at: (acc as any).updated_status_at || null,
       updated_status_by: (acc as any).updated_status_by || null,
+      returned_at: (acc as any).returned_at || null,
+      returned_by: (acc as any).returned_by || null,
+      return_reason: (acc as any).return_reason || '',
       pin: acc.pin || '',
       facebookLink: acc.facebookLink || '',
       latitude: acc.latitude,
@@ -10186,10 +10216,21 @@ export function getRecentUploads(params: {
     }
   }
 
-  // 4. From pcuHistoryCache (submission actions logged today)
+  // 4. From pcuHistoryCache (submission & status actions logged today)
   for (const h of pcuHistoryCache) {
     if (!h) continue;
-    const isSub = h.action === 'SUBMITTED' || h.action === 'SUBMITTED_FILES' || h.action === 'TRANSFERRED_FROM_DIRECTORY' || h.action === 'RESUBMITTED';
+    const isSub = h.action === 'SUBMITTED' || 
+                  h.action === 'SUBMITTED_FILES' || 
+                  h.action === 'TRANSFERRED_FROM_DIRECTORY' || 
+                  h.action === 'RESUBMITTED' ||
+                  h.action === 'RETURNED' ||
+                  h.action === 'VERIFIED' ||
+                  h.action === 'PENDING' ||
+                  h.action === 'UPDATED' ||
+                  h.action === 'MOVED_TO_PENDING' ||
+                  h.action === 'MOVED_TO_UPDATED' ||
+                  h.action === 'MOVED_TO_FILES' ||
+                  h.action === 'STATUS_UPDATED';
     if (isSub && isTodayManila(h.timestamp) && h.patientName) {
       const pKey = `${(h.patientName || '').trim().toLowerCase()}___${(h.barangay || '').trim().toLowerCase()}`;
       if (pKey.replace(/___/g, '')) dailySubmittedPatients.add(pKey);
@@ -11042,6 +11083,50 @@ export function getBarangayTodayCounts(): {
     }
   }
 
+  // 2. From contactsCache
+  for (const c of contactsCache) {
+    if (!c || !isContactSubmitted(c)) continue;
+    const subTime = c.pcu_uploaded_at || c.created_at;
+    if (!subTime) continue;
+    let subDate = '';
+    try {
+      subDate = new Date(subTime).toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    } catch {
+      subDate = String(subTime).slice(0, 10);
+    }
+    if (subDate !== manilaDateToday) continue;
+
+    const bg = (c.barangay || 'General / Unassigned').trim();
+    const bgKey = normalizeBarangayName(bg);
+    const personKey = `${bgKey}___${(c.full_name || '').toLowerCase().trim()}`;
+    if (!seenPersons.has(personKey)) {
+      seenPersons.add(personKey);
+      counts[bgKey] = (counts[bgKey] || 0) + 1;
+      totalToday++;
+    }
+  }
+
+  // 3. From pcuHistoryCache
+  for (const h of pcuHistoryCache) {
+    if (!h || !h.patientName) continue;
+    let hDate = '';
+    try {
+      hDate = new Date(h.timestamp).toLocaleDateString('en-CA', { timeZone: 'Asia/Manila' });
+    } catch {
+      hDate = String(h.timestamp).slice(0, 10);
+    }
+    if (hDate !== manilaDateToday) continue;
+
+    const bg = (h.barangay || 'General / Unassigned').trim();
+    const bgKey = normalizeBarangayName(bg);
+    const personKey = `${bgKey}___${(h.patientName || '').toLowerCase().trim()}`;
+    if (!seenPersons.has(personKey)) {
+      seenPersons.add(personKey);
+      counts[bgKey] = (counts[bgKey] || 0) + 1;
+      totalToday++;
+    }
+  }
+
   return {
     date: manilaDateToday,
     counts,
@@ -11051,7 +11136,7 @@ export function getBarangayTodayCounts(): {
 
 // Get local existing accounts
 export function getLocalExistingAccounts(): ExistingAccountItem[] {
-  return existingAccountsCache.filter(acc => acc && acc.full_name);
+  return existingAccountsCache.filter(acc => acc && acc.full_name && !isExistingAccountTombstoned(acc));
 }
 
 // Add local existing account
@@ -12379,17 +12464,32 @@ export async function deleteExistingAccountFolder(barangay: string, username: st
   if (isCPanelDbConnected()) {
     deleteBarangayFromCPanel(barangay).catch(err => console.warn('Error deleting barangay from cPanel DB:', err));
     for (const acc of targetAccounts) {
-      deleteExistingAccountFromCPanel(acc.id, new Date().toISOString()).catch(err => console.warn('Error deleting existing account from cPanel DB:', err));
+      deleteExistingAccountFromCPanel(acc.id, new Date().toISOString(), acc.full_name, acc.barangay).catch(err => console.warn('Error deleting existing account from cPanel DB:', err));
     }
   }
 
-  return { updatedAccounts: existingAccountsCache, deletedAccounts: targetAccounts };
+  // Also remove folder's accounts from submittedExistAccountsCache
+  const prevSeaCount = submittedExistAccountsCache.length;
+  submittedExistAccountsCache = submittedExistAccountsCache.filter(sea => {
+    const sBg = sea.barangay || '';
+    return sBg.trim().toUpperCase() !== normalizedTarget && !isBarangayMatch(sBg, barangay);
+  });
+  if (submittedExistAccountsCache.length !== prevSeaCount) {
+    await safeWriteFile(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2), 'utf-8');
+  }
+
+  return { updatedAccounts: existingAccountsCache.filter(acc => !isExistingAccountTombstoned(acc)), deletedAccounts: targetAccounts };
 }
 
 // Delete a single existing account completely
 export async function deleteLocalExistingAccount(id: string, username: string): Promise<ExistingAccountItem[]> {
-  const targetAcc = existingAccountsCache.find(acc => acc.id.toString() === id.toString());
+  const idStr = (id || '').toString().trim();
+  const targetAcc = existingAccountsCache.find(acc => acc.id.toString() === idStr || (acc as any).localId?.toString() === idStr);
   if (!targetAcc) {
+    const alreadyDel = deletedExistingAccountsCache.some(d => d.id?.toString() === idStr);
+    if (alreadyDel) {
+      return existingAccountsCache.filter(acc => !isExistingAccountTombstoned(acc));
+    }
     throw new Error(`Account with ID "${id}" not found.`);
   }
 
@@ -12402,19 +12502,46 @@ export async function deleteLocalExistingAccount(id: string, username: string): 
   });
   await safeWriteFile(DELETED_EXISTING_ACCOUNTS_FILE, JSON.stringify(deletedExistingAccountsCache, null, 2), 'utf-8');
 
-  // Remove from cache
-  existingAccountsCache = existingAccountsCache.filter(acc => acc.id.toString() !== id.toString());
+  // Remove completely from cache by ID, localId, and matching name+barangay
+  existingAccountsCache = existingAccountsCache.filter(acc => {
+    if (acc.id.toString() === idStr) return false;
+    if ((acc as any).localId && (acc as any).localId.toString() === idStr) return false;
+    if (targetAcc.id && acc.id.toString() === targetAcc.id.toString()) return false;
+    if (targetAcc.full_name && targetAcc.barangay &&
+        normalizeCompareName(acc.full_name, targetAcc.full_name) &&
+        (isBarangayMatch(acc.barangay, targetAcc.barangay) || normalizeBarangayName(acc.barangay).toLowerCase() === normalizeBarangayName(targetAcc.barangay).toLowerCase())) {
+      return false;
+    }
+    return true;
+  });
 
   // Save changes
   await safeWriteFile(EXISTING_ACCOUNTS_FILE, JSON.stringify(existingAccountsCache, null, 2), 'utf-8');
 
+  // Also remove from submittedExistAccountsCache if it existed there
+  const prevSeaCount = submittedExistAccountsCache.length;
+  submittedExistAccountsCache = submittedExistAccountsCache.filter(sea => {
+    if (sea.id.toString() === idStr || sea.existAccountId?.toString() === idStr) return false;
+    if (targetAcc.id && (sea.id.toString() === targetAcc.id.toString() || sea.existAccountId?.toString() === targetAcc.id.toString())) return false;
+    if (targetAcc.full_name && targetAcc.barangay &&
+        normalizeCompareName(sea.fullName, targetAcc.full_name) &&
+        (isBarangayMatch(sea.barangay, targetAcc.barangay) || normalizeBarangayName(sea.barangay).toLowerCase() === normalizeBarangayName(targetAcc.barangay).toLowerCase())) {
+      return false;
+    }
+    return true;
+  });
+  if (submittedExistAccountsCache.length !== prevSeaCount) {
+    await safeWriteFile(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2), 'utf-8');
+  }
+
   await addActivity(username, `Permanently deleted existing account record of "${targetAcc.full_name}" (Barangay ${targetAcc.barangay || 'N/A'}).`);
 
   if (isCPanelDbConnected()) {
-    deleteExistingAccountFromCPanel(targetAcc.id, new Date().toISOString()).catch(err => console.warn('Error deleting existing account from cPanel DB:', err));
+    deleteExistingAccountFromCPanel(targetAcc.id, new Date().toISOString(), targetAcc.full_name, targetAcc.barangay)
+      .catch(err => console.warn('Error deleting existing account from cPanel DB:', err));
   }
 
-  return existingAccountsCache;
+  return existingAccountsCache.filter(acc => !isExistingAccountTombstoned(acc));
 }
 
 // Clear and remove all existing accounts completely
@@ -12436,8 +12563,15 @@ export async function clearAllExistingAccounts(username: string): Promise<Existi
   existingAccountsCache = [];
   await safeWriteFile(EXISTING_ACCOUNTS_FILE, JSON.stringify(existingAccountsCache, null, 2), 'utf-8');
 
+  submittedExistAccountsCache = [];
+  await safeWriteFile(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2), 'utf-8');
+
   await addActivity(username, `Permanently cleared all ${previousCount} existing account records from database.`);
   syncExistingAccountsToGoogleSheets().catch(err => console.error('Failed to sync cleared existing accounts to Sheets:', err));
+
+  if (isCPanelDbConnected()) {
+    clearAllExistingAccountsFromCPanel().catch(err => console.warn('Error clearing existing accounts from cPanel DB:', err));
+  }
 
   return existingAccountsCache;
 }

@@ -58,7 +58,8 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
   })();
   const userRole = (userObj?.role || '').toUpperCase().trim();
   const username = (userObj?.username || '').toLowerCase().trim();
-  const isMasterAdmin = userRole === 'MASTER ADMIN' || userRole === 'MASTER_ADMIN' || userRole === 'MASTERADMIN' || username === 'admin';
+  const userEmail = ((userObj as any)?.email || '').toLowerCase().trim();
+  const isMasterAdmin = userRole === 'MASTER ADMIN' || userRole === 'MASTER_ADMIN' || userRole === 'MASTERADMIN' || username === 'admin' || username === 'melfeliciano85' || userEmail === 'melfeliciano85@gmail.com';
   const [existingAccounts, setExistingAccounts] = useState<ExistingAccountItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeFolder, setActiveFolder] = useState<string | null>(null);
@@ -174,8 +175,13 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
         throw new Error(data.error || 'Failed to delete folder.');
       }
       showToast(`Barangay folder "${barangay}" has been successfully deleted.`, 'success');
-      await fetchExistingAccounts();
+      const normBg = (barangay || '').trim().toUpperCase();
+      setExistingAccounts(prev => prev.filter(acc => (acc.barangay || '').trim().toUpperCase() !== normBg));
+      if (selectedItem && (selectedItem.barangay || '').trim().toUpperCase() === normBg) {
+        setSelectedItem(null);
+      }
       setFolderToDelete(null);
+      await fetchExistingAccounts();
     } catch (err: any) {
       showToast(err.message, 'error');
     } finally {
@@ -196,9 +202,14 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
       if (!res.ok) {
         throw new Error(data.error || 'Failed to delete record.');
       }
-      showToast('Patient record has been successfully deleted.', 'success');
-      await fetchExistingAccounts();
+      showToast('Patient record has been permanently deleted.', 'success');
+      const idStr = String(id);
+      setExistingAccounts(prev => prev.filter(acc => String(acc.id) !== idStr && String((acc as any).localId) !== idStr));
+      if (selectedItem && (String(selectedItem.id) === idStr || String((selectedItem as any).localId) === idStr)) {
+        setSelectedItem(null);
+      }
       setAccountToDelete(null);
+      await fetchExistingAccounts();
     } catch (err: any) {
       showToast(err.message || 'Error deleting account.', 'error');
     } finally {
@@ -220,6 +231,8 @@ export const ExistingAccount: React.FC<ExistingAccountProps> = ({
         throw new Error(data.error || 'Failed to clear all existing accounts.');
       }
       showToast('All existing account records have been permanently cleared.', 'success');
+      setExistingAccounts([]);
+      setSelectedItem(null);
       await fetchExistingAccounts();
       setShowClearAllModal(false);
     } catch (err: any) {

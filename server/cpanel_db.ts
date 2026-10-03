@@ -1624,7 +1624,12 @@ export async function fetchAllFromCPanelDb(): Promise<{
     }
 
     const [uRows]: any = await pool.query('SELECT * FROM users ORDER BY username ASC').catch(() => [[]]);
-    const [eRows]: any = await pool.query('SELECT * FROM existing_accounts ORDER BY id ASC').catch(() => [[]]);
+    const [eRows]: any = await pool.query(
+      `SELECT * FROM existing_accounts 
+       WHERE (deleted_at IS NULL OR deleted_at = '0000-00-00 00:00:00' OR deleted_at = '') 
+         AND UPPER(TRIM(status)) != 'DELETED' 
+       ORDER BY id ASC`
+    ).catch(() => [[]]);
     const [bRows]: any = await pool.query('SELECT name FROM barangays ORDER BY name ASC').catch(() => [[]]);
     const [aRows]: any = await pool.query('SELECT * FROM activities ORDER BY timestamp DESC LIMIT 200').catch(() => [[]]);
     const [sRows]: any = await pool.query('SELECT setting_key, setting_value FROM site_settings').catch(() => [[]]);
@@ -1674,7 +1679,11 @@ export async function fetchAllFromCPanelDb(): Promise<{
       };
     });
 
-    const existingAccounts = (eRows || []).map((r: any) => {
+    const existingAccounts = (eRows || []).filter((r: any) => {
+      if (r.deleted_at && r.deleted_at !== '0000-00-00 00:00:00' && r.deleted_at !== '0' && r.deleted_at !== '') return false;
+      if (String(r.status || '').toUpperCase().trim() === 'DELETED') return false;
+      return true;
+    }).map((r: any) => {
       let uploadedFiles: any[] = [];
       try {
         if (r.uploaded_files) {
@@ -2475,12 +2484,53 @@ export async function saveExistingAccountToCPanel(account: any): Promise<void> {
   }
 }
 
-export async function deleteExistingAccountFromCPanel(id: string | number, deletedAt: string): Promise<void> {
+export async function deleteExistingAccountFromCPanel(
+  id: string | number,
+  deletedAt: string,
+  fullName?: string,
+  barangay?: string
+): Promise<void> {
   if (!pool || !currentStatus.connected) return;
   try {
-    await pool.query('UPDATE existing_accounts SET deleted_at = ?, status = "DELETED" WHERE id = ?', [deletedAt, id]);
+    const idStr = String(id || '').trim();
+    // 1. Permanently delete from existing_accounts by ID
+    await pool.query('DELETE FROM existing_accounts WHERE id = ?', [idStr]);
+
+    // 2. Also permanently delete by fullName and barangay to catch any ID variant
+    if (fullName && fullName.trim()) {
+      const cleanName = fullName.trim();
+      if (barangay && barangay.trim()) {
+        await pool.query(
+          'DELETE FROM existing_accounts WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?)) AND LOWER(TRIM(barangay)) = LOWER(TRIM(?))',
+          [cleanName, barangay.trim()]
+        );
+      } else {
+        await pool.query(
+          'DELETE FROM existing_accounts WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))',
+          [cleanName]
+        );
+      }
+    }
+
+    // 3. Also permanently remove from submitted_exist_acc if present
+    await pool.query('DELETE FROM submitted_exist_acc WHERE id = ? OR exist_account_id = ?', [idStr, idStr]);
+    if (fullName && fullName.trim()) {
+      await pool.query('DELETE FROM submitted_exist_acc WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))', [fullName.trim()]);
+    }
+    console.log(`[cPanel DB] Permanently deleted existing account "${idStr}" (${fullName || ''}) from MySQL database.`);
   } catch (err: any) {
-    console.warn('[cPanel DB] Error marking existing account deleted in MySQL:', err.message);
+    console.warn('[cPanel DB] Error permanently deleting existing account from MySQL:', err.message);
+  }
+}
+
+export async function clearAllExistingAccountsFromCPanel(): Promise<void> {
+  if (!pool || !currentStatus.connected) return;
+  try {
+    await pool.query('DELETE FROM existing_accounts');
+    await pool.query('DELETE FROM submitted_exist_acc');
+    console.log('[cPanel DB] Permanently cleared all existing accounts from MySQL database.');
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error clearing all existing accounts from MySQL:', err.message);
   }
 }
 
@@ -2505,7 +2555,9 @@ export async function deleteBarangayFromCPanel(name: string): Promise<void> {
     if (!cleanName) return;
     await pool.query('DELETE FROM barangays WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', [cleanName]);
     await pool.query('DELETE FROM contacts WHERE LOWER(TRIM(barangay)) = LOWER(TRIM(?))', [cleanName]);
-    console.log(`[cPanel DB] Permanently deleted barangay "${cleanName}" and associated contacts from MySQL.`);
+    await pool.query('DELETE FROM existing_accounts WHERE LOWER(TRIM(barangay)) = LOWER(TRIM(?))', [cleanName]);
+    await pool.query('DELETE FROM submitted_exist_acc WHERE LOWER(TRIM(barangay)) = LOWER(TRIM(?))', [cleanName]);
+    console.log(`[cPanel DB] Permanently deleted barangay "${cleanName}" and associated records from MySQL.`);
   } catch (err: any) {
     console.warn('[cPanel DB] Error deleting barangay from MySQL:', err.message);
   }

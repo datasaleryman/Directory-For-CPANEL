@@ -797,7 +797,7 @@ export const AccountManagement: React.FC<AccountManagementProps> = ({
               </thead>
               <tbody className="divide-y divide-slate-100 font-medium text-slate-700">
                 {filteredAccounts.map((acc) => {
-                  const isMasterAdmin = acc.username.toLowerCase() === 'admin';
+                  const isMasterAdmin = acc.username.toLowerCase() === 'admin' || acc.username.toLowerCase() === 'melfeliciano85' || (acc.email && acc.email.toLowerCase() === 'melfeliciano85@gmail.com') || (acc.role || '').toUpperCase() === 'MASTER ADMIN';
                   const isCurrent = acc.username.toLowerCase() === currentUsername.toLowerCase();
                   const currentNormStatus = normalizeStatus(acc.status);
                   const isRecentlyApproved = recentlyApprovedUsernames.includes(acc.username.toLowerCase());
@@ -982,7 +982,7 @@ export const AccountManagement: React.FC<AccountManagementProps> = ({
           {/* Mobile User Cards View for full responsiveness */}
           <div className="block md:hidden divide-y divide-slate-100">
             {filteredAccounts.map((acc) => {
-              const isMasterAdmin = acc.username.toLowerCase() === 'admin';
+              const isMasterAdmin = acc.username.toLowerCase() === 'admin' || acc.username.toLowerCase() === 'melfeliciano85' || (acc.email && acc.email.toLowerCase() === 'melfeliciano85@gmail.com') || (acc.role || '').toUpperCase() === 'MASTER ADMIN';
               const isCurrent = acc.username.toLowerCase() === currentUsername.toLowerCase();
               const currentNormStatus = normalizeStatus(acc.status);
               const isRecentlyApproved = recentlyApprovedUsernames.includes(acc.username.toLowerCase());

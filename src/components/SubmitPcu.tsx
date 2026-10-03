@@ -89,6 +89,10 @@ interface UploadedPcuRecord {
   pending_by?: string | null;
   updated_status_at?: string | null;
   updated_status_by?: string | null;
+  returned_at?: string | null;
+  returned_by?: string | null;
+  returned_by_id?: string | null;
+  return_reason?: string | null;
   verified_credit_added?: boolean;
   pending_credit_added?: boolean;
   filesCount: number;
@@ -175,12 +179,13 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const isMasterAdmin = React.useMemo(() => {
     if (!currentUser) return false;
     const username = (currentUser.username || '').toLowerCase().trim();
+    const email = ((currentUser as any).email || '').toLowerCase().trim();
     const role = (currentUser.role || '').toUpperCase().trim();
-    return role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username === 'admin';
+    return role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username === 'admin' || username === 'melfeliciano85' || email === 'melfeliciano85@gmail.com';
   }, [currentUser]);
 
-  // Tab state: 'files' | 'verified' | 'pending' | 'updated' | 'ledger'
-  const [activeTab, setActiveTab] = useState<'files' | 'verified' | 'pending' | 'updated' | 'ledger'>('files');
+  // Tab state: 'files' | 'verified' | 'pending' | 'updated' | 'returned' | 'ledger'
+  const [activeTab, setActiveTab] = useState<'files' | 'verified' | 'pending' | 'updated' | 'returned' | 'ledger'>('files');
 
   // Currently opened Barangay folder: null = showing all folder cards; string = inside that folder
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
@@ -307,6 +312,16 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const [showPrintLedgerModal, setShowPrintLedgerModal] = useState<boolean>(false);
   const [printReportType, setPrintReportType] = useState<'pending' | 'verified' | 'all'>('pending');
 
+  // Custom Print Blank Payroll Form State (Master Admin)
+  const [showCustomPrintModal, setShowCustomPrintModal] = useState<boolean>(false);
+  const [blankRowCount, setBlankRowCount] = useState<number>(15);
+  const [blankPayrollTitle, setBlankPayrollTitle] = useState<string>('PCU SUBMITTERS PAYROLL REGISTER');
+  const [blankBarangay, setBlankBarangay] = useState<string>('All SFC Coverage Areas');
+  const [blankPeriod, setBlankPeriod] = useState<string>(() => {
+    return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date());
+  });
+  const [blankOrientation, setBlankOrientation] = useState<'landscape' | 'portrait'>('landscape');
+
   // Return PCU Submission Confirmation Modal State
   const [returnTarget, setReturnTarget] = useState<UploadedPcuRecord | null>(null);
   const [returnReasonInput, setReturnReasonInput] = useState<string>('');
@@ -352,13 +367,13 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
       if (res.ok) {
         const data = await res.json();
+        if (typeof data.dailySubmissionsCount === 'number') {
+          setServerDailyCount(data.dailySubmissionsCount);
+        }
         const contactsList = Array.isArray(data.contacts) ? data.contacts : [];
         
-        // Exclude any returned records from Submit PCU - they are transferred out to Returned page
-        const activeContacts = contactsList.filter((item: any) => {
-          const raw = ((item.status || item.pcu_status || '') as string).toUpperCase().trim();
-          return raw !== 'RETURNED';
-        });
+        // Include all records including RETURNED for the new Returned tab
+        const activeContacts = contactsList;
 
         const formatted: UploadedPcuRecord[] = activeContacts.map((item: any, idx: number) => {
           let files: UploadedFileItem[] = [];
@@ -379,8 +394,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           }
 
           const uniqueId = String(item.id || item.contactId || `pcu_rec_${idx}_${Date.now()}`);
-          const rawStatus = (item.status || 'FILES').toUpperCase();
-          const normalizedStatus = (rawStatus === 'VERIFIED' || rawStatus === 'PENDING' || rawStatus === 'UPDATED') ? rawStatus : 'FILES';
+          const rawStatus = (item.status || item.pcu_status || 'FILES').toUpperCase();
+          const normalizedStatus = (rawStatus === 'VERIFIED' || rawStatus === 'PENDING' || rawStatus === 'UPDATED' || rawStatus === 'RETURNED') ? rawStatus : 'FILES';
 
           // Determine most accurate submission timestamp from item or its uploaded files
           let accurateUploadedAt = item.pcu_uploaded_at || item.updated_at || item.created_at || new Date().toISOString();
@@ -399,7 +414,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
             fileName: files[0]?.name || 'PCU Document',
             fileUrl: files[0]?.url || item.pcu_file_url || '',
             uploadedAt: accurateUploadedAt,
-            uploadedBy: item.pcu_uploaded_by || 'Staff',
+            uploadedBy: item.pcu_uploaded_by || item.uploadedBy || 'Staff',
             status: normalizedStatus,
             verified_at: item.verified_at || null,
             verified_by: item.verified_by || null,
@@ -407,12 +422,75 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
             pending_by: item.pending_by || null,
             updated_status_at: item.updated_status_at || null,
             updated_status_by: item.updated_status_by || null,
+            returned_at: item.returned_at || null,
+            returned_by: item.returned_by || null,
+            returned_by_id: item.returned_by_id || null,
+            return_reason: item.return_reason || null,
             verified_credit_added: Boolean(item.verified_credit_added),
             pending_credit_added: Boolean(item.pending_credit_added),
             filesCount: files.length,
             uploadedFiles: files
           };
         });
+
+        // Also fetch from /api/pcu/returned to ensure all returned records and reasons are present
+        try {
+          const retRes = await fetch('/api/pcu/returned', {
+            headers: { Authorization: `Bearer ${authToken}` }
+          });
+          if (retRes.ok) {
+            const retList = await retRes.json();
+            if (Array.isArray(retList)) {
+              retList.forEach((r: any) => {
+                const rKey = `${(r.fullName || '').toLowerCase().trim()}___${(r.barangay || '').toLowerCase().trim()}`;
+                const existingIdx = formatted.findIndex(f => 
+                  (f.id && r.id && String(f.id) === String(r.id)) ||
+                  (`${(f.fullName || '').toLowerCase().trim()}___${(f.barangay || '').toLowerCase().trim()}` === rKey)
+                );
+                if (existingIdx >= 0) {
+                  formatted[existingIdx].status = 'RETURNED';
+                  formatted[existingIdx].returned_at = r.returned_at || formatted[existingIdx].returned_at || new Date().toISOString();
+                  formatted[existingIdx].returned_by = r.returned_by || formatted[existingIdx].returned_by || 'Admin';
+                  formatted[existingIdx].return_reason = r.return_reason || formatted[existingIdx].return_reason || '';
+                } else {
+                  const rFiles = Array.isArray(r.uploadedFiles) && r.uploadedFiles.length > 0 ? r.uploadedFiles : [{
+                    name: r.fileName || 'PCU Document',
+                    url: r.fileUrl || r.fileData || '',
+                    uploadedAt: r.uploadedAt || r.created_at || new Date().toISOString(),
+                    uploadedBy: r.uploadedBy || r.submitter || 'Staff'
+                  }];
+                  formatted.push({
+                    id: String(r.id || `ret_${Date.now()}`),
+                    fullName: r.fullName || 'Patient',
+                    barangay: r.barangay || 'Central',
+                    purok: r.purok || '',
+                    contactNumber: r.contactNumber || r.contact_number || '',
+                    fileName: rFiles[0]?.name || 'PCU Document',
+                    fileUrl: rFiles[0]?.url || '',
+                    uploadedAt: r.uploadedAt || r.created_at || new Date().toISOString(),
+                    uploadedBy: r.uploadedBy || r.submitter || 'Staff',
+                    status: 'RETURNED',
+                    verified_at: null,
+                    verified_by: null,
+                    pending_at: null,
+                    pending_by: null,
+                    updated_status_at: null,
+                    updated_status_by: null,
+                    returned_at: r.returned_at || new Date().toISOString(),
+                    returned_by: r.returned_by || 'Admin',
+                    return_reason: r.return_reason || '',
+                    verified_credit_added: false,
+                    pending_credit_added: false,
+                    filesCount: rFiles.length,
+                    uploadedFiles: rFiles
+                  });
+                }
+              });
+            }
+          }
+        } catch (e) {
+          // ignore optional merge error
+        }
 
         setUploadedRecords(formatted);
       } else {
@@ -422,11 +500,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         if (fallbackRes.ok) {
           const fallbackData = await fallbackRes.json();
           const rawList = Array.isArray(fallbackData) ? fallbackData : (fallbackData.updates || []);
-          const activeUpdates = rawList.filter((item: any) => {
-            const raw = ((item.status || '') as string).toUpperCase().trim();
-            return raw !== 'RETURNED';
-          });
-          const formatted: UploadedPcuRecord[] = activeUpdates.map((item: any, idx: number) => {
+          const formatted: UploadedPcuRecord[] = rawList.map((item: any, idx: number) => {
             const fileItem: UploadedFileItem = {
               name: item.fileName || 'PCU Document',
               url: item.fileData || '',
@@ -434,7 +508,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               uploadedBy: item.uploadedBy || 'Staff'
             };
             const rawStatus = (item.status || 'FILES').toUpperCase();
-            const normalizedStatus = (rawStatus === 'VERIFIED' || rawStatus === 'PENDING' || rawStatus === 'UPDATED') ? rawStatus : 'FILES';
+            const normalizedStatus = (rawStatus === 'VERIFIED' || rawStatus === 'PENDING' || rawStatus === 'UPDATED' || rawStatus === 'RETURNED') ? rawStatus : 'FILES';
 
             return {
               id: String(item.id || item.contactId || `pcu_upd_${idx}_${Date.now()}`),
@@ -453,6 +527,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               pending_by: item.pending_by || null,
               updated_status_at: item.updated_status_at || null,
               updated_status_by: item.updated_status_by || null,
+              returned_at: item.returned_at || null,
+              returned_by: item.returned_by || null,
+              return_reason: item.return_reason || null,
               verified_credit_added: Boolean(item.verified_credit_added),
               pending_credit_added: Boolean(item.pending_credit_added),
               filesCount: 1,
@@ -599,22 +676,25 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
   // Open Settlement Modal for a Submitter
   const openSettlementModal = (sub: any) => {
-    const existing = settlements.find(s => s.submitter && s.submitter.toLowerCase() === sub.name.toLowerCase());
     const computedSalary = sub.totalSalary !== undefined 
       ? sub.totalSalary 
       : ((sub.verifiedCount || 0) * baseRate + (sub.pendingCount || 0) * pendingBaseRate);
-    const totalCount = (sub.verifiedCount || 0) + (sub.pendingCount || 0);
+    const vCount = sub.verifiedCount || 0;
+    const pCount = sub.pendingCount || 0;
+    const totalCount = vCount + pCount;
     setSettlingSubmitter({
       name: sub.name,
+      verifiedCount: vCount,
+      pendingCount: pCount,
       totalSubmissions: totalCount,
       totalSalary: computedSalary
     });
-    setSettlementAmount(existing ? String(existing.amountPaid ?? existing.totalSalary) : String(computedSalary));
-    setSettlementMethod(existing ? (existing.paymentMethod || 'Cash') : 'Cash');
-    setSettlementNotes(existing ? (existing.referenceNotes || '') : '');
+    setSettlementAmount(computedSalary > 0 ? String(computedSalary) : '0.00');
+    setSettlementMethod('Cash');
+    setSettlementNotes('');
   };
 
-  // Confirm Settlement and Save to MySQL
+  // Confirm Settlement and Save Permanently to MySQL
   const handleConfirmSettlement = async () => {
     if (!settlingSubmitter) return;
     const amount = parseFloat(settlementAmount);
@@ -624,7 +704,6 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     }
     setSubmittingSettlement(true);
     try {
-      const existing = settlements.find(s => s.submitter && s.submitter.toLowerCase() === settlingSubmitter.name.toLowerCase());
       const res = await fetch('/api/pcu/settlements', {
         method: 'POST',
         headers: {
@@ -632,21 +711,25 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           Authorization: `Bearer ${authToken}`
         },
         body: JSON.stringify({
-          id: existing?.id,
           submitter: settlingSubmitter.name,
+          verifiedCount: settlingSubmitter.verifiedCount || 0,
+          pendingCount: settlingSubmitter.pendingCount || 0,
           totalSubmissions: settlingSubmitter.totalSubmissions,
           baseRate: baseRate,
+          pendingBaseRate: pendingBaseRate,
           totalSalary: settlingSubmitter.totalSalary,
           amountPaid: amount,
           paymentStatus: 'SETTLED',
           paymentMethod: settlementMethod,
-          referenceNotes: settlementNotes
+          referenceNotes: settlementNotes,
+          settledBy: currentUser?.username || 'Master Admin',
+          settledAt: new Date().toISOString()
         })
       });
       if (res.ok) {
         await fetchSettlements();
         fetchHistory();
-        showToast(`Settlement for "${settlingSubmitter.name}" saved permanently to MySQL!`, 'success');
+        showToast(`Settlement for "${settlingSubmitter.name}" recorded permanently in Settlement logs! Credits reset to 0.`, 'success');
         setSettlingSubmitter(null);
       } else {
         const err = await res.json();
@@ -659,22 +742,24 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     }
   };
 
-  // Reset / Delete Settlement
-  const handleResetSettlement = async (submitterName: string) => {
-    const existing = settlements.find(s => s.submitter && s.submitter.toLowerCase() === submitterName.toLowerCase());
-    if (!existing) return;
-    if (!confirm(`Are you sure you want to reset settlement for "${submitterName}"? Status will revert to Pending.`)) {
+  // Reset / Delete Settlement Log
+  const handleResetSettlement = async (submitterName: string, settlementId?: string) => {
+    const target = settlementId 
+      ? settlements.find(s => s.id === settlementId)
+      : settlements.find(s => s.submitter && s.submitter.toLowerCase() === submitterName.toLowerCase());
+    if (!target) return;
+    if (!confirm(`Are you sure you want to reset this settlement for "${submitterName}"? Those credits will be restored to active count.`)) {
       return;
     }
     try {
-      const res = await fetch(`/api/pcu/settlements/${existing.id}`, {
+      const res = await fetch(`/api/pcu/settlements/${target.id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${authToken}` }
       });
       if (res.ok) {
         await fetchSettlements();
         fetchHistory();
-        showToast(`Settlement for "${submitterName}" has been reset.`, 'info');
+        showToast(`Settlement log for "${submitterName}" removed and credits restored to ledger.`, 'info');
         setSettlingSubmitter(null);
       } else {
         const err = await res.json();
@@ -916,6 +1001,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
       showToast(`PCU documentation for "${formattedName}" submitted successfully!`, 'success');
       setSubmitSuccess(`PCU record and ${stagedFiles.length} file(s) for "${formattedName}" have been submitted and saved in cPanel MySQL.`);
+      recordPatientSubmittedToday(formattedName, cleanBarangay);
       
       // Reset form fields
       setFullName('');
@@ -1137,6 +1223,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         setSelectedRecord(prev => prev ? { ...prev, status: 'VERIFIED', verified_credit_added: true } : null);
       }
 
+      recordPatientSubmittedToday(record.fullName, record.barangay);
       showToast(`PCU submission for "${record.fullName}" has been verified! Transferred to Verified section and 1 credit credited at ₱${baseRate.toFixed(2)}.`, 'success');
       fetchHistory();
     } catch (err: any) {
@@ -1191,6 +1278,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         setSelectedRecord(prev => prev ? { ...prev, status: 'PENDING', pending_credit_added: true } : null);
       }
 
+      recordPatientSubmittedToday(record.fullName, record.barangay);
       showToast(`Record "${record.fullName}" moved to Pending section! 1 credit credited at ₱${pendingBaseRate.toFixed(2)}.`, 'success');
       fetchHistory();
     } catch (err: any) {
@@ -1244,6 +1332,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         setSelectedRecord(prev => prev ? { ...prev, status: 'UPDATED' } : null);
       }
 
+      recordPatientSubmittedToday(record.fullName, record.barangay);
       showToast(`Record "${record.fullName}" status updated and transferred to Updated section!`, 'success');
       fetchHistory();
     } catch (err: any) {
@@ -1324,7 +1413,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         body: JSON.stringify({
           id: record.id,
           fullName: record.fullName,
-          return_reason: returnReason
+          return_reason: returnReason,
+          submitter: record.uploadedBy || (record as any).submitter_id || ''
         })
       });
 
@@ -1336,22 +1426,40 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       const nowIso = new Date().toISOString();
       const adminName = currentUser?.username || 'Admin';
 
-      // Immediately transfer record out of Submit PCU records list so it is removed from Submit PCU
-      setUploadedRecords(prev => prev.filter(item => {
+      // Update record status to RETURNED so it transfers to the new Returned tab
+      setUploadedRecords(prev => prev.map(item => {
         const isMatch = (item.id && record.id && item.id === record.id) ||
           (item.fullName && record.fullName && item.fullName.toLowerCase().trim() === record.fullName.toLowerCase().trim());
-        return !isMatch;
+        if (isMatch) {
+          return {
+            ...item,
+            status: 'RETURNED',
+            returned_at: nowIso,
+            returned_by: adminName,
+            return_reason: returnReason
+          };
+        }
+        return item;
       }));
 
-      // Close the detail modal if this record was open
+      // Update detail modal if this record was open
       if (selectedRecord && (selectedRecord.id === record.id || selectedRecord.fullName?.toLowerCase().trim() === record.fullName?.toLowerCase().trim())) {
-        setSelectedRecord(null);
+        setSelectedRecord(prev => prev ? {
+          ...prev,
+          status: 'RETURNED',
+          returned_at: nowIso,
+          returned_by: adminName,
+          return_reason: returnReason
+        } : null);
       }
+
+      // Record patient key as submitted today so Daily counter never decreases
+      recordPatientSubmittedToday(record.fullName, record.barangay);
 
       setReturnTarget(null);
       setReturnReasonInput('');
 
-      showToast(`Record "${record.fullName}" has been returned and transferred to the Returned page for resubmission.`, 'success');
+      showToast(`Record "${record.fullName}" has been marked as Returned and moved to the Returned tab.`, 'success');
       fetchHistory();
       fetchUploadedRecords();
     } catch (err: any) {
@@ -1424,6 +1532,14 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     return getSubmittedTimestamp(record);
   };
 
+  const getReturnedTimestamp = (record: UploadedPcuRecord): number => {
+    if (record.returned_at) {
+      const t = new Date(record.returned_at).getTime();
+      if (!isNaN(t)) return t;
+    }
+    return getSubmittedTimestamp(record);
+  };
+
   const sortTabRecords = (records: UploadedPcuRecord[], tab: string): UploadedPcuRecord[] => {
     if (tab === 'verified') {
       return [...records].sort((a, b) => getVerifiedTimestamp(b) - getVerifiedTimestamp(a));
@@ -1434,12 +1550,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     if (tab === 'updated') {
       return [...records].sort((a, b) => getUpdatedTimestamp(b) - getUpdatedTimestamp(a));
     }
+    if (tab === 'returned') {
+      return [...records].sort((a, b) => getReturnedTimestamp(b) - getReturnedTimestamp(a));
+    }
     return [...records].sort((a, b) => getSubmittedTimestamp(b) - getSubmittedTimestamp(a));
   };
 
   // =========================================================================
-  // SEPARATE UPLOADED RECORDS INTO 4 TAB GROUPS (SORTED WITH NEWEST ON TOP):
-  // Files | Verified | Pending | Updated
+  // SEPARATE UPLOADED RECORDS INTO TAB GROUPS (SORTED WITH NEWEST ON TOP):
+  // Files | Verified | Pending | Updated | Returned
   // =========================================================================
   const filesRecords = React.useMemo(() => {
     return uploadedRecords
@@ -1468,6 +1587,12 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       .sort((a, b) => getUpdatedTimestamp(b) - getUpdatedTimestamp(a));
   }, [uploadedRecords]);
 
+  const returnedRecords = React.useMemo(() => {
+    return uploadedRecords
+      .filter(r => (r.status || '').toUpperCase() === 'RETURNED')
+      .sort((a, b) => getReturnedTimestamp(b) - getReturnedTimestamp(a));
+  }, [uploadedRecords]);
+
   // Current tab records based on active tab
   const currentTabRecords = React.useMemo(() => {
     switch (activeTab) {
@@ -1479,10 +1604,12 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         return pendingRecords;
       case 'updated':
         return updatedRecords;
+      case 'returned':
+        return returnedRecords;
       default:
         return filesRecords;
     }
-  }, [activeTab, filesRecords, verifiedRecords, pendingRecords, updatedRecords]);
+  }, [activeTab, filesRecords, verifiedRecords, pendingRecords, updatedRecords, returnedRecords]);
 
   // =========================================================================
   // AUTOMATIC MIDNIGHT RESET COUNTERS:
@@ -1494,10 +1621,25 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   // Total Pending Files: Total pending records
   // Daily Updated Files: Count moved to updated today
   // Total Updated Files: Total updated records
+  // Daily Returned Files: Count returned today
+  // Total Returned Files: Total returned records
   // =========================================================================
   const dailyFilesSubmitted = React.useMemo(() => {
-    return uploadedRecords.filter(r => isToday(r.uploadedAt)).length;
-  }, [uploadedRecords, nowTick]);
+    // 1. Gather all unique patient keys submitted today from current active records
+    const todaySet = new Set<string>(dailySubmittedKeys);
+    uploadedRecords.forEach(r => {
+      if (isToday(r.uploadedAt)) {
+        const key = `${(r.fullName || '').trim().toLowerCase()}___${(r.barangay || '').trim().toLowerCase()}`;
+        if (key.replace(/___/g, '')) todaySet.add(key);
+      }
+    });
+
+    const localCount = todaySet.size;
+    if (typeof serverDailyCount === 'number' && serverDailyCount > 0) {
+      return Math.max(serverDailyCount, localCount);
+    }
+    return localCount;
+  }, [uploadedRecords, dailySubmittedKeys, serverDailyCount, nowTick]);
 
   const dailyVerifiedCount = React.useMemo(() => {
     return uploadedRecords.filter(r => 
@@ -1517,6 +1659,13 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     return uploadedRecords.filter(r => 
       (r.status || '').toUpperCase() === 'UPDATED' && 
       isToday(r.updated_status_at || r.uploadedAt)
+    ).length;
+  }, [uploadedRecords, nowTick]);
+
+  const dailyReturnedCount = React.useMemo(() => {
+    return uploadedRecords.filter(r => 
+      (r.status || '').toUpperCase() === 'RETURNED' && 
+      isToday(r.returned_at || r.uploadedAt)
     ).length;
   }, [uploadedRecords, nowTick]);
 
@@ -1659,9 +1808,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const submittersLedger = React.useMemo(() => {
     const map = new Map<string, {
       name: string;
-      verifiedCount: number; // Verified Credits
-      pendingCount: number;  // Pending Credits
-      uncreditedFiles: number; // Files in initial Files section
+      verifiedCount: number; // Active Verified Credits
+      pendingCount: number;  // Active Pending Credits
+      uncreditedFiles: number;
       totalUploaded: number;
       filesCount: number;
       verifiedSalary: number;
@@ -1670,7 +1819,35 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       barangays: Set<string>;
       latestSubmission: string | null;
       records: UploadedPcuRecord[];
+      latestSettledAt: string | null;
+      totalSettledPaid: number;
+      isFullySettled: boolean;
     }>();
+
+    // Also include submitters who have settlement records
+    settlements.forEach(st => {
+      const subName = (st.submitter || '').trim();
+      const key = subName.toLowerCase();
+      if (key && !map.has(key)) {
+        map.set(key, {
+          name: subName,
+          verifiedCount: 0,
+          pendingCount: 0,
+          uncreditedFiles: 0,
+          totalUploaded: 0,
+          filesCount: 0,
+          verifiedSalary: 0,
+          pendingSalary: 0,
+          totalSalary: 0,
+          barangays: new Set<string>(),
+          latestSubmission: null,
+          records: [],
+          latestSettledAt: null,
+          totalSettledPaid: 0,
+          isFullySettled: false
+        });
+      }
+    });
 
     uploadedRecords.forEach((rec) => {
       const submitter = (rec.uploadedBy || 'Staff').trim();
@@ -1688,25 +1865,16 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
           totalSalary: 0,
           barangays: new Set<string>(),
           latestSubmission: null,
-          records: []
+          records: [],
+          latestSettledAt: null,
+          totalSettledPaid: 0,
+          isFullySettled: false
         });
       }
 
       const item = map.get(key)!;
       item.records.push(rec);
       item.totalUploaded += 1;
-
-      const s = (rec.status || '').toUpperCase();
-      const isVerified = s === 'VERIFIED' || Boolean(rec.verified_credit_added);
-      const isPending = s === 'PENDING' || s === 'UPDATED' || Boolean(rec.pending_credit_added);
-
-      if (isVerified) {
-        item.verifiedCount += 1;
-      } else if (isPending) {
-        item.pendingCount += 1;
-      } else {
-        item.uncreditedFiles += 1;
-      }
 
       const fCount = rec.filesCount || (rec.uploadedFiles ? rec.uploadedFiles.length : 1);
       item.filesCount += fCount;
@@ -1717,17 +1885,72 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       }
     });
 
+    // Determine settlements and reset settled credits to 0 so only new credits count
     return Array.from(map.values()).map(sub => {
-      const vSalary = sub.verifiedCount * baseRate;
-      const pSalary = sub.pendingCount * pendingBaseRate;
+      const subKey = sub.name.toLowerCase();
+      const subSettlements = settlements.filter(
+        s => s.submitter && s.submitter.toLowerCase() === subKey && (s.paymentStatus === 'SETTLED' || s.paymentStatus === 'PAID')
+      );
+
+      let latestSettledTime = 0;
+      let latestSettledIso: string | null = null;
+      let totalSettledPaid = 0;
+
+      subSettlements.forEach(s => {
+        totalSettledPaid += Number(s.amountPaid ?? s.totalSalary) || 0;
+        const sTime = new Date(s.settledAt || s.createdAt).getTime();
+        if (!isNaN(sTime) && sTime > latestSettledTime) {
+          latestSettledTime = sTime;
+          latestSettledIso = s.settledAt || s.createdAt;
+        }
+      });
+
+      let activeVerified = 0;
+      let activePending = 0;
+      let activeUncredited = 0;
+
+      sub.records.forEach(rec => {
+        const s = (rec.status || '').toUpperCase();
+        const isVerified = s === 'VERIFIED' || Boolean(rec.verified_credit_added);
+        const isPending = s === 'PENDING' || s === 'UPDATED' || Boolean(rec.pending_credit_added);
+
+        // If a settlement exists, records at or before the settlement timestamp are settled and reset
+        if (latestSettledTime > 0) {
+          const actionTimeStr = rec.verified_at || rec.pending_at || rec.updated_status_at || rec.uploadedAt;
+          const actionTime = new Date(actionTimeStr).getTime();
+          if (!isNaN(actionTime) && actionTime <= latestSettledTime) {
+            return; // Already settled!
+          }
+        }
+
+        if (isVerified) {
+          activeVerified += 1;
+        } else if (isPending) {
+          activePending += 1;
+        } else {
+          activeUncredited += 1;
+        }
+      });
+
+      const vSalary = activeVerified * baseRate;
+      const pSalary = activePending * pendingBaseRate;
+      const totalSalary = vSalary + pSalary;
+      const isFullySettled = subSettlements.length > 0 && activeVerified === 0 && activePending === 0;
+
       return {
         ...sub,
+        verifiedCount: activeVerified,
+        pendingCount: activePending,
+        uncreditedFiles: activeUncredited,
         verifiedSalary: vSalary,
         pendingSalary: pSalary,
-        totalSalary: vSalary + pSalary
+        totalSalary: totalSalary,
+        latestSettledAt: latestSettledIso,
+        totalSettledPaid: totalSettledPaid,
+        isFullySettled: isFullySettled
       };
     }).sort((a, b) => b.totalSalary - a.totalSalary);
-  }, [uploadedRecords, baseRate, pendingBaseRate]);
+  }, [uploadedRecords, settlements, baseRate, pendingBaseRate]);
 
   // Export Submitters Tallies & Payroll Ledger to CSV Function
   const exportLedgerToCsv = () => {
@@ -2116,6 +2339,274 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     }
   };
 
+  // Execute High-Fidelity Custom Print Blank Payroll Form matching Saint Francis Clinic format
+  const handleExecutePrintBlankPayroll = () => {
+    const printFrame = document.createElement('iframe');
+    printFrame.style.position = 'fixed';
+    printFrame.style.top = '-9999px';
+    printFrame.style.left = '-9999px';
+    printFrame.style.width = '0';
+    printFrame.style.height = '0';
+    printFrame.style.border = 'none';
+    document.body.appendChild(printFrame);
+
+    const rowsCount = Math.max(1, Math.min(100, Number(blankRowCount) || 15));
+    const formattedDate = formatPrintDate(new Date());
+
+    let rowsHtml = '';
+    for (let i = 1; i <= rowsCount; i++) {
+      rowsHtml += `
+        <tr>
+          <td class="col-num">${i}</td>
+          <td class="col-name"><div class="blank-line"></div></td>
+          <td class="col-brgy"><div class="blank-line"></div></td>
+          <td class="col-v"><div class="blank-line"></div></td>
+          <td class="col-p"><div class="blank-line"></div></td>
+          <td class="col-amt"><div class="blank-line"></div></td>
+          <td class="col-sig"><div class="blank-sig"></div></td>
+          <td class="col-rem"><div class="blank-line"></div></td>
+        </tr>
+      `;
+    }
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${blankPayrollTitle} - Saint Francis Clinic</title>
+        <style>
+          @page {
+            size: ${blankOrientation};
+            margin: 10mm 12mm;
+          }
+          * { box-sizing: border-box; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            color: #0f172a;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .sheet-container {
+            width: 100%;
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 4px 0;
+          }
+          .header-clinic {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.3em;
+            color: #047857;
+            text-align: center;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+          }
+          .header-title {
+            font-size: 20px;
+            font-weight: 900;
+            color: #0f172a;
+            text-align: center;
+            margin: 0 0 3px 0;
+            letter-spacing: -0.01em;
+            text-transform: uppercase;
+          }
+          .header-subtitle {
+            font-size: 11px;
+            font-weight: 600;
+            color: #475569;
+            text-align: center;
+            margin: 0 0 14px 0;
+            letter-spacing: 0.05em;
+          }
+          .meta-box {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 10.5px;
+            padding: 6px 12px;
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            margin-bottom: 12px;
+          }
+          .meta-item {
+            font-weight: 600;
+            color: #334155;
+          }
+          .meta-item strong {
+            color: #0f172a;
+          }
+          .payroll-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 16px;
+          }
+          .payroll-table th {
+            border: 1.5px solid #0f172a;
+            background: #f1f5f9;
+            color: #0f172a;
+            font-size: 9.5px;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            padding: 7px 4px;
+            text-align: center;
+          }
+          .payroll-table td {
+            border: 1px solid #94a3b8;
+            padding: 4px 4px;
+            height: 32px;
+            vertical-align: middle;
+            font-size: 11px;
+          }
+          .col-num { width: 32px; text-align: center; font-weight: 700; color: #475569; }
+          .col-name { width: 220px; }
+          .col-brgy { width: 140px; }
+          .col-v { width: 95px; text-align: center; }
+          .col-p { width: 95px; text-align: center; }
+          .col-amt { width: 120px; text-align: right; }
+          .col-sig { width: 160px; }
+          .col-rem { width: 120px; }
+          .blank-line {
+            width: 100%;
+            height: 100%;
+            min-height: 16px;
+          }
+          .blank-sig {
+            width: 85%;
+            margin: 0 auto;
+            border-bottom: 1px dashed #94a3b8;
+            height: 14px;
+          }
+          .totals-row td {
+            font-weight: 800;
+            background: #f8fafc;
+            border-top: 2px solid #0f172a;
+            border-bottom: 2px solid #0f172a;
+            font-size: 10px;
+            padding: 6px 6px;
+          }
+          .signatures-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+            padding-top: 4px;
+            page-break-inside: avoid;
+          }
+          .sig-card {
+            text-align: center;
+          }
+          .sig-underline {
+            border-bottom: 1.5px solid #0f172a;
+            margin: 32px 16px 5px 16px;
+          }
+          .sig-role {
+            font-size: 9.5px;
+            font-weight: 700;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+          }
+          .sig-person {
+            font-size: 11px;
+            font-weight: 800;
+            color: #0f172a;
+          }
+          .footer-note {
+            font-size: 9px;
+            color: #94a3b8;
+            text-align: center;
+            margin-top: 14px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="sheet-container">
+          <div class="header-clinic">S A I N T &nbsp; F R A N C I S &nbsp; C L I N I C &nbsp; ( S F C )</div>
+          <h1 class="header-title">${blankPayrollTitle}</h1>
+          <div class="header-subtitle">Patient Care Units (PCU) Official Submission & Disbursement Register</div>
+
+          <div class="meta-box">
+            <div class="meta-item">Coverage Area / Station: <strong>${blankBarangay || 'All SFC Coverage Areas'}</strong></div>
+            <div class="meta-item">Payroll Period: <strong>${blankPeriod}</strong></div>
+            <div class="meta-item">Approved Rates: <strong>Verified ₱${baseRate.toFixed(2)} &bull; Pending ₱${pendingBaseRate.toFixed(2)}</strong></div>
+            <div class="meta-item">Printed: <strong>${formattedDate}</strong></div>
+          </div>
+
+          <table class="payroll-table">
+            <thead>
+              <tr>
+                <th class="col-num">#</th>
+                <th class="col-name">Name of Submitter / Worker</th>
+                <th class="col-brgy">Barangay / Purok</th>
+                <th class="col-v">Verified (Qty)</th>
+                <th class="col-p">Pending (Qty)</th>
+                <th class="col-amt">Total Salary (₱)</th>
+                <th class="col-sig">Signature of Recipient</th>
+                <th class="col-rem">Date Received / Remarks</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+              <tr class="totals-row">
+                <td colspan="3" style="text-align: right; text-transform: uppercase; letter-spacing: 0.05em;">Batch / Page Totals:</td>
+                <td style="text-align: center;">__________</td>
+                <td style="text-align: center;">__________</td>
+                <td style="text-align: right; font-family: monospace;">PHP _________________</td>
+                <td colspan="2" style="font-size: 9.5px; color: #64748b; font-weight: normal; text-align: center;">Verified by Audit Officer</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="signatures-grid">
+            <div class="sig-card">
+              <div class="sig-underline"></div>
+              <div class="sig-person">${currentUser?.fullName || currentUser?.username || 'Health Staff'}</div>
+              <div class="sig-role">Prepared By / Disbursing Officer</div>
+            </div>
+            <div class="sig-card">
+              <div class="sig-underline"></div>
+              <div class="sig-person">Mel Feliciano</div>
+              <div class="sig-role">Certified Correct / Master Admin</div>
+            </div>
+            <div class="sig-card">
+              <div class="sig-underline"></div>
+              <div class="sig-person">Clinic Director / Administrator</div>
+              <div class="sig-role">Approved For Payout</div>
+            </div>
+          </div>
+
+          <div class="footer-note">
+            Saint Francis Clinic &bull; Official Blank Payroll Sheet &bull; Generated ${formattedDate}
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const doc = printFrame.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(html);
+      doc.close();
+      setTimeout(() => {
+        printFrame.contentWindow?.focus();
+        printFrame.contentWindow?.print();
+        setTimeout(() => {
+          if (document.body.contains(printFrame)) {
+            document.body.removeChild(printFrame);
+          }
+        }, 2000);
+      }, 300);
+    } else {
+      window.print();
+    }
+  };
+
   // Filtered records for Grid when inside a folder or in all-grid mode
   const currentFolderData = React.useMemo(() => {
     if (!selectedFolder) return null;
@@ -2323,11 +2814,79 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         </span>
       );
     }
+    if (s === 'RETURNED') {
+      return (
+        <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-rose-600 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
+          <RotateCcw className="w-3 h-3 text-white" />
+          <span>Returned</span>
+        </span>
+      );
+    }
     return (
       <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider flex items-center gap-1 shadow-xs shrink-0">
         <FileText className="w-3 h-3 text-white" />
         <span>Files</span>
       </span>
+    );
+  };
+
+  // Render Submission & Activity Timeframe (Verified, Pending, Update, Returned) for cards
+  const renderCardTimeframe = (record: UploadedPcuRecord) => {
+    const s = (record.status || 'FILES').toUpperCase();
+    return (
+      <div className="pt-2 space-y-1 text-[11px] border-t border-slate-100">
+        {/* Submission Timeframe */}
+        <div className="flex items-center gap-1.5 text-slate-500 font-medium">
+          <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          <span className="truncate">
+            Submitted: <strong className="text-slate-800 font-bold">{formatTimestamp(record.uploadedAt)}</strong>
+          </span>
+        </div>
+
+        {/* Activity Timeframe according to current status */}
+        {s === 'VERIFIED' && (
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200/80 font-bold">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span className="truncate">
+              Verified: {formatTimestamp(record.verified_at || record.uploadedAt)} {record.verified_by ? `by ${record.verified_by}` : ''}
+            </span>
+          </div>
+        )}
+
+        {s === 'PENDING' && (
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-amber-50 text-amber-900 border border-amber-200/80 font-bold">
+            <Clock className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <span className="truncate">
+              Pending: {formatTimestamp(record.pending_at || record.uploadedAt)} {record.pending_by ? `by ${record.pending_by}` : ''}
+            </span>
+          </div>
+        )}
+
+        {s === 'UPDATED' && (
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-blue-50 text-blue-900 border border-blue-200/80 font-bold">
+            <CheckCheck className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+            <span className="truncate">
+              Updated: {formatTimestamp(record.updated_status_at || record.uploadedAt)} {record.updated_status_by ? `by ${record.updated_status_by}` : ''}
+            </span>
+          </div>
+        )}
+
+        {s === 'RETURNED' && (
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-rose-50 text-rose-900 border border-rose-200/80 font-bold">
+              <RotateCcw className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+              <span className="truncate">
+                Returned: {formatTimestamp(record.returned_at || record.uploadedAt)} {record.returned_by ? `by ${record.returned_by}` : ''}
+              </span>
+            </div>
+            {record.return_reason && (
+              <div className="text-[10px] text-rose-700 bg-rose-50/60 px-2 py-0.5 rounded border border-rose-100 truncate" title={record.return_reason}>
+                Reason: {record.return_reason}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -2721,7 +3280,26 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 </span>
               </button>
 
-              {/* Tab 5: Ledger (Only Master Admin can view) */}
+              {/* Tab 5: Returned */}
+              <button
+                type="button"
+                onClick={() => setActiveTab('returned')}
+                className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
+                  activeTab === 'returned'
+                    ? 'bg-rose-600 text-white shadow-md shadow-rose-600/20'
+                    : 'neu-tab-inactive'
+                }`}
+              >
+                <RotateCcw className="w-4 h-4 shrink-0" />
+                <span>Returned</span>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                  activeTab === 'returned' ? 'bg-white/20 text-white' : 'bg-rose-100 text-rose-900'
+                }`}>
+                  {returnedRecords.length}
+                </span>
+              </button>
+
+              {/* Tab 6: Ledger (Only Master Admin can view) */}
               {isMasterAdmin && (
                 <button
                   type="button"
@@ -2952,15 +3530,55 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
               </div>
             </div>
           )}
+
+          {activeTab === 'returned' && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+              {/* Counter 1: Daily Returned Files */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-rose-500/10 to-red-500/5 border border-rose-500/30">
+                <div className="space-y-1">
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-rose-800">
+                    Daily Returned Files
+                  </span>
+                  <div className="text-2xl sm:text-3xl font-black text-rose-950 font-display">
+                    {dailyReturnedCount}
+                  </div>
+                  <span className="text-[11px] text-rose-700 font-medium block">
+                    Returned today • Resets at 12:00 AM
+                  </span>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <CalendarClock className="w-6 h-6" />
+                </div>
+              </div>
+
+              {/* Counter 2: Total Returned Files */}
+              <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-white border border-rose-200/60">
+                <div className="space-y-1">
+                  <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-slate-500">
+                    Total Returned Files
+                  </span>
+                  <div className="text-2xl sm:text-3xl font-black text-rose-600 font-display">
+                    {returnedRecords.length}
+                  </div>
+                  <span className="text-[11px] text-slate-500 font-medium block">
+                    All returned records organized by Barangay
+                  </span>
+                </div>
+                <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-700 flex items-center justify-center shrink-0 shadow-xs">
+                  <RotateCcw className="w-6 h-6" />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* Dynamic View: Toggle between Grid View of Uploaded Data and Upload PCU Form */}
       <AnimatePresence mode="wait">
         {!isFormOpen ? (
-          activeTab === 'files' || activeTab === 'verified' || activeTab === 'pending' || activeTab === 'updated' ? (
+          activeTab === 'files' || activeTab === 'verified' || activeTab === 'pending' || activeTab === 'updated' || activeTab === 'returned' ? (
             /* ========================================================================= */
-            /* VIEW: FILES / VERIFIED / PENDING / UPDATED FOLDERS & ALL GRID             */
+            /* VIEW: FILES / VERIFIED / PENDING / UPDATED / RETURNED FOLDERS & ALL GRID  */
             /* ========================================================================= */
             <motion.div
               key={`${activeTab}-view`}
@@ -3280,6 +3898,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                       </div>
                                     </div>
 
+                                    {/* Submission & Activity Timeframe (Verified, Pending, Update, Returned) */}
+                                    {renderCardTimeframe(record)}
+
                                     {/* Action row: Reusable Action Buttons for Files / Verified / Pending / Updated */}
                                     <div className="pt-2">
                                       {renderRecordActionButtons(record)}
@@ -3573,6 +4194,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                     </span>
                                   </div>
                                 </div>
+
+                                {/* Submission & Activity Timeframe (Verified, Pending, Update, Returned) */}
+                                {renderCardTimeframe(record)}
 
                                 {/* Action row: Reusable Action Buttons for Files / Verified / Pending / Updated */}
                                 <div className="pt-2">
@@ -3938,7 +4562,17 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2.5 self-start sm:self-auto">
+                  <div className="flex items-center gap-2.5 self-start sm:self-auto flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setShowCustomPrintModal(true)}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-xs transition-all cursor-pointer shadow-md shadow-emerald-600/20 min-h-[38px]"
+                      title="Custom Print Blank Payroll Form with custom row count"
+                    >
+                      <Printer className="w-3.5 h-3.5 text-white" />
+                      <span>Custom Print</span>
+                    </button>
+
                     <button
                       type="button"
                       onClick={() => setShowPrintLedgerModal(true)}
@@ -3977,7 +4611,6 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                               </div>
                               <div className="min-w-0">
                                 <h4 className="font-black text-slate-900 text-sm truncate">{sub.name}</h4>
-                                <span className="text-[11px] font-semibold text-slate-400">Rank #{idx + 1} Contributor</span>
                               </div>
                             </div>
 
@@ -3997,13 +4630,11 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                           <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-200/50 text-center">
                             <div className="p-2 rounded-xl bg-emerald-50/70 border border-emerald-100">
                               <span className="text-[10px] uppercase font-bold text-emerald-700 block">Verified</span>
-                              <span className="text-xs font-black text-emerald-950">{sub.verifiedCount} cr.</span>
-                              <span className="text-[9px] text-emerald-700 block">₱{sub.verifiedSalary.toFixed(0)}</span>
+                              <span className="text-xs font-black text-emerald-950">{sub.verifiedCount}</span>
                             </div>
                             <div className="p-2 rounded-xl bg-amber-50/70 border border-amber-100">
                               <span className="text-[10px] uppercase font-bold text-amber-700 block">Pending</span>
-                              <span className="text-xs font-black text-amber-950">{sub.pendingCount} cr.</span>
-                              <span className="text-[9px] text-amber-700 block">₱{sub.pendingSalary.toFixed(0)}</span>
+                              <span className="text-xs font-black text-amber-950">{sub.pendingCount}</span>
                             </div>
                             <div className="p-2 rounded-xl bg-slate-50 border border-slate-200">
                               <span className="text-[10px] uppercase font-bold text-slate-500 block">Total</span>
@@ -4046,8 +4677,8 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
                       <tr>
                         <th className="py-3.5 px-6">Submitter</th>
-                        <th className="py-3.5 px-6 text-center">Verified Submissions (1 Credit × ₱{baseRate.toFixed(2)})</th>
-                        <th className="py-3.5 px-6 text-center">Pending Submissions (1 Credit × ₱{pendingBaseRate.toFixed(2)})</th>
+                        <th className="py-3.5 px-6 text-center">Verified Submissions</th>
+                        <th className="py-3.5 px-6 text-center">Pending Submissions</th>
                         <th className="py-3.5 px-6 text-right">Total Salary</th>
                         <th className="py-3.5 px-6 text-center">Action (Settlement)</th>
                       </tr>
@@ -4090,25 +4721,19 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                         </span>
                                       )}
                                     </div>
-                                    <span className="text-[11px] font-semibold text-slate-400 block">
-                                      Rank #{idx + 1} Contributor
-                                    </span>
                                   </div>
                                 </div>
                               </td>
 
-                              {/* 2. Verified Submissions (1 Credit × Verified Base Rate) */}
+                              {/* 2. Verified Submissions */}
                               <td className="py-4 px-6 text-center">
                                 <span className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-50 text-emerald-800 font-black text-xs border border-emerald-200 shadow-xs">
                                   <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                                  <span>{sub.verifiedCount} Credits</span>
-                                  <span className="font-mono text-emerald-700 font-normal">
-                                    (₱{sub.verifiedSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                                  </span>
+                                  <span>{sub.verifiedCount}</span>
                                 </span>
                               </td>
 
-                              {/* 3. Pending Submissions (1 Credit × Pending Base Rate) */}
+                              {/* 3. Pending Submissions */}
                               <td className="py-4 px-6 text-center">
                                 <span className={`inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-black border shadow-xs ${
                                   sub.pendingCount > 0 
@@ -4116,12 +4741,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                     : 'bg-slate-50 text-slate-400 border-slate-200'
                                 }`}>
                                   <Clock className="w-4 h-4 text-amber-600 shrink-0" />
-                                  <span>{sub.pendingCount} Credits</span>
-                                  {sub.pendingCount > 0 && (
-                                    <span className="font-mono text-amber-800 font-normal">
-                                      (₱{sub.pendingSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
-                                    </span>
-                                  )}
+                                  <span>{sub.pendingCount}</span>
                                 </span>
                               </td>
 
@@ -4129,9 +4749,6 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                               <td className="py-4 px-6 text-right">
                                 <div className="font-black text-base text-emerald-700 font-mono">
                                   ₱{computedSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                </div>
-                                <div className="text-[10px] font-medium text-slate-400">
-                                  {sub.verifiedCount} v. (₱{sub.verifiedSalary.toFixed(2)}) + {sub.pendingCount} p. (₱{sub.pendingSalary.toFixed(2)})
                                 </div>
                               </td>
 
@@ -4168,6 +4785,115 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     </tbody>
                   </table>
                 </div>
+              </div>
+
+              {/* ========================================================================= */}
+              {/* SETTLEMENT LOGS: PERMANENT RECORDS OF SETTLED PCU SUBMITTER SALARIES     */}
+              {/* ========================================================================= */}
+              <div className="neu-raised rounded-3xl p-4 sm:p-6 md:p-8 space-y-4 sm:space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 sm:pb-4 border-b border-slate-100 gap-2">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-xl bg-blue-50 text-blue-700 shrink-0">
+                      <Receipt className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base sm:text-lg font-black text-slate-900">
+                        Settlement Logs
+                      </h3>
+                      <p className="text-xs text-slate-400">
+                        Permanent records of settled submitter salaries. Once settled, active tally resets to 0 for new credits to count.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="text-xs font-bold text-slate-500">
+                    {settlements.length} Total Settlements Logged
+                  </div>
+                </div>
+
+                {settlements.length === 0 ? (
+                  <div className="py-10 text-center text-slate-400 font-medium text-xs">
+                    No settlement records found yet. When a submitter's salary is settled, the record will appear here.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
+                        <tr>
+                          <th className="py-3.5 px-4">Date / Time</th>
+                          <th className="py-3.5 px-4">Submitter</th>
+                          <th className="py-3.5 px-4 text-center">Submissions</th>
+                          <th className="py-3.5 px-4 text-right">Settled Salary</th>
+                          <th className="py-3.5 px-4 text-right">Amount Paid</th>
+                          <th className="py-3.5 px-4">Payment Method</th>
+                          <th className="py-3.5 px-4">Settled By</th>
+                          <th className="py-3.5 px-4 text-center">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {settlements.map((st) => (
+                          <tr key={st.id} className="hover:bg-slate-50/70 transition-colors">
+                            <td className="py-3.5 px-4 font-medium text-slate-600 whitespace-nowrap">
+                              {formatTimestamp(st.settledAt || st.createdAt || '')}
+                            </td>
+                            <td className="py-3.5 px-4 font-bold text-slate-900 whitespace-nowrap">
+                              {st.submitter}
+                            </td>
+                            <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                              <span className="font-semibold text-slate-700">
+                                {st.verifiedCount !== undefined ? `${st.verifiedCount} v. / ${st.pendingCount || 0} p.` : `${st.totalSubmissions} total`}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
+                              ₱{(Number(st.totalSalary) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-3.5 px-4 text-right font-mono font-black text-emerald-700 whitespace-nowrap">
+                              ₱{(Number(st.amountPaid ?? st.totalSalary) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-3.5 px-4 whitespace-nowrap">
+                              <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                {st.paymentMethod || 'CASH'}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 text-slate-500 font-medium whitespace-nowrap">
+                              {st.settledBy || 'Master Admin'}
+                            </td>
+                            <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                              <div className="inline-flex items-center gap-1.5 justify-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrintVoucher(
+                                    st.submitter,
+                                    st.totalSubmissions,
+                                    st.totalSalary,
+                                    Number(st.amountPaid ?? st.totalSalary),
+                                    st.paymentMethod,
+                                    st.referenceNotes || '',
+                                    st.settledAt
+                                  )}
+                                  className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50 transition-colors cursor-pointer"
+                                  title="Print Official Disbursement Voucher"
+                                >
+                                  <Printer className="w-4 h-4" />
+                                </button>
+                                {isMasterAdmin && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResetSettlement(st.submitter, st.id)}
+                                    className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                    title="Reset settlement and restore credits to active tally"
+                                  >
+                                    <RotateCcw className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               {/* Settlement Modal Dialog */}
@@ -4810,10 +5536,55 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   {/* Upload Date & Staff */}
                   <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-1">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5 text-emerald-600" /> Uploaded At
+                      <Clock className="w-3.5 h-3.5 text-emerald-600" /> Submitted At
                     </span>
                     <p className="text-xs font-bold text-slate-800">{formatTimestamp(selectedRecord.uploadedAt)}</p>
                     <span className="text-[10px] text-slate-400 block">By: {selectedRecord.uploadedBy}</span>
+                  </div>
+                </div>
+
+                {/* Activity & Status Timeframe Banner */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Current Status & Activity Timeframe</span>
+                    {renderStatusBadge(selectedRecord.status)}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div className="flex items-center gap-2 text-slate-600">
+                      <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span>Submitted: <strong>{formatTimestamp(selectedRecord.uploadedAt)}</strong></span>
+                    </div>
+                    {(selectedRecord.status || '').toUpperCase() === 'VERIFIED' && (
+                      <div className="flex items-center gap-2 text-emerald-800 font-bold">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>Verified: {formatTimestamp(selectedRecord.verified_at || selectedRecord.uploadedAt)} {selectedRecord.verified_by ? `by ${selectedRecord.verified_by}` : ''}</span>
+                      </div>
+                    )}
+                    {(selectedRecord.status || '').toUpperCase() === 'PENDING' && (
+                      <div className="flex items-center gap-2 text-amber-800 font-bold">
+                        <Clock className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>Pending: {formatTimestamp(selectedRecord.pending_at || selectedRecord.uploadedAt)} {selectedRecord.pending_by ? `by ${selectedRecord.pending_by}` : ''}</span>
+                      </div>
+                    )}
+                    {(selectedRecord.status || '').toUpperCase() === 'UPDATED' && (
+                      <div className="flex items-center gap-2 text-blue-800 font-bold">
+                        <CheckCheck className="w-4 h-4 text-blue-600 shrink-0" />
+                        <span>Updated: {formatTimestamp(selectedRecord.updated_status_at || selectedRecord.uploadedAt)} {selectedRecord.updated_status_by ? `by ${selectedRecord.updated_status_by}` : ''}</span>
+                      </div>
+                    )}
+                    {(selectedRecord.status || '').toUpperCase() === 'RETURNED' && (
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 text-rose-800 font-bold">
+                          <RotateCcw className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span>Returned: {formatTimestamp(selectedRecord.returned_at || selectedRecord.uploadedAt)} {selectedRecord.returned_by ? `by ${selectedRecord.returned_by}` : ''}</span>
+                        </div>
+                        {selectedRecord.return_reason && (
+                          <div className="text-xs text-rose-700 bg-rose-50 p-2 rounded-lg border border-rose-100">
+                            <strong>Reason:</strong> {selectedRecord.return_reason}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -5751,6 +6522,212 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                     Saint Francis Clinic — PCU Files Ledger &middot; Generated {formatPrintDate(new Date())}
                   </div>
                 </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* CUSTOM PRINT BLANK PAYROLL FORM MODAL (CUSTOM ROW COUNT & CLINIC TEMPLATE) */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {showCustomPrintModal && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-hidden">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 16 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden border border-slate-200"
+            >
+              {/* Modal Header */}
+              <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50/90 flex items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white flex items-center justify-center shadow-xs">
+                    <Printer className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-slate-900 text-base sm:text-lg">
+                      Custom Print Blank Payroll
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Configure custom rows and print official blank clinic payroll forms
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowCustomPrintModal(false)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                  title="Close modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body / Settings Form */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+                {/* 1. Row Count Selector */}
+                <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <label className="text-xs font-black uppercase tracking-wider text-emerald-950 block">
+                        Number of Blank Rows to Print
+                      </label>
+                      <span className="text-[11px] text-emerald-800">
+                        Admin can print custom different number of rows (1 to 100 rows per batch)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="1"
+                        max="100"
+                        value={blankRowCount}
+                        onChange={(e) => setBlankRowCount(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))}
+                        className="w-24 px-3 py-2 text-center rounded-xl bg-white border border-emerald-300 font-black text-emerald-950 text-base shadow-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                      <span className="text-xs font-bold text-emerald-900">rows</span>
+                    </div>
+                  </div>
+
+                  {/* Quick Preset Buttons */}
+                  <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                    <span className="text-[11px] font-bold text-emerald-800">Presets:</span>
+                    {[5, 10, 15, 20, 25, 30, 40, 50].map((num) => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => setBlankRowCount(num)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          blankRowCount === num
+                            ? 'bg-emerald-700 text-white shadow-xs'
+                            : 'bg-white text-emerald-900 hover:bg-emerald-100 border border-emerald-200'
+                        }`}
+                      >
+                        {num} rows
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2. Form Customization Inputs */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Title */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Payroll Form Title
+                    </label>
+                    <input
+                      type="text"
+                      value={blankPayrollTitle}
+                      onChange={(e) => setBlankPayrollTitle(e.target.value)}
+                      placeholder="e.g. PCU SUBMITTERS PAYROLL REGISTER"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
+                    />
+                  </div>
+
+                  {/* Coverage Area / Barangay */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Barangay / Coverage Area
+                    </label>
+                    <input
+                      type="text"
+                      value={blankBarangay}
+                      onChange={(e) => setBlankBarangay(e.target.value)}
+                      placeholder="e.g. All SFC Coverage Areas or Barangay Name"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
+                    />
+                  </div>
+
+                  {/* Period */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Payroll Period
+                    </label>
+                    <input
+                      type="text"
+                      value={blankPeriod}
+                      onChange={(e) => setBlankPeriod(e.target.value)}
+                      placeholder="e.g. October 2026 or 1st Half October 2026"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
+                    />
+                  </div>
+
+                  {/* Paper Orientation */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Print Orientation
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBlankOrientation('landscape')}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          blankOrientation === 'landscape'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        Landscape (Best)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBlankOrientation('portrait')}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          blankOrientation === 'portrait'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        Portrait
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Form Preview Summary */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
+                  <div className="font-bold text-slate-800 flex items-center justify-between">
+                    <span>Print Specification Preview</span>
+                    <span className="text-[11px] font-normal text-slate-500">Same format as Saint Francis Clinic official payroll</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-slate-600 pt-1">
+                    <div>Rows: <strong className="text-emerald-700">{blankRowCount} lines</strong></div>
+                    <div>Coverage: <strong>{blankBarangay || 'All SFC'}</strong></div>
+                    <div>Period: <strong>{blankPeriod}</strong></div>
+                    <div>Layout: <strong className="capitalize">{blankOrientation}</strong></div>
+                  </div>
+                  <div className="text-[11px] text-slate-400 pt-1 border-t border-slate-200/70">
+                    Includes columns: #, Name of Submitter / Worker, Barangay / Purok, Verified (Qty), Pending (Qty), Total Salary (₱), Signature of Recipient, Remarks, plus Batch Totals and 3 official sign-offs (Prepared by, Mel Feliciano Master Admin Certified, Clinic Director Approved).
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer Toolbar */}
+              <div className="p-4 sm:p-5 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomPrintModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleExecutePrintBlankPayroll();
+                    setShowCustomPrintModal(false);
+                  }}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print Blank Payroll ({blankRowCount} Rows)</span>
+                </button>
               </div>
             </motion.div>
           </div>

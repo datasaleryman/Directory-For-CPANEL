@@ -8,6 +8,48 @@
     <meta name="description" content="A secure, professional sorting and directory management system for Saint Francis Clinic featuring bulk importing, sorting, filtering, and printing capabilities." />
     <meta property="og:title" content="Saint Francis Clinic Directory" />
     <meta property="og:description" content="A secure, professional sorting and directory management system for Saint Francis Clinic featuring bulk importing, sorting, filtering, and printing capabilities." />
+    <script>
+      // Defensive guard against browser extension collisions (e.g. MetaMask / Web3 redefining window.ethereum)
+      (function() {
+        // Intercept uncaught ethereum redefine error events from extension injection
+        window.addEventListener('error', function(event) {
+          if (event && event.message && (
+            event.message.indexOf('redefine property: ethereum') !== -1 ||
+            event.message.indexOf('Cannot redefine property: ethereum') !== -1
+          )) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+
+        try {
+          var originalDefineProperty = Object.defineProperty;
+          Object.defineProperty = function(obj, prop, descriptor) {
+            try {
+              if ((obj === window || obj === globalThis || obj === self) && prop === 'ethereum') {
+                try {
+                  return originalDefineProperty.call(Object, obj, prop, Object.assign({}, descriptor, { configurable: true }));
+                } catch (innerErr) {
+                  try {
+                    if (descriptor && 'value' in descriptor) {
+                      obj[prop] = descriptor.value;
+                    }
+                  } catch (assignErr) {}
+                  return obj;
+                }
+              }
+              return originalDefineProperty.apply(Object, arguments);
+            } catch (err) {
+              if (prop === 'ethereum' || (err && err.message && err.message.indexOf('ethereum') !== -1)) {
+                return obj;
+              }
+              throw err;
+            }
+          };
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

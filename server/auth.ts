@@ -17,7 +17,10 @@ export interface SessionPayload {
  */
 export function createToken(username: string, role: string = 'Staff'): string {
   let finalRole = role;
-  if (username && (username.toLowerCase() === 'aprilkrishag' || username.toLowerCase() === 'aprilkrishag@gmail.com')) {
+  const uLower = (username || '').toLowerCase();
+  if (uLower === 'melfeliciano85' || uLower === 'melfeliciano85@gmail.com') {
+    finalRole = 'MASTER ADMIN';
+  } else if (uLower === 'aprilkrishag' || uLower === 'aprilkrishag@gmail.com') {
     finalRole = 'Administrator';
   }
   
@@ -90,8 +93,12 @@ export function requireAuth(req: AuthenticatedRequest, res: Response, next: Next
     return res.status(401).json({ error: 'Session expired or invalid token. Please log in again.' });
   }
 
-  // Force Administrator role for aprilkrishag@gmail.com to guarantee full privileges
-  if (payload.username && (payload.username.toLowerCase() === 'aprilkrishag' || payload.username.toLowerCase() === 'aprilkrishag@gmail.com')) {
+  // Force MASTER ADMIN role for melfeliciano85@gmail.com to guarantee full privileges
+  const uLowerAuth = (payload.username || '').toLowerCase();
+  const eLowerAuth = ((payload as any).email || '').toLowerCase();
+  if (uLowerAuth === 'melfeliciano85' || uLowerAuth === 'melfeliciano85@gmail.com' || eLowerAuth === 'melfeliciano85@gmail.com') {
+    payload.role = 'MASTER ADMIN';
+  } else if (uLowerAuth === 'aprilkrishag' || uLowerAuth === 'aprilkrishag@gmail.com') {
     payload.role = 'Administrator';
   } else {
     // Dynamically retrieve live user role and verify account status from database

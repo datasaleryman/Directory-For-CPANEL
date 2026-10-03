@@ -296,7 +296,7 @@
   {
     "username": "melfeliciano85",
     "passwordHash": "62ea2bac7cd4d7965b20ab7273df79894a5fc422145e9c6d35b6500b0cf591cf",
-    "role": "ADMIN",
+    "role": "MASTER ADMIN",
     "displayName": "Mel Feliciano",
     "avatarDataUrl": "",
     "fullName": "Mel Feliciano",
@@ -305,7 +305,23 @@
     "status": "Active",
     "createdAt": "2026-07-25T02:39:11.262Z",
     "passwordPlain": "62ea2bac7cd4d7965b20ab7273df79894a5fc422145e9c6d35b6500b0cf591cf",
-    "updatedAt": "2026-08-26T02:33:35.167Z"
+    "updatedAt": "2026-10-02T00:55:00.000Z",
+    "permissions": [
+      "dashboard",
+      "inbox",
+      "map",
+      "directory",
+      "submit-pcu",
+      "returned",
+      "exist-acc-files",
+      "submitted-exist-acc",
+      "accounts",
+      "bulk",
+      "print",
+      "existing-account",
+      "verification-entry",
+      "settings"
+    ]
   },
   {
     "username": "joebertaranez20",

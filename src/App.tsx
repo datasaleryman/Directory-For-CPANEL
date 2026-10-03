@@ -135,16 +135,25 @@ export default function App() {
   });
 
   const userRole = adminUser?.role || 'STAFF';
-  const isSuperUser = ['MASTER ADMIN', 'IT', 'ADMIN', 'Administrator', 'Master Admin'].includes(userRole);
+  const usernameLower = adminUser?.username?.toLowerCase() || '';
+  const emailLower = ((adminUser as any)?.email || '').toLowerCase().trim();
+  const isMasterUser = usernameLower === 'admin' || 
+                       usernameLower === 'melfeliciano85' || 
+                       emailLower === 'melfeliciano85@gmail.com' ||
+                       userRole.toUpperCase() === 'MASTER ADMIN' || 
+                       userRole.toUpperCase() === 'ADMINISTRATOR';
+  const isSuperUser = ['MASTER ADMIN', 'IT', 'ADMIN', 'Administrator', 'Master Admin'].includes(userRole) || isMasterUser;
 
   const hasTabPermission = (tabId: string) => {
+    // Master admin accounts can access all pages, sections, and actions without restriction
+    if (isMasterUser) return true;
+
     let targetTabId = tabId === 'exist-acc-files' ? 'existing-account' : tabId;
     if (targetTabId === 'inbox') {
       targetTabId = 'dashboard';
     }
 
     // Safety check: Prevent lockouts for administrative roles
-    const usernameLower = adminUser?.username?.toLowerCase() || '';
     const roleUpper = userRole.toUpperCase();
     const isAdminAccount = usernameLower === 'admin' || 
                            roleUpper === 'MASTER ADMIN' || 

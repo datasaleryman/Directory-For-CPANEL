@@ -538,7 +538,8 @@ export async function getApp(httpServer?: http.Server) {
       const force = req.query.force === 'true';
       const messages = await getCachedSubmissionMessages(force);
       
-      const isMasterAdmin = req.user?.username.toLowerCase() === 'admin';
+      const uLower = (req.user?.username || '').toLowerCase();
+      const isMasterAdmin = uLower === 'admin' || uLower === 'melfeliciano85' || (req.user?.role || '').toUpperCase() === 'MASTER ADMIN';
       
       if (!isMasterAdmin && req.user?.username) {
         const usernameLower = req.user.username.toLowerCase();

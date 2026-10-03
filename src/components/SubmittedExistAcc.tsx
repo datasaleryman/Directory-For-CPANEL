@@ -116,7 +116,8 @@ export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
     if (!currentUser) return false;
     const role = (currentUser.role || '').toUpperCase().trim();
     const username = (currentUser.username || '').toLowerCase().trim();
-    return role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username === 'admin';
+    const email = ((currentUser as any).email || '').toLowerCase().trim();
+    return role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username === 'admin' || username === 'melfeliciano85' || email === 'melfeliciano85@gmail.com';
   }, [currentUser]);
 
   // Fetch Submitted Exist Accounts

@@ -20,6 +20,7 @@ import {
   ExternalLink, 
   UploadCloud, 
   ShieldAlert,
+  ShieldCheck,
   FolderOpen,
   Loader2,
   CheckCircle2,
