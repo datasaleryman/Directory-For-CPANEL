@@ -279,7 +279,10 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       id VARCHAR(100) NOT NULL PRIMARY KEY,
       submitter VARCHAR(255) NOT NULL,
       total_submissions INT DEFAULT 0,
+      verified_count INT DEFAULT 0,
+      pending_count INT DEFAULT 0,
       base_rate DECIMAL(10,2) DEFAULT 0.00,
+      pending_base_rate DECIMAL(10,2) DEFAULT 0.00,
       total_salary DECIMAL(12,2) DEFAULT 0.00,
       amount_paid DECIMAL(12,2) DEFAULT 0.00,
       payment_status VARCHAR(50) DEFAULT 'SETTLED',
@@ -957,7 +960,10 @@ CREATE TABLE IF NOT EXISTS \`pcu_settlements\` (
   \`id\` VARCHAR(100) NOT NULL PRIMARY KEY,
   \`submitter\` VARCHAR(255) NOT NULL,
   \`total_submissions\` INT DEFAULT 0,
+  \`verified_count\` INT DEFAULT 0,
+  \`pending_count\` INT DEFAULT 0,
   \`base_rate\` DECIMAL(10,2) DEFAULT 0.00,
+  \`pending_base_rate\` DECIMAL(10,2) DEFAULT 0.00,
   \`total_salary\` DECIMAL(12,2) DEFAULT 0.00,
   \`amount_paid\` DECIMAL(12,2) DEFAULT 0.00,
   \`payment_status\` VARCHAR(50) DEFAULT 'SETTLED',
@@ -3065,7 +3071,10 @@ export async function savePcuSettlementToCPanel(settlement: {
   id: string;
   submitter: string;
   totalSubmissions: number;
+  verifiedCount?: number;
+  pendingCount?: number;
   baseRate: number;
+  pendingBaseRate?: number;
   totalSalary: number;
   amountPaid?: number;
   paymentStatus?: string;
@@ -3079,7 +3088,10 @@ export async function savePcuSettlementToCPanel(settlement: {
     const id = settlement.id || crypto.randomUUID();
     const submitter = (settlement.submitter || '').trim();
     const totalSubmissions = Number(settlement.totalSubmissions) || 0;
+    const verifiedCount = settlement.verifiedCount !== undefined ? Number(settlement.verifiedCount) : 0;
+    const pendingCount = settlement.pendingCount !== undefined ? Number(settlement.pendingCount) : 0;
     const baseRate = Number(settlement.baseRate) || 0;
+    const pendingBaseRate = settlement.pendingBaseRate !== undefined ? Number(settlement.pendingBaseRate) : 0;
     const totalSalary = Number(settlement.totalSalary) || (totalSubmissions * baseRate);
     const amountPaid = settlement.amountPaid !== undefined ? Number(settlement.amountPaid) : totalSalary;
     const paymentStatus = settlement.paymentStatus || 'SETTLED';
@@ -3088,22 +3100,44 @@ export async function savePcuSettlementToCPanel(settlement: {
     const settledBy = settlement.settledBy || 'Master Admin';
     const settledAt = settlement.settledAt || new Date().toISOString();
 
-    await pool.query(
-      `INSERT INTO pcu_settlements
-        (id, submitter, total_submissions, base_rate, total_salary, amount_paid, payment_status, payment_method, reference_notes, settled_by, settled_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-        total_submissions = VALUES(total_submissions),
-        base_rate = VALUES(base_rate),
-        total_salary = VALUES(total_salary),
-        amount_paid = VALUES(amount_paid),
-        payment_status = VALUES(payment_status),
-        payment_method = VALUES(payment_method),
-        reference_notes = VALUES(reference_notes),
-        settled_by = VALUES(settled_by),
-        settled_at = VALUES(settled_at)`,
-      [id, submitter, totalSubmissions, baseRate, totalSalary, amountPaid, paymentStatus, paymentMethod, referenceNotes, settledBy, settledAt]
-    );
+    try {
+      await pool.query(
+        `INSERT INTO pcu_settlements
+          (id, submitter, total_submissions, verified_count, pending_count, base_rate, pending_base_rate, total_salary, amount_paid, payment_status, payment_method, reference_notes, settled_by, settled_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+          total_submissions = VALUES(total_submissions),
+          verified_count = VALUES(verified_count),
+          pending_count = VALUES(pending_count),
+          base_rate = VALUES(base_rate),
+          pending_base_rate = VALUES(pending_base_rate),
+          total_salary = VALUES(total_salary),
+          amount_paid = VALUES(amount_paid),
+          payment_status = VALUES(payment_status),
+          payment_method = VALUES(payment_method),
+          reference_notes = VALUES(reference_notes),
+          settled_by = VALUES(settled_by),
+          settled_at = VALUES(settled_at)`,
+        [id, submitter, totalSubmissions, verifiedCount, pendingCount, baseRate, pendingBaseRate, totalSalary, amountPaid, paymentStatus, paymentMethod, referenceNotes, settledBy, settledAt]
+      );
+    } catch {
+      await pool.query(
+        `INSERT INTO pcu_settlements
+          (id, submitter, total_submissions, base_rate, total_salary, amount_paid, payment_status, payment_method, reference_notes, settled_by, settled_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+          total_submissions = VALUES(total_submissions),
+          base_rate = VALUES(base_rate),
+          total_salary = VALUES(total_salary),
+          amount_paid = VALUES(amount_paid),
+          payment_status = VALUES(payment_status),
+          payment_method = VALUES(payment_method),
+          reference_notes = VALUES(reference_notes),
+          settled_by = VALUES(settled_by),
+          settled_at = VALUES(settled_at)`,
+        [id, submitter, totalSubmissions, baseRate, totalSalary, amountPaid, paymentStatus, paymentMethod, referenceNotes, settledBy, settledAt]
+      );
+    }
     console.log(`[cPanel DB] Saved PCU settlement ${id} for "${submitter}" to MySQL database.`);
   } catch (err: any) {
     console.warn('[cPanel DB] Error saving PCU settlement to MySQL:', err.message || err);
@@ -3121,7 +3155,10 @@ export async function fetchPcuSettlementsFromCPanel(): Promise<any[]> {
       id: String(r.id),
       submitter: r.submitter,
       totalSubmissions: Number(r.total_submissions) || 0,
+      verifiedCount: r.verified_count !== undefined && r.verified_count !== null ? Number(r.verified_count) : undefined,
+      pendingCount: r.pending_count !== undefined && r.pending_count !== null ? Number(r.pending_count) : undefined,
       baseRate: Number(r.base_rate) || 0,
+      pendingBaseRate: r.pending_base_rate !== undefined && r.pending_base_rate !== null ? Number(r.pending_base_rate) : undefined,
       totalSalary: Number(r.total_salary) || 0,
       amountPaid: Number(r.amount_paid) || 0,
       paymentStatus: r.payment_status || 'SETTLED',

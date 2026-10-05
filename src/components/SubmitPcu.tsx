@@ -52,7 +52,8 @@ import {
   CalendarClock,
   TrendingUp,
   RotateCcw,
-  FolderInput
+  FolderInput,
+  ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -184,8 +185,11 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     return role === 'MASTER ADMIN' || role === 'MASTER_ADMIN' || role === 'MASTERADMIN' || username === 'admin' || username === 'melfeliciano85' || email === 'melfeliciano85@gmail.com';
   }, [currentUser]);
 
-  // Tab state: 'files' | 'verified' | 'pending' | 'updated' | 'returned' | 'ledger'
-  const [activeTab, setActiveTab] = useState<'files' | 'verified' | 'pending' | 'updated' | 'returned' | 'ledger'>('files');
+  // Tab state: 'files' | 'verified' | 'pending' | 'updated' | 'returned' | 'ledger' | 'settlement-logs'
+  const [activeTab, setActiveTab] = useState<'files' | 'verified' | 'pending' | 'updated' | 'returned' | 'ledger' | 'settlement-logs'>('files');
+
+  // Search filter for Settlement Logs tab
+  const [settlementSearch, setSettlementSearch] = useState('');
 
   // Currently opened Barangay folder: null = showing all folder cards; string = inside that folder
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
@@ -326,9 +330,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const [returnTarget, setReturnTarget] = useState<UploadedPcuRecord | null>(null);
   const [returnReasonInput, setReturnReasonInput] = useState<string>('');
 
-  // Security guard: If a non-master admin somehow has activeTab === 'ledger', force back to 'files'
+  // Security guard: If a non-master admin somehow has activeTab === 'ledger' or 'settlement-logs', force back to 'files'
   useEffect(() => {
-    if (!isMasterAdmin && activeTab === 'ledger') {
+    if (!isMasterAdmin && (activeTab === 'ledger' || activeTab === 'settlement-logs')) {
       setActiveTab('files');
     }
   }, [isMasterAdmin, activeTab]);
@@ -729,7 +733,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       if (res.ok) {
         await fetchSettlements();
         fetchHistory();
-        showToast(`Settlement for "${settlingSubmitter.name}" recorded permanently in Settlement logs! Credits reset to 0.`, 'success');
+        showToast(`Settlement for "${settlingSubmitter.name}" completed! Submitter removed from active payroll ledger.`, 'success');
         setSettlingSubmitter(null);
       } else {
         const err = await res.json();
@@ -1808,8 +1812,27 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
   const submittersLedger = React.useMemo(() => {
     const map = new Map<string, {
       name: string;
-      verifiedCount: number; // Active Verified Credits
-      pendingCount: number;  // Active Pending Credits
+      records: UploadedPcuRecord[];
+    }>();
+
+    // Group only records that exist in uploadedRecords
+    uploadedRecords.forEach((rec) => {
+      const submitter = (rec.uploadedBy || 'Staff').trim();
+      if (!submitter) return;
+      const key = submitter.toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, {
+          name: submitter,
+          records: []
+        });
+      }
+      map.get(key)!.records.push(rec);
+    });
+
+    const activeSubmittersList: {
+      name: string;
+      verifiedCount: number;
+      pendingCount: number;
       uncreditedFiles: number;
       totalUploaded: number;
       filesCount: number;
@@ -1822,71 +1845,9 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
       latestSettledAt: string | null;
       totalSettledPaid: number;
       isFullySettled: boolean;
-    }>();
+    }[] = [];
 
-    // Also include submitters who have settlement records
-    settlements.forEach(st => {
-      const subName = (st.submitter || '').trim();
-      const key = subName.toLowerCase();
-      if (key && !map.has(key)) {
-        map.set(key, {
-          name: subName,
-          verifiedCount: 0,
-          pendingCount: 0,
-          uncreditedFiles: 0,
-          totalUploaded: 0,
-          filesCount: 0,
-          verifiedSalary: 0,
-          pendingSalary: 0,
-          totalSalary: 0,
-          barangays: new Set<string>(),
-          latestSubmission: null,
-          records: [],
-          latestSettledAt: null,
-          totalSettledPaid: 0,
-          isFullySettled: false
-        });
-      }
-    });
-
-    uploadedRecords.forEach((rec) => {
-      const submitter = (rec.uploadedBy || 'Staff').trim();
-      const key = submitter.toLowerCase();
-      if (!map.has(key)) {
-        map.set(key, {
-          name: submitter,
-          verifiedCount: 0,
-          pendingCount: 0,
-          uncreditedFiles: 0,
-          totalUploaded: 0,
-          filesCount: 0,
-          verifiedSalary: 0,
-          pendingSalary: 0,
-          totalSalary: 0,
-          barangays: new Set<string>(),
-          latestSubmission: null,
-          records: [],
-          latestSettledAt: null,
-          totalSettledPaid: 0,
-          isFullySettled: false
-        });
-      }
-
-      const item = map.get(key)!;
-      item.records.push(rec);
-      item.totalUploaded += 1;
-
-      const fCount = rec.filesCount || (rec.uploadedFiles ? rec.uploadedFiles.length : 1);
-      item.filesCount += fCount;
-
-      if (rec.barangay) item.barangays.add(rec.barangay);
-      if (!item.latestSubmission || new Date(rec.uploadedAt).getTime() > new Date(item.latestSubmission).getTime()) {
-        item.latestSubmission = rec.uploadedAt;
-      }
-    });
-
-    // Determine settlements and reset settled credits to 0 so only new credits count
-    return Array.from(map.values()).map(sub => {
+    map.forEach((sub) => {
       const subKey = sub.name.toLowerCase();
       const subSettlements = settlements.filter(
         s => s.submitter && s.submitter.toLowerCase() === subKey && (s.paymentStatus === 'SETTLED' || s.paymentStatus === 'PAID')
@@ -1898,30 +1859,49 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
 
       subSettlements.forEach(s => {
         totalSettledPaid += Number(s.amountPaid ?? s.totalSalary) || 0;
-        const sTime = new Date(s.settledAt || s.createdAt).getTime();
+        const sTime = new Date(s.settledAt || s.createdAt || '').getTime();
         if (!isNaN(sTime) && sTime > latestSettledTime) {
           latestSettledTime = sTime;
-          latestSettledIso = s.settledAt || s.createdAt;
+          latestSettledIso = s.settledAt || s.createdAt || null;
         }
       });
 
       let activeVerified = 0;
       let activePending = 0;
       let activeUncredited = 0;
+      let filesCount = 0;
+      const activeRecords: UploadedPcuRecord[] = [];
+      const barangays = new Set<string>();
+      let latestSubmission: string | null = null;
 
       sub.records.forEach(rec => {
+        // If a settlement exists, records uploaded or processed at or before the settlement timestamp are settled and excluded
+        if (latestSettledTime > 0) {
+          const actionTimeStr = rec.verified_at || rec.pending_at || rec.updated_status_at || rec.returned_at || rec.uploadedAt;
+          const actionTime = new Date(actionTimeStr).getTime();
+          const uploadTime = new Date(rec.uploadedAt).getTime();
+          const recTime = Math.max(
+            isNaN(actionTime) ? 0 : actionTime,
+            isNaN(uploadTime) ? 0 : uploadTime
+          );
+
+          if (recTime > 0 && recTime <= latestSettledTime) {
+            return; // Already settled! Exclude from active payroll ledger
+          }
+        }
+
+        activeRecords.push(rec);
+        if (rec.barangay) barangays.add(rec.barangay);
+        const fCount = rec.filesCount || (rec.uploadedFiles ? rec.uploadedFiles.length : 1);
+        filesCount += fCount;
+
+        if (!latestSubmission || new Date(rec.uploadedAt).getTime() > new Date(latestSubmission).getTime()) {
+          latestSubmission = rec.uploadedAt;
+        }
+
         const s = (rec.status || '').toUpperCase();
         const isVerified = s === 'VERIFIED' || Boolean(rec.verified_credit_added);
         const isPending = s === 'PENDING' || s === 'UPDATED' || Boolean(rec.pending_credit_added);
-
-        // If a settlement exists, records at or before the settlement timestamp are settled and reset
-        if (latestSettledTime > 0) {
-          const actionTimeStr = rec.verified_at || rec.pending_at || rec.updated_status_at || rec.uploadedAt;
-          const actionTime = new Date(actionTimeStr).getTime();
-          if (!isNaN(actionTime) && actionTime <= latestSettledTime) {
-            return; // Already settled!
-          }
-        }
 
         if (isVerified) {
           activeVerified += 1;
@@ -1932,24 +1912,33 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
         }
       });
 
-      const vSalary = activeVerified * baseRate;
-      const pSalary = activePending * pendingBaseRate;
-      const totalSalary = vSalary + pSalary;
-      const isFullySettled = subSettlements.length > 0 && activeVerified === 0 && activePending === 0;
+      // ONLY include submitters who have new / unsettled contacts (active records > 0)
+      if (activeRecords.length > 0) {
+        const vSalary = activeVerified * baseRate;
+        const pSalary = activePending * pendingBaseRate;
+        const totalSalary = vSalary + pSalary;
 
-      return {
-        ...sub,
-        verifiedCount: activeVerified,
-        pendingCount: activePending,
-        uncreditedFiles: activeUncredited,
-        verifiedSalary: vSalary,
-        pendingSalary: pSalary,
-        totalSalary: totalSalary,
-        latestSettledAt: latestSettledIso,
-        totalSettledPaid: totalSettledPaid,
-        isFullySettled: isFullySettled
-      };
-    }).sort((a, b) => b.totalSalary - a.totalSalary);
+        activeSubmittersList.push({
+          name: sub.name,
+          verifiedCount: activeVerified,
+          pendingCount: activePending,
+          uncreditedFiles: activeUncredited,
+          totalUploaded: activeRecords.length,
+          filesCount: filesCount,
+          verifiedSalary: vSalary,
+          pendingSalary: pSalary,
+          totalSalary: totalSalary,
+          barangays: barangays,
+          latestSubmission: latestSubmission,
+          records: activeRecords,
+          latestSettledAt: latestSettledIso,
+          totalSettledPaid: totalSettledPaid,
+          isFullySettled: false
+        });
+      }
+    });
+
+    return activeSubmittersList.sort((a, b) => b.totalSalary - a.totalSalary || a.name.localeCompare(b.name));
   }, [uploadedRecords, settlements, baseRate, pendingBaseRate]);
 
   // Export Submitters Tallies & Payroll Ledger to CSV Function
@@ -2002,7 +1991,73 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
-    showToast('Submitters Tallies & Payroll Ledger exported to CSV successfully', 'success');
+    showToast('Payroll Ledger exported to CSV successfully', 'success');
+  };
+
+  // Filtered settlement logs based on search input
+  const filteredSettlements = React.useMemo(() => {
+    if (!settlementSearch.trim()) return settlements;
+    const q = settlementSearch.toLowerCase().trim();
+    return settlements.filter((st) =>
+      (st.submitter && st.submitter.toLowerCase().includes(q)) ||
+      (st.settledBy && st.settledBy.toLowerCase().includes(q)) ||
+      (st.paymentMethod && st.paymentMethod.toLowerCase().includes(q)) ||
+      (st.referenceNotes && st.referenceNotes.toLowerCase().includes(q)) ||
+      (st.settledAt && st.settledAt.toLowerCase().includes(q))
+    );
+  }, [settlements, settlementSearch]);
+
+  // Aggregate stats for Settlement Logs tab
+  const totalSettledAmount = React.useMemo(() => {
+    return settlements.reduce((sum, s) => sum + (Number(s.amountPaid ?? s.totalSalary) || 0), 0);
+  }, [settlements]);
+
+  const totalSettledSubmissions = React.useMemo(() => {
+    return settlements.reduce((sum, s) => sum + (Number(s.totalSubmissions) || 0), 0);
+  }, [settlements]);
+
+  // Export Settlement Logs to CSV Function
+  const exportSettlementsToCsv = () => {
+    if (settlements.length === 0) {
+      showToast('No settlement logs available to export', 'warning');
+      return;
+    }
+    const headers = [
+      'Settlement Date & Time',
+      'Submitter Name',
+      'Total Submissions',
+      'Verified Submissions',
+      'Pending Submissions',
+      'Settled Salary (PHP)',
+      'Amount Paid (PHP)',
+      'Payment Status',
+      'Disbursement Method',
+      'Settled By',
+      'Reference Notes'
+    ];
+    const rows = filteredSettlements.map((st) => [
+      `"${formatTimestamp(st.settledAt || st.createdAt || '').replace(/"/g, '""')}"`,
+      `"${(st.submitter || '').replace(/"/g, '""')}"`,
+      st.totalSubmissions,
+      st.verifiedCount ?? '',
+      st.pendingCount ?? '',
+      (Number(st.totalSalary) || 0).toFixed(2),
+      (Number(st.amountPaid ?? st.totalSalary) || 0).toFixed(2),
+      `"${(st.paymentStatus || 'SETTLED').replace(/"/g, '""')}"`,
+      `"${(st.paymentMethod || 'CASH').replace(/"/g, '""')}"`,
+      `"${(st.settledBy || 'Master Admin').replace(/"/g, '""')}"`,
+      `"${(st.referenceNotes || '').replace(/"/g, '""')}"`
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `pcu_settlement_logs_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Settlement Logs exported to CSV successfully', 'success');
   };
 
   // Helper to format date for Ledger Print View matching official PDF format (e.g. "October 1, 2026 at 9:09 AM")
@@ -2965,7 +3020,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   }}
                   disabled={verifyingId === record.id}
                   className="flex-1 py-2 px-2 min-h-[38px] bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-98 text-white rounded-xl text-[11px] font-black shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
-                  title="Verify submission: 1 Credit × Verified Base Rate credited to submitter"
+                  title="Verify submission"
                 >
                   {verifyingId === record.id ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -2983,7 +3038,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   }}
                   disabled={verifyingId === record.id}
                   className="flex-1 py-2 px-2 min-h-[38px] bg-amber-500 hover:bg-amber-600 active:scale-98 text-white rounded-xl text-[11px] font-black shadow-xs flex items-center justify-center gap-1 transition-all cursor-pointer disabled:opacity-50"
-                  title="Move to Pending: 1 Credit × Pending Base Rate credited to submitter"
+                  title="Move to Pending"
                 >
                   {verifyingId === record.id ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -3315,6 +3370,27 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                   <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-400/30">
                     <ShieldCheck className="w-3 h-3 text-emerald-400" />
                     Master Admin
+                  </span>
+                </button>
+              )}
+
+              {/* Tab 7: Settlement Logs (Only Master Admin can view) */}
+              {isMasterAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('settlement-logs')}
+                  className={`shrink-0 flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs transition-all cursor-pointer min-h-[40px] ${
+                    activeTab === 'settlement-logs'
+                      ? 'neu-black text-white'
+                      : 'neu-tab-inactive'
+                  }`}
+                >
+                  <Receipt className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>Settlement Logs</span>
+                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                    activeTab === 'settlement-logs' ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'
+                  }`}>
+                    {settlements.length}
                   </span>
                 </button>
               )}
@@ -4245,7 +4321,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 </div>
               )}
             </motion.div>
-          ) : (
+          ) : activeTab === 'ledger' ? (
             /* ========================================================================= */
             /* VIEW B: LEDGER (MASTER ADMIN ONLY)                                        */
             /* Lists all the names who submitted PCU Files with their count of submission*/
@@ -4267,7 +4343,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       <span>Master Admin Audit & Payroll Portal</span>
                     </div>
                     <h2 className="text-xl sm:text-3xl font-black font-display tracking-tight text-white flex flex-wrap items-center gap-2.5 sm:gap-3">
-                      <span>PCU Submissions & Payroll Ledger</span>
+                      <span>Payroll Ledger</span>
                       <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/10 text-emerald-300">
                         {submittersLedger.length} Contributors
                       </span>
@@ -4300,29 +4376,21 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 </div>
               </div>
 
-              {/* Base Rate Configuration Cards (Saved Permanently to MySQL) */}
+              {/* Base Rate Configuration Cards */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
                 {/* 1. Verified Base Rate Card */}
                 <div className="neu-raised rounded-3xl p-4 sm:p-6 md:p-8 space-y-4 flex flex-col justify-between">
                   <div className="space-y-2">
                     <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-1 rounded-full bg-emerald-50 text-emerald-900 text-[11px] font-black border border-emerald-300">
-                        <Database className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>Saved in MySQL (`pcuBaseRate`)</span>
-                      </div>
+                      <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                        <span>Verified Base Rate</span>
+                      </h3>
                       <div className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-white/80 px-2.5 py-1 rounded-xl border border-emerald-200">
                         <span>Active:</span>
                         <span className="font-mono text-emerald-950 font-black">₱{baseRate.toFixed(2)}</span>
                       </div>
                     </div>
-
-                    <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
-                      <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                      <span>Verified Base Rate</span>
-                    </h3>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      Rate earned when a record is verified from Files: <strong>1 Credit × Verified Base Rate</strong>. Automatically credited to submitter.
-                    </p>
                   </div>
 
                   <div className="space-y-3 pt-2">
@@ -4367,26 +4435,6 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         )}
                       </button>
                     </div>
-
-                    {/* Quick Presets */}
-                    <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[11px] font-bold text-slate-400">Presets:</span>
-                      {[25, 50, 75, 100, 150].map((rate) => (
-                        <button
-                          key={rate}
-                          type="button"
-                          onClick={() => {
-                            setBaseRateInput(String(rate));
-                            handleSaveBaseRate(rate);
-                          }}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[32px] ${
-                            baseRate === rate ? 'neu-btn-green' : 'neu-btn-white'
-                          }`}
-                        >
-                          ₱{rate}.00
-                        </button>
-                      ))}
-                    </div>
                   </div>
                 </div>
 
@@ -4394,23 +4442,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 <div className="neu-raised rounded-3xl p-4 sm:p-6 md:p-8 space-y-4 flex flex-col justify-between">
                   <div className="space-y-2">
                     <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-1 rounded-full bg-amber-50 text-amber-900 text-[11px] font-black border border-amber-300">
-                        <Database className="w-3.5 h-3.5 text-amber-700" />
-                        <span>Saved in MySQL (`pcuPendingBaseRate`)</span>
-                      </div>
+                      <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
+                        <Clock className="w-5 h-5 text-amber-600" />
+                        <span>Pending Base Rate</span>
+                      </h3>
                       <div className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-900 bg-white/80 px-2.5 py-1 rounded-xl border border-amber-200">
                         <span>Active:</span>
                         <span className="font-mono text-amber-950 font-black">₱{pendingBaseRate.toFixed(2)}</span>
                       </div>
                     </div>
-
-                    <h3 className="text-base sm:text-lg font-black text-slate-900 flex items-center gap-2">
-                      <Clock className="w-5 h-5 text-amber-600" />
-                      <span>Pending Base Rate</span>
-                    </h3>
-                    <p className="text-xs text-slate-600 leading-relaxed">
-                      Rate earned when a record is moved to Pending: <strong>1 Credit × Pending Base Rate</strong>. Automatically credited to submitter.
-                    </p>
                   </div>
 
                   <div className="space-y-3 pt-2">
@@ -4455,92 +4495,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         )}
                       </button>
                     </div>
-
-                    {/* Quick Presets */}
-                    <div className="pt-2 border-t border-slate-100 flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[11px] font-bold text-slate-400">Presets:</span>
-                      {[25, 50, 75, 100, 150].map((rate) => (
-                        <button
-                          key={rate}
-                          type="button"
-                          onClick={() => {
-                            setPendingBaseRateInput(String(rate));
-                            handleSavePendingBaseRate(rate);
-                          }}
-                          className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer min-h-[32px] ${
-                            pendingBaseRate === rate ? 'neu-btn-green' : 'neu-btn-white'
-                          }`}
-                        >
-                          ₱{rate}.00
-                        </button>
-                      ))}
-                    </div>
                   </div>
-                </div>
-              </div>
-
-              {/* 4 KPI Metrics Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {/* 1. Verified Credits */}
-                <div className="neu-raised rounded-2xl p-5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Verified Credits</span>
-                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
-                      <CheckCircle2 className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <div className="text-2xl font-black text-slate-900">{verifiedRecords.length}</div>
-                  <span className="text-[11px] text-emerald-700 font-bold block">
-                    ₱{(verifiedRecords.length * baseRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} subtotal (₱{baseRate.toFixed(2)}/ea)
-                  </span>
-                </div>
-
-                {/* 2. Pending Credits */}
-                <div className="neu-raised rounded-2xl p-5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Pending Credits</span>
-                    <div className="p-2 rounded-xl bg-amber-50 text-amber-700">
-                      <Clock className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <div className="text-2xl font-black text-slate-900">{pendingRecords.length}</div>
-                  <span className="text-[11px] text-amber-700 font-bold block">
-                    ₱{(pendingRecords.length * pendingBaseRate).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} subtotal (₱{pendingBaseRate.toFixed(2)}/ea)
-                  </span>
-                </div>
-
-                {/* 3. Active Base Rates */}
-                <div className="neu-raised rounded-2xl p-5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Active Base Rates</span>
-                    <div className="p-2 rounded-xl bg-blue-50 text-blue-700">
-                      <Coins className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <div className="text-lg font-black text-slate-900 font-mono flex items-center gap-2">
-                    <span className="text-emerald-700">₱{baseRate.toFixed(0)}</span>
-                    <span className="text-slate-300 font-normal">/</span>
-                    <span className="text-amber-700">₱{pendingBaseRate.toFixed(0)}</span>
-                  </div>
-                  <span className="text-[11px] text-slate-500 font-semibold block">
-                    Verified: ₱{baseRate.toFixed(2)} | Pending: ₱{pendingBaseRate.toFixed(2)}
-                  </span>
-                </div>
-
-                {/* 4. Total Salary Pool */}
-                <div className="neu-raised rounded-2xl p-5 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Total Salary Pool</span>
-                    <div className="p-2 rounded-xl bg-emerald-50 text-emerald-700">
-                      <Wallet className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <div className="text-xl font-black text-slate-900 font-mono">
-                    ₱{((verifiedRecords.length * baseRate) + (pendingRecords.length * pendingBaseRate)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </div>
-                  <span className="text-[11px] text-slate-400 block">
-                    Combined Verified & Pending credits
-                  </span>
                 </div>
               </div>
 
@@ -4557,7 +4512,7 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                         Submitters & Contributor Tallies
                       </h3>
                       <p className="text-xs text-slate-400">
-                        Verified submissions earn 1 credit (₱{baseRate.toFixed(2)}) and Pending submissions earn 1 credit (₱{pendingBaseRate.toFixed(2)}) towards submitter salary.
+                        Verified and Pending submissions tallied towards submitter salary.
                       </p>
                     </div>
                   </div>
@@ -4591,16 +4546,14 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 {/* Mobile Cards View (sm/xs screens) */}
                 <div className="block md:hidden space-y-3">
                   {submittersLedger.length === 0 ? (
-                    <div className="py-8 text-center text-slate-400 font-medium text-xs">
-                      No submitters recorded yet.
+                    <div className="py-10 text-center text-slate-400 font-medium text-xs neu-inset rounded-2xl p-6 flex flex-col items-center justify-center gap-2">
+                      <CheckCircle2 className="w-8 h-8 text-emerald-500 opacity-90" />
+                      <span className="font-bold text-slate-700 text-sm">All submitter payrolls are currently settled</span>
+                      <span className="text-slate-400 text-xs">Submitters will automatically reappear here once they submit new contacts.</span>
                     </div>
                   ) : (
-                    submittersLedger.map((sub, idx) => {
+                    submittersLedger.map((sub) => {
                       const computedSalary = sub.totalSalary;
-                      const settlementRec = settlements.find(
-                        s => s.submitter && s.submitter.toLowerCase() === sub.name.toLowerCase()
-                      );
-                      const isSettled = settlementRec && (settlementRec.paymentStatus === 'SETTLED' || settlementRec.paymentStatus === 'PAID');
 
                       return (
                         <div key={`m-${sub.name}`} className="neu-inset p-4 rounded-2xl space-y-3">
@@ -4611,20 +4564,11 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                               </div>
                               <div className="min-w-0">
                                 <h4 className="font-black text-slate-900 text-sm truncate">{sub.name}</h4>
+                                <span className="text-[10px] text-slate-400 font-medium block">
+                                  {sub.totalUploaded} {sub.totalUploaded === 1 ? 'submission' : 'submissions'}
+                                </span>
                               </div>
                             </div>
-
-                            {isSettled ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300 shrink-0">
-                                <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                Settled
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 shrink-0">
-                                <Clock className="w-3 h-3 text-amber-600" />
-                                Pending
-                              </span>
-                            )}
                           </div>
 
                           <div className="grid grid-cols-3 gap-2 pt-1 border-t border-slate-200/50 text-center">
@@ -4645,25 +4589,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                           </div>
 
                           <div className="pt-1">
-                            {isSettled ? (
-                              <button
-                                type="button"
-                                onClick={() => openSettlementModal(sub)}
-                                className="w-full inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs border border-emerald-300 transition-all cursor-pointer min-h-[42px]"
-                              >
-                                <Receipt className="w-4 h-4 text-emerald-600" />
-                                <span>Settled (₱{(settlementRec.amountPaid ?? settlementRec.totalSalary).toFixed(2)})</span>
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => openSettlementModal(sub)}
-                                className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer min-h-[42px]"
-                              >
-                                <Wallet className="w-4 h-4" />
-                                <span>Process Settlement</span>
-                              </button>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => openSettlementModal(sub)}
+                              className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer min-h-[42px]"
+                              title="Process salary settlement for submitter"
+                            >
+                              <Wallet className="w-4 h-4" />
+                              <span>Settlement</span>
+                            </button>
                           </div>
                         </div>
                       );
@@ -4687,16 +4621,16 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                       {submittersLedger.length === 0 ? (
                         <tr>
                           <td colSpan={5} className="py-12 text-center text-slate-400 font-medium">
-                            No submitters recorded yet.
+                            <div className="flex flex-col items-center justify-center gap-2 py-4">
+                              <CheckCircle2 className="w-8 h-8 text-emerald-500 opacity-90" />
+                              <span className="font-bold text-slate-700 text-sm">All submitter payrolls are currently settled</span>
+                              <span className="text-slate-400 text-xs">Submitters will automatically reappear here once they submit new contacts.</span>
+                            </div>
                           </td>
                         </tr>
                       ) : (
-                        submittersLedger.map((sub, idx) => {
+                        submittersLedger.map((sub) => {
                           const computedSalary = sub.totalSalary;
-                          const settlementRec = settlements.find(
-                            s => s.submitter && s.submitter.toLowerCase() === sub.name.toLowerCase()
-                          );
-                          const isSettled = settlementRec && (settlementRec.paymentStatus === 'SETTLED' || settlementRec.paymentStatus === 'PAID');
 
                           return (
                             <tr key={sub.name} className="hover:bg-slate-50/70 transition-colors">
@@ -4707,19 +4641,11 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                                     {sub.name.charAt(0).toUpperCase()}
                                   </div>
                                   <div>
-                                    <div className="font-black text-slate-900 text-sm flex items-center gap-2">
-                                      <span>{sub.name}</span>
-                                      {isSettled ? (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                          <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                          Settled
-                                        </span>
-                                      ) : (
-                                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                                          <Clock className="w-3 h-3 text-amber-600" />
-                                          Pending
-                                        </span>
-                                      )}
+                                    <div className="font-black text-slate-900 text-sm">
+                                      {sub.name}
+                                    </div>
+                                    <div className="text-[11px] text-slate-400 font-medium">
+                                      {sub.totalUploaded} {sub.totalUploaded === 1 ? 'submission' : 'submissions'}
                                     </div>
                                   </div>
                                 </div>
@@ -4755,27 +4681,15 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                               {/* 5. Action (Settlement) */}
                               <td className="py-4 px-6 text-center">
                                 <div className="inline-flex items-center gap-2 justify-center">
-                                  {isSettled ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => openSettlementModal(sub)}
-                                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs border border-emerald-300 transition-all cursor-pointer shadow-xs min-h-[38px]"
-                                      title="View or update settlement voucher"
-                                    >
-                                      <Receipt className="w-3.5 h-3.5 text-emerald-600" />
-                                      <span>Settled (₱{(settlementRec.amountPaid ?? settlementRec.totalSalary).toFixed(2)})</span>
-                                    </button>
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      onClick={() => openSettlementModal(sub)}
-                                      className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer min-h-[38px]"
-                                      title="Process salary settlement for submitter"
-                                    >
-                                      <Wallet className="w-3.5 h-3.5" />
-                                      <span>Settlement</span>
-                                    </button>
-                                  )}
+                                  <button
+                                    type="button"
+                                    onClick={() => openSettlementModal(sub)}
+                                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-98 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer min-h-[38px]"
+                                    title="Process salary settlement for submitter"
+                                  >
+                                    <Wallet className="w-3.5 h-3.5" />
+                                    <span>Settlement</span>
+                                  </button>
                                 </div>
                               </td>
                             </tr>
@@ -4787,113 +4701,33 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 </div>
               </div>
 
-              {/* ========================================================================= */}
-              {/* SETTLEMENT LOGS: PERMANENT RECORDS OF SETTLED PCU SUBMITTER SALARIES     */}
-              {/* ========================================================================= */}
-              <div className="neu-raised rounded-3xl p-4 sm:p-6 md:p-8 space-y-4 sm:space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 sm:pb-4 border-b border-slate-100 gap-2">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-2 rounded-xl bg-blue-50 text-blue-700 shrink-0">
-                      <Receipt className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-base sm:text-lg font-black text-slate-900">
-                        Settlement Logs
-                      </h3>
-                      <p className="text-xs text-slate-400">
-                        Permanent records of settled submitter salaries. Once settled, active tally resets to 0 for new credits to count.
-                      </p>
-                    </div>
+              {/* Quick Link Card to Settlement Logs Tab */}
+              <div className="neu-raised rounded-3xl p-5 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border border-blue-100 bg-gradient-to-r from-blue-50/50 to-indigo-50/30">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 rounded-2xl bg-blue-100 text-blue-700 shrink-0 shadow-xs">
+                    <Receipt className="w-5 h-5" />
                   </div>
-
-                  <div className="text-xs font-bold text-slate-500">
-                    {settlements.length} Total Settlements Logged
+                  <div>
+                    <h4 className="text-sm sm:text-base font-black text-slate-900 flex items-center gap-2">
+                      <span>Settlement Logs & Vouchers</span>
+                      <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-full bg-blue-100 text-blue-800">
+                        {settlements.length} Settled
+                      </span>
+                    </h4>
+                    <p className="text-xs text-slate-500 max-w-xl mt-0.5">
+                      Permanent records of settled submitter salaries, disbursement vouchers, and audit receipts are organized in the Settlement Logs tab.
+                    </p>
                   </div>
                 </div>
 
-                {settlements.length === 0 ? (
-                  <div className="py-10 text-center text-slate-400 font-medium text-xs">
-                    No settlement records found yet. When a submitter's salary is settled, the record will appear here.
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto border border-slate-200 rounded-2xl">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
-                        <tr>
-                          <th className="py-3.5 px-4">Date / Time</th>
-                          <th className="py-3.5 px-4">Submitter</th>
-                          <th className="py-3.5 px-4 text-center">Submissions</th>
-                          <th className="py-3.5 px-4 text-right">Settled Salary</th>
-                          <th className="py-3.5 px-4 text-right">Amount Paid</th>
-                          <th className="py-3.5 px-4">Payment Method</th>
-                          <th className="py-3.5 px-4">Settled By</th>
-                          <th className="py-3.5 px-4 text-center">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {settlements.map((st) => (
-                          <tr key={st.id} className="hover:bg-slate-50/70 transition-colors">
-                            <td className="py-3.5 px-4 font-medium text-slate-600 whitespace-nowrap">
-                              {formatTimestamp(st.settledAt || st.createdAt || '')}
-                            </td>
-                            <td className="py-3.5 px-4 font-bold text-slate-900 whitespace-nowrap">
-                              {st.submitter}
-                            </td>
-                            <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                              <span className="font-semibold text-slate-700">
-                                {st.verifiedCount !== undefined ? `${st.verifiedCount} v. / ${st.pendingCount || 0} p.` : `${st.totalSubmissions} total`}
-                              </span>
-                            </td>
-                            <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
-                              ₱{(Number(st.totalSalary) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </td>
-                            <td className="py-3.5 px-4 text-right font-mono font-black text-emerald-700 whitespace-nowrap">
-                              ₱{(Number(st.amountPaid ?? st.totalSalary) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                            </td>
-                            <td className="py-3.5 px-4 whitespace-nowrap">
-                              <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                                {st.paymentMethod || 'CASH'}
-                              </span>
-                            </td>
-                            <td className="py-3.5 px-4 text-slate-500 font-medium whitespace-nowrap">
-                              {st.settledBy || 'Master Admin'}
-                            </td>
-                            <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                              <div className="inline-flex items-center gap-1.5 justify-center">
-                                <button
-                                  type="button"
-                                  onClick={() => handlePrintVoucher(
-                                    st.submitter,
-                                    st.totalSubmissions,
-                                    st.totalSalary,
-                                    Number(st.amountPaid ?? st.totalSalary),
-                                    st.paymentMethod,
-                                    st.referenceNotes || '',
-                                    st.settledAt
-                                  )}
-                                  className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50 transition-colors cursor-pointer"
-                                  title="Print Official Disbursement Voucher"
-                                >
-                                  <Printer className="w-4 h-4" />
-                                </button>
-                                {isMasterAdmin && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleResetSettlement(st.submitter, st.id)}
-                                    className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
-                                    title="Reset settlement and restore credits to active tally"
-                                  >
-                                    <RotateCcw className="w-4 h-4" />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('settlement-logs')}
+                  className="neu-btn-white inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold text-blue-700 hover:text-blue-900 transition-all cursor-pointer shadow-xs shrink-0 self-start sm:self-auto"
+                >
+                  <span>Open Settlement Logs</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
               </div>
 
               {/* Settlement Modal Dialog */}
@@ -5066,7 +4900,263 @@ export const SubmitPcu: React.FC<SubmitPcuProps> = ({
                 </div>
               )}
             </motion.div>
-          )
+          ) : activeTab === 'settlement-logs' ? (
+            /* ========================================================================= */
+            /* VIEW C: SETTLEMENT LOGS TAB (MASTER ADMIN ONLY)                           */
+            /* Dedicated view for permanent settlement records, vouchers & disbursement   */
+            /* ========================================================================= */
+            <motion.div
+              key="settlement-logs-view"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -12 }}
+              transition={{ duration: 0.2 }}
+              className="space-y-6"
+            >
+              {/* Header Card & Export Controls */}
+              <div className="neu-black text-white rounded-3xl p-5 sm:p-8 relative overflow-hidden">
+                <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
+                  <div className="space-y-2">
+                    <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-xs font-bold border border-blue-400/30">
+                      <ShieldCheck className="w-4 h-4 text-blue-400" />
+                      <span>Master Admin Disbursement & Payout Records</span>
+                    </div>
+                    <h2 className="text-xl sm:text-3xl font-black font-display tracking-tight text-white flex flex-wrap items-center gap-2.5 sm:gap-3">
+                      <span>Settlement Logs</span>
+                      <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-white/10 text-blue-300">
+                        {settlements.length} Total Settlements
+                      </span>
+                    </h2>
+                    <p className="text-xs sm:text-sm text-slate-300 max-w-2xl leading-relaxed">
+                      Permanent, immutable audit trail of settled submitter salaries and official disbursement vouchers. Once settled, active tally resets to 0 for new submissions to accumulate.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2.5 sm:gap-3 shrink-0 w-full sm:w-auto">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('ledger')}
+                      className="flex-1 sm:flex-initial neu-btn-white inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl sm:rounded-2xl text-slate-900 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer min-h-[44px]"
+                    >
+                      <BookOpen className="w-4 h-4 text-emerald-600" />
+                      <span>Payroll Ledger</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={exportSettlementsToCsv}
+                      disabled={settlements.length === 0}
+                      className="flex-1 sm:flex-initial neu-btn-green inline-flex items-center justify-center gap-2 px-5 py-3 rounded-xl sm:rounded-2xl text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer min-h-[44px] disabled:opacity-50"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span>Export CSV</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Settlement Summary Stats */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {/* 1. Total Settlements */}
+                <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-white border border-slate-200">
+                  <div className="space-y-1">
+                    <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Settlements Logged
+                    </span>
+                    <div className="text-2xl sm:text-3xl font-black text-slate-900 font-display">
+                      {settlements.length}
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-medium block">
+                      Disbursement records
+                    </span>
+                  </div>
+                  <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 shadow-xs">
+                    <Receipt className="w-6 h-6" />
+                  </div>
+                </div>
+
+                {/* 2. Total Disbursed */}
+                <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-emerald-500/10 via-teal-500/10 to-emerald-600/15 border-2 border-emerald-500/30">
+                  <div className="space-y-1">
+                    <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-emerald-900">
+                      Total Disbursed
+                    </span>
+                    <div className="text-2xl sm:text-3xl font-black text-emerald-950 font-display">
+                      ₱{totalSettledAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </div>
+                    <span className="text-[11px] text-emerald-700 font-medium block">
+                      Total payout released
+                    </span>
+                  </div>
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 shadow-xs">
+                    <Banknote className="w-6 h-6" />
+                  </div>
+                </div>
+
+                {/* 3. Total Submissions Settled */}
+                <div className="neu-raised rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-white border border-slate-200">
+                  <div className="space-y-1">
+                    <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-slate-500">
+                      Submissions Cleared
+                    </span>
+                    <div className="text-2xl sm:text-3xl font-black text-slate-900 font-display">
+                      {totalSettledSubmissions}
+                    </div>
+                    <span className="text-[11px] text-slate-400 font-medium block">
+                      Credits compensated
+                    </span>
+                  </div>
+                  <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0 shadow-xs">
+                    <FolderCheck className="w-6 h-6" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Settlement Records Container */}
+              <div className="neu-raised rounded-3xl p-4 sm:p-6 md:p-8 space-y-4 sm:space-y-6">
+                {/* Search Bar & Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 sm:pb-4 border-b border-slate-100 gap-3">
+                  <div className="relative flex-1 max-w-md">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={settlementSearch}
+                      onChange={(e) => setSettlementSearch(e.target.value)}
+                      placeholder="Filter submitter, method, settled by, or notes..."
+                      className="w-full pl-10 pr-9 py-2 neu-inset rounded-xl text-xs sm:text-sm font-medium text-slate-900 focus:outline-none placeholder:text-slate-400"
+                    />
+                    {settlementSearch && (
+                      <button
+                        type="button"
+                        onClick={() => setSettlementSearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="text-xs font-bold text-slate-500">
+                      Showing {filteredSettlements.length} of {settlements.length} Settlements
+                    </div>
+                  </div>
+                </div>
+
+                {/* Table or Empty State */}
+                {settlements.length === 0 ? (
+                  <div className="py-16 text-center space-y-3">
+                    <div className="w-14 h-14 rounded-3xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto">
+                      <Receipt className="w-7 h-7" />
+                    </div>
+                    <div className="space-y-1">
+                      <h4 className="text-base font-bold text-slate-800">No settlement records found</h4>
+                      <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                        When submitter salaries are settled from the Payroll Ledger, official disbursement records and printable vouchers will appear here.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('ledger')}
+                      className="neu-btn-green inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-xs font-bold transition-all cursor-pointer mt-2"
+                    >
+                      <BookOpen className="w-3.5 h-3.5" />
+                      <span>Go to Payroll Ledger</span>
+                    </button>
+                  </div>
+                ) : filteredSettlements.length === 0 ? (
+                  <div className="py-12 text-center space-y-2">
+                    <p className="text-sm font-medium text-slate-600">No settlements match "{settlementSearch}"</p>
+                    <button
+                      type="button"
+                      onClick={() => setSettlementSearch('')}
+                      className="text-xs font-bold text-blue-600 hover:text-blue-800 cursor-pointer"
+                    >
+                      Clear search filter
+                    </button>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
+                        <tr>
+                          <th className="py-3.5 px-4">Date / Time</th>
+                          <th className="py-3.5 px-4">Submitter</th>
+                          <th className="py-3.5 px-4 text-center">Submissions</th>
+                          <th className="py-3.5 px-4 text-right">Settled Salary</th>
+                          <th className="py-3.5 px-4 text-right">Amount Paid</th>
+                          <th className="py-3.5 px-4">Payment Method</th>
+                          <th className="py-3.5 px-4">Settled By</th>
+                          <th className="py-3.5 px-4 text-center">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredSettlements.map((st) => (
+                          <tr key={st.id} className="hover:bg-slate-50/70 transition-colors">
+                            <td className="py-3.5 px-4 font-medium text-slate-600 whitespace-nowrap">
+                              {formatTimestamp(st.settledAt || st.createdAt || '')}
+                            </td>
+                            <td className="py-3.5 px-4 font-bold text-slate-900 whitespace-nowrap">
+                              {st.submitter}
+                            </td>
+                            <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                              <span className="font-semibold text-slate-700">
+                                {st.verifiedCount !== undefined ? `${st.verifiedCount} v. / ${st.pendingCount || 0} p.` : `${st.totalSubmissions} total`}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
+                              ₱{(Number(st.totalSalary) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-3.5 px-4 text-right font-mono font-black text-emerald-700 whitespace-nowrap">
+                              ₱{(Number(st.amountPaid ?? st.totalSalary) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-3.5 px-4 whitespace-nowrap">
+                              <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                {st.paymentMethod || 'CASH'}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 text-slate-500 font-medium whitespace-nowrap">
+                              {st.settledBy || 'Master Admin'}
+                            </td>
+                            <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                              <div className="inline-flex items-center gap-1.5 justify-center">
+                                <button
+                                  type="button"
+                                  onClick={() => handlePrintVoucher(
+                                    st.submitter,
+                                    st.totalSubmissions,
+                                    st.totalSalary,
+                                    Number(st.amountPaid ?? st.totalSalary),
+                                    st.paymentMethod,
+                                    st.referenceNotes || '',
+                                    st.settledAt
+                                  )}
+                                  className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50 transition-colors cursor-pointer"
+                                  title="Print Official Disbursement Voucher"
+                                >
+                                  <Printer className="w-4 h-4" />
+                                </button>
+                                {isMasterAdmin && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResetSettlement(st.submitter, st.id)}
+                                    className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                    title="Reset settlement and restore credits to active tally"
+                                  >
+                                    <RotateCcw className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          ) : null
         ) : (
           /* ========================================================================= */
           /* SECTION 2: THE FORM (DISPLAYED WHEN "Upload PCU" BUTTON IS CLICKED)        */
