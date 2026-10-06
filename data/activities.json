@@ -1,5 +1,89 @@
 [
   {
+    "id": "78b67145-4e22-4648-8990-a45698f30596",
+    "timestamp": "2026-10-06T01:40:35.511Z",
+    "username": "admin",
+    "action": "Manually registered 105 new existing account records in bulk"
+  },
+  {
+    "id": "96006575-e2a8-4bcf-822b-864519fc9094",
+    "timestamp": "2026-10-06T01:40:20.613Z",
+    "username": "admin",
+    "action": "Logged in to dashboard successfully."
+  },
+  {
+    "id": "8acf259a-bd4e-4088-8f70-0aa5b9110785",
+    "timestamp": "2026-10-06T01:27:16.768Z",
+    "username": "admin",
+    "action": "Updated account: added to files list for \"BADAJOS PRINCESS DIARY RONQUILLO\""
+  },
+  {
+    "id": "aa90fc2f-6c32-4abf-86b6-d3fc20d5cc3f",
+    "timestamp": "2026-10-06T01:27:14.904Z",
+    "username": "admin",
+    "action": "Updated account: added to files list for \"MAGAS ELIZABETH LAPE\""
+  },
+  {
+    "id": "7432a547-a233-4e3c-8561-0d6697e3bcd9",
+    "timestamp": "2026-10-06T01:27:14.379Z",
+    "username": "admin",
+    "action": "Updated account: added to files list for \"ENRIQUE TUGAHAN BASADRE\""
+  },
+  {
+    "id": "6515cf81-19c6-4170-a5a1-89adae1e8d5b",
+    "timestamp": "2026-10-06T01:27:13.937Z",
+    "username": "admin",
+    "action": "Updated account: added to files list for \"LABAJO REYNATO BADAJOS\""
+  },
+  {
+    "id": "6bcc0b1c-bf31-4505-8293-5ca070c6b2b1",
+    "timestamp": "2026-10-06T01:27:13.523Z",
+    "username": "admin",
+    "action": "Updated account: added to files list for \"JUAN DELA CRUZ\""
+  },
+  {
+    "id": "daa05d64-57c2-4d79-8a55-1b7b0aa2fcab",
+    "timestamp": "2026-10-06T01:27:08.779Z",
+    "username": "admin",
+    "action": "Updated account: removed from files list for \"BADAJOS PRINCESS DIARY RONQUILLO\""
+  },
+  {
+    "id": "d236eecb-9ba6-4143-9355-048543f12799",
+    "timestamp": "2026-10-06T01:27:07.993Z",
+    "username": "admin",
+    "action": "Updated account: removed from files list for \"MAGAS ELIZABETH LAPE\""
+  },
+  {
+    "id": "7a81154d-1108-4db6-9b24-c17fe5eaa80e",
+    "timestamp": "2026-10-06T01:27:07.376Z",
+    "username": "admin",
+    "action": "Updated account: removed from files list for \"ENRIQUE TUGAHAN BASADRE\""
+  },
+  {
+    "id": "9376e8c9-89d4-425e-9391-72cfb0618475",
+    "timestamp": "2026-10-06T01:27:06.513Z",
+    "username": "admin",
+    "action": "Updated account: removed from files list for \"LABAJO REYNATO BADAJOS\""
+  },
+  {
+    "id": "5344a4ee-f12f-41b9-95cb-b85ee8591ee0",
+    "timestamp": "2026-10-06T01:26:26.432Z",
+    "username": "admin",
+    "action": "Permanently deleted PCU submission for \"Abajar, Jelord Tillo\" from MySQL database."
+  },
+  {
+    "id": "2cb1bebf-131c-4aeb-9500-642be3a45110",
+    "timestamp": "2026-10-06T01:23:57.391Z",
+    "username": "admin",
+    "action": "Uploaded 7 PCU File(s) for: \"Abajar, Jelord Tillo\""
+  },
+  {
+    "id": "ee391a90-57f2-4ad8-80f5-6a61e11e7cd0",
+    "timestamp": "2026-10-06T01:23:56.441Z",
+    "username": "admin",
+    "action": "Edited contact: \"Abajar, Jelord Tillo\" -> \"Abajar, Jelord Tillo\""
+  },
+  {
     "id": "c464fdbe-1297-4e2c-8302-b0cb2e74c594",
     "timestamp": "2026-09-30T09:49:14.495Z",
     "username": "admin",

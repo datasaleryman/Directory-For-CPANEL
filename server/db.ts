@@ -11,6 +11,7 @@ import {
   updateUserStatusInCPanel,
   deleteUserFromCPanel,
   saveExistingAccountToCPanel,
+  saveExistingAccountsBulkToCPanel,
   deleteExistingAccountFromCPanel,
   clearAllExistingAccountsFromCPanel,
   saveBarangayToCPanel,
@@ -933,16 +934,17 @@ export function getSheetsStatus() {
 }
 
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
+export const ROLE_PERMS_FILE = path.join(DATA_DIR, 'role_permissions.json');
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'settings'],
-  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account'],
-  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account'],
-  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account'],
-  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account']
+  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
+  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account', 'verification-entry'],
+  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account', 'verification-entry'],
+  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account', 'verification-entry'],
+  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account', 'verification-entry']
 };
 
 export interface SiteSettings {
@@ -1250,7 +1252,10 @@ export function saveSiteSettings(settings: Partial<SiteSettings>) {
       saveSettingToCPanel('pcu_base_rate', String(pcuBaseRate)).catch(() => {});
     }
     if (settings.rolePermissions !== undefined) {
+      siteSettings.rolePermissions = settings.rolePermissions;
+      safeWriteFileSync(ROLE_PERMS_FILE, JSON.stringify(siteSettings.rolePermissions, null, 2), 'utf-8');
       saveSettingToCPanel('role_permissions', JSON.stringify(siteSettings.rolePermissions)).catch(() => {});
+      saveSettingToCPanel('rolePermissions', JSON.stringify(siteSettings.rolePermissions)).catch(() => {});
     }
     if (settings.navSubmittedExistAcc !== undefined) {
       saveSettingToCPanel('nav_submitted_exist_acc', siteSettings.navSubmittedExistAcc).catch(() => {});
@@ -1818,18 +1823,26 @@ export async function initDb() {
 
     // Clean up and synchronize: Only existing accounts explicitly submitted by a user (isSubmitted === true) from Exist. Acc. Files are permitted in Submitted Exist. Acc.
     if (existingAccountsCache && existingAccountsCache.length > 0) {
-      // 1. Purge any unsubmitted contacts from submittedExistAccountsCache
-      submittedExistAccountsCache = submittedExistAccountsCache.filter(sea => {
+      // 1. Ensure existingAccountsCache reflects isSubmitted = true for any record in submittedExistAccountsCache
+      for (const sea of submittedExistAccountsCache) {
+        if (!sea || (sea as any).isSubmitted === false) continue;
         const matchingExistAcc = existingAccountsCache.find(
           acc => String(acc.id) === String(sea.existAccountId || sea.id) || normalizeCompareName(acc.full_name, sea.fullName)
         );
-        if (matchingExistAcc) {
-          return matchingExistAcc.isSubmitted === true;
+        if (matchingExistAcc && !matchingExistAcc.isSubmitted) {
+          matchingExistAcc.isSubmitted = true;
+          matchingExistAcc.submittedAt = matchingExistAcc.submittedAt || sea.uploadedAt;
         }
+      }
+
+      // 2. Filter out any tombstoned/deleted items
+      submittedExistAccountsCache = submittedExistAccountsCache.filter(sea => {
+        if (!sea) return false;
+        if (isExistingAccountTombstoned({ id: sea.id, full_name: sea.fullName, barangay: sea.barangay })) return false;
         return (sea as any).isSubmitted !== false;
       });
 
-      // 2. Add existing accounts that were explicitly submitted by users (isSubmitted === true)
+      // 3. Add existing accounts that were explicitly submitted by users (isSubmitted === true)
       for (const acc of existingAccountsCache) {
         if (acc.isSubmitted === true) {
           const already = submittedExistAccountsCache.some(s => String(s.id) === String(acc.id) || String(s.existAccountId) === String(acc.id));
@@ -1986,15 +1999,25 @@ export async function initDb() {
           navExistingAccount: unescapeHtml(parsed.navExistingAccount || 'Existing Account'),
           navExistAccFiles: unescapeHtml(parsed.navExistAccFiles || 'Exist. Acc. Files'),
           rolePermissions: (() => {
-            const parsedPermissions = parsed.rolePermissions || {};
-            const merged: Record<string, string[]> = { ...DEFAULT_ROLE_PERMISSIONS };
-            for (const role of Object.keys(parsedPermissions)) {
-              const perms = parsedPermissions[role];
-              if (Array.isArray(perms)) {
-                merged[role] = perms;
-              }
+            // 1. Permanent saved role permissions from dedicated role_permissions.json
+            if (fs.existsSync(ROLE_PERMS_FILE)) {
+              try {
+                const permsData = JSON.parse(fs.readFileSync(ROLE_PERMS_FILE, 'utf-8'));
+                if (permsData && typeof permsData === 'object' && Object.keys(permsData).length > 0) {
+                  return permsData;
+                }
+              } catch (e) {}
             }
-            return merged;
+            // 2. Saved role permissions from settings.json
+            const parsedPermissions = parsed.rolePermissions;
+            if (parsedPermissions && typeof parsedPermissions === 'object' && Object.keys(parsedPermissions).length > 0) {
+              try {
+                safeWriteFileSync(ROLE_PERMS_FILE, JSON.stringify(parsedPermissions, null, 2), 'utf-8');
+              } catch (e) {}
+              return parsedPermissions;
+            }
+            // 3. Fallback defaults for fresh install
+            return { ...DEFAULT_ROLE_PERMISSIONS };
           })()
         };
       } catch (e) {
@@ -2056,8 +2079,37 @@ export async function initDb() {
             contactsCache = cpanelData.contacts;
             safeWriteFileSync(CONTACTS_FILE, JSON.stringify(contactsCache, null, 2));
           }
-          if (cpanelData.existingAccounts.length > 0) {
-            existingAccountsCache = cpanelData.existingAccounts.filter((acc: any) => !isExistingAccountTombstoned(acc));
+          if (cpanelData.existingAccounts && cpanelData.existingAccounts.length > 0) {
+            const existMap = new Map<string, ExistingAccountItem>();
+            // Add remote accounts from MySQL first
+            cpanelData.existingAccounts.forEach((acc: any) => {
+              if (!isExistingAccountTombstoned(acc)) existMap.set(String(acc.id), acc);
+            });
+            // Merge with local accounts (preserving any local accounts not yet in MySQL)
+            existingAccountsCache.forEach((local: any) => {
+              if (!isExistingAccountTombstoned(local)) {
+                const localId = String(local.id);
+                const existingRemote = existMap.get(localId) || 
+                  Array.from(existMap.values()).find(r => 
+                    normalizeCompareName(r.full_name, local.full_name) && 
+                    isBarangayMatch(r.barangay, local.barangay)
+                  );
+                if (!existingRemote) {
+                  existMap.set(localId, local);
+                } else {
+                  existMap.set(String(existingRemote.id), {
+                    ...existingRemote,
+                    ...local,
+                    id: existingRemote.id || local.id,
+                    uploadedFiles: (local.uploadedFiles && local.uploadedFiles.length > 0) ? local.uploadedFiles : (existingRemote.uploadedFiles || []),
+                    addedToFiles: local.addedToFiles !== undefined ? local.addedToFiles : existingRemote.addedToFiles,
+                    isSubmitted: (local.isSubmitted || existingRemote.isSubmitted) ? true : false,
+                    submittedAt: local.submittedAt || existingRemote.submittedAt
+                  });
+                }
+              }
+            });
+            existingAccountsCache = Array.from(existMap.values());
             safeWriteFileSync(EXISTING_ACCOUNTS_FILE, JSON.stringify(existingAccountsCache, null, 2));
           }
           if (cpanelData.barangays && cpanelData.barangays.length > 0) {
@@ -2080,11 +2132,16 @@ export async function initDb() {
                 siteSettings.pcuPendingBaseRate = pcuPendingBaseRate;
               }
             }
-            if (cpanelData.settings.role_permissions) {
+            const remoteRolePermsRaw = cpanelData.settings.role_permissions || cpanelData.settings.rolePermissions;
+            if (remoteRolePermsRaw) {
               try {
-                siteSettings.rolePermissions = typeof cpanelData.settings.role_permissions === 'string'
-                  ? JSON.parse(cpanelData.settings.role_permissions)
-                  : cpanelData.settings.role_permissions;
+                const parsedRemote = typeof remoteRolePermsRaw === 'string'
+                  ? JSON.parse(remoteRolePermsRaw)
+                  : remoteRolePermsRaw;
+                if (parsedRemote && typeof parsedRemote === 'object' && Object.keys(parsedRemote).length > 0) {
+                  siteSettings.rolePermissions = parsedRemote;
+                  safeWriteFileSync(ROLE_PERMS_FILE, JSON.stringify(parsedRemote, null, 2), 'utf-8');
+                }
               } catch {}
             }
             if (cpanelData.settings.nav_submitted_exist_acc) {
@@ -2363,12 +2420,95 @@ export async function syncWithCPanelDb(username: string = 'admin'): Promise<{ su
       // Bidirectional user synchronization to protect new registrations
       await syncUsersFromCPanel();
 
-      existingAccountsCache = (cpanelData.existingAccounts || []).filter((acc: any) => !isExistingAccountTombstoned(acc));
+      // Bidirectional existing accounts synchronization: prevents deletion of newly added local existing accounts on sync!
+      const remoteAccounts = (cpanelData.existingAccounts || []).filter((acc: any) => !isExistingAccountTombstoned(acc));
+      const existMap = new Map<string, ExistingAccountItem>();
+      const accountsToPushToCPanel: ExistingAccountItem[] = [];
+
+      // 1. Process remote accounts from MySQL
+      for (const r of remoteAccounts) {
+        existMap.set(String(r.id), r);
+      }
+
+      // 2. Preserve and merge all local accounts not yet in MySQL
+      for (const local of existingAccountsCache) {
+        if (isExistingAccountTombstoned(local)) continue;
+        const localId = String(local.id);
+        const existingRemote = existMap.get(localId) ||
+          Array.from(existMap.values()).find(r =>
+            normalizeCompareName(r.full_name, local.full_name) &&
+            isBarangayMatch(r.barangay, local.barangay)
+          );
+
+        if (!existingRemote) {
+          existMap.set(localId, local);
+          accountsToPushToCPanel.push(local);
+        } else {
+          const merged: ExistingAccountItem = {
+            ...existingRemote,
+            ...local,
+            id: existingRemote.id || local.id,
+            uploadedFiles: (local.uploadedFiles && local.uploadedFiles.length > 0) ? local.uploadedFiles : (existingRemote.uploadedFiles || []),
+            addedToFiles: local.addedToFiles !== undefined ? local.addedToFiles : existingRemote.addedToFiles,
+            isSubmitted: (local.isSubmitted || existingRemote.isSubmitted) ? true : false,
+            submittedAt: local.submittedAt || existingRemote.submittedAt,
+            existingAccVerified: local.existingAccVerified ?? existingRemote.existingAccVerified ?? true,
+            existingAccVisited: local.existingAccVisited ?? existingRemote.existingAccVisited ?? true
+          };
+          existMap.set(String(merged.id), merged);
+        }
+      }
+
+      existingAccountsCache = Array.from(existMap.values());
+
+      // Push un-synced local existing accounts to cPanel MySQL in background
+      if (accountsToPushToCPanel.length > 0) {
+        saveExistingAccountsBulkToCPanel(accountsToPushToCPanel).catch(err => {
+          console.warn('[cPanel DB] Error syncing local existing accounts to MySQL in background:', err.message);
+        });
+      }
+
+      // Synchronize Submitted Exist. Acc.
+      if (Array.isArray(cpanelData.submittedExistAcc) && cpanelData.submittedExistAcc.length > 0) {
+        const seaMap = new Map<string, SubmittedExistAccRecord>();
+        submittedExistAccountsCache.forEach(r => seaMap.set(String(r.id), r));
+        cpanelData.submittedExistAcc.forEach(r => {
+          const localR = seaMap.get(String(r.id));
+          if (localR) {
+            seaMap.set(String(r.id), {
+              ...r,
+              ...localR,
+              uploadedFiles: (localR.uploadedFiles && localR.uploadedFiles.length > 0) ? localR.uploadedFiles : (r.uploadedFiles || [])
+            });
+          } else {
+            seaMap.set(String(r.id), r);
+          }
+        });
+        submittedExistAccountsCache = Array.from(seaMap.values());
+        await safeWriteFile(SUBMITTED_EXIST_ACC_FILE, JSON.stringify(submittedExistAccountsCache, null, 2), 'utf-8');
+      }
+
       if (cpanelData.barangays && cpanelData.barangays.length > 0) {
         barangaysCache = cpanelData.barangays;
       }
       if (cpanelData.settings && Object.keys(cpanelData.settings).length > 0) {
         siteSettings = { ...siteSettings, ...cpanelData.settings };
+        const remoteRolePermsRaw = cpanelData.settings.role_permissions || cpanelData.settings.rolePermissions;
+        if (remoteRolePermsRaw) {
+          try {
+            const parsedRemote = typeof remoteRolePermsRaw === 'string'
+              ? JSON.parse(remoteRolePermsRaw)
+              : remoteRolePermsRaw;
+            if (parsedRemote && typeof parsedRemote === 'object' && Object.keys(parsedRemote).length > 0) {
+              siteSettings.rolePermissions = parsedRemote;
+              safeWriteFileSync(ROLE_PERMS_FILE, JSON.stringify(parsedRemote, null, 2), 'utf-8');
+              safeWriteFileSync(SETTINGS_FILE, JSON.stringify(siteSettings, null, 2), 'utf-8');
+            }
+          } catch {}
+        } else if (siteSettings.rolePermissions && Object.keys(siteSettings.rolePermissions).length > 0) {
+          saveSettingToCPanel('role_permissions', JSON.stringify(siteSettings.rolePermissions)).catch(() => {});
+          saveSettingToCPanel('rolePermissions', JSON.stringify(siteSettings.rolePermissions)).catch(() => {});
+        }
       }
 
       // Reconstruct PCU uploads cache from contacts that have pcu_file_url or are marked submitted
@@ -3342,57 +3482,55 @@ export function getBarangayList(): string[] {
 }
 
 export async function getBase44Roles(): Promise<string[]> {
-  const defaultRoles = [
-    'Administrator',
-    'Admin',
-    'Master Admin',
-    'Leader',
-    'Co-Leader',
+  const canonicalOrder = [
+    'MASTER ADMIN',
     'IT',
-    'Encoder',
-    'Data Encoder',
-    'Staff',
-    'User',
-    'Barangay Health Worker',
-    'Clinic Doctor',
-    'Clinic Nurse',
-    'Barangay Official'
+    'ADMIN',
+    'Administrator',
+    'LEADER',
+    'CO-LEADER',
+    'ENCODER',
+    'STAFF'
   ];
 
-  const roleMap = new Map<string, string>();
+  const result: string[] = [];
+  const seen = new Set<string>();
 
-  // Initialize with default roles
-  defaultRoles.forEach(r => {
-    roleMap.set(r.toUpperCase(), r);
+  const addRole = (r: string) => {
+    if (!r || !r.trim()) return;
+    const clean = r.trim();
+    const upper = clean.toUpperCase();
+    if (!seen.has(upper)) {
+      seen.add(upper);
+      result.push(clean);
+    }
+  };
+
+  // 1. Add core roles in exact canonical order, matching casing in rolePermissions if present
+  canonicalOrder.forEach(r => {
+    if (siteSettings?.rolePermissions) {
+      const match = Object.keys(siteSettings.rolePermissions).find(k => k.toUpperCase() === r.toUpperCase());
+      if (match) {
+        addRole(match);
+        return;
+      }
+    }
+    addRole(r);
   });
 
-  // Collect roles from existing accounts cache
+  // 2. Add any custom roles that the admin configured in rolePermissions
+  if (siteSettings?.rolePermissions) {
+    Object.keys(siteSettings.rolePermissions).forEach(r => addRole(r));
+  }
+
+  // 3. Add any roles from registered users that aren't yet added
   if (Array.isArray(usersCache)) {
     usersCache.forEach(u => {
-      if (u.role && u.role.trim()) {
-        const trimmed = u.role.trim();
-        const upper = trimmed.toUpperCase();
-        if (!roleMap.has(upper)) {
-          roleMap.set(upper, trimmed);
-        }
-      }
+      if (u.role) addRole(u.role);
     });
   }
 
-  // Collect roles from siteSettings.rolePermissions
-  if (siteSettings && siteSettings.rolePermissions) {
-    Object.keys(siteSettings.rolePermissions).forEach(r => {
-      if (r && r.trim()) {
-        const trimmed = r.trim();
-        const upper = trimmed.toUpperCase();
-        if (!roleMap.has(upper)) {
-          roleMap.set(upper, trimmed);
-        }
-      }
-    });
-  }
-
-  return Array.from(roleMap.values());
+  return result;
 }
 
 export async function registerUser(data: {
@@ -11302,9 +11440,9 @@ export async function addLocalExistingAccountsBulk(dataList: any[], username: st
   await addActivity(username, `Manually registered ${processedAccounts.length} new existing account records in bulk`);
 
   if (isCPanelDbConnected()) {
-    for (const acc of processedAccounts) {
-      saveExistingAccountToCPanel(acc).catch(err => console.warn('Failed to save existing account to cPanel DB:', err));
-    }
+    saveExistingAccountsBulkToCPanel(processedAccounts).catch(err => 
+      console.warn('Failed to save existing accounts bulk to cPanel DB:', err)
+    );
   }
 
   return processedAccounts;
@@ -11777,8 +11915,11 @@ export function getSubmittedExistAccounts(): SubmittedExistAccRecord[] {
 
     // Only display contacts that were actually submitted by users from Exist. Acc. Files page
     if (matchingExistAcc) {
-      if (matchingExistAcc.isSubmitted !== true) {
+      if (matchingExistAcc.isSubmitted !== true && (sea as any).isSubmitted !== true) {
         continue; // Exclude unsubmitted contacts
+      }
+      if (matchingExistAcc.isSubmitted !== true && (sea as any).isSubmitted === true) {
+        matchingExistAcc.isSubmitted = true;
       }
       // Preserve original submitter user/account ID
       if (matchingExistAcc.submittedBy || (matchingExistAcc as any).submitter_id) {
@@ -11786,7 +11927,7 @@ export function getSubmittedExistAccounts(): SubmittedExistAccRecord[] {
         sea.uploadedBy = sea.uploadedBy || matchingExistAcc.submittedBy;
       }
     } else {
-      if ((sea as any).isSubmitted !== true) {
+      if ((sea as any).isSubmitted === false) {
         continue; // Exclude unsubmitted contacts
       }
     }

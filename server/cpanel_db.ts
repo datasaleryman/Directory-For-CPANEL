@@ -460,6 +460,10 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       const idCol = (existColRows || []).find((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase() === 'id');
       if (idCol && (String(idCol.data_type || idCol.DATA_TYPE).toLowerCase().includes('int') || String(idCol.extra || idCol.EXTRA).toLowerCase().includes('auto_increment'))) {
         try {
+          // If auto_increment is present, MySQL will NOT allow changing to VARCHAR directly without dropping auto_increment first
+          await connectionPool.query(`ALTER TABLE existing_accounts MODIFY COLUMN \`id\` BIGINT NOT NULL`);
+        } catch (_) {}
+        try {
           await connectionPool.query(`ALTER TABLE existing_accounts MODIFY COLUMN \`id\` VARCHAR(100) NOT NULL`);
           console.log(`[cPanel DB] Altered existing_accounts.id column to VARCHAR(100) NOT NULL.`);
         } catch (e: any) {
@@ -469,15 +473,20 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
 
       const missingExistCols = [
         { name: 'pin', type: "VARCHAR(100) DEFAULT ''" },
-        { name: 'latitude', type: "DOUBLE NULL" },
-        { name: 'longitude', type: "DOUBLE NULL" },
+        { name: 'latitude', type: "DECIMAL(10, 7) NULL" },
+        { name: 'longitude', type: "DECIMAL(10, 7) NULL" },
         { name: 'geotagged', type: "TINYINT(1) DEFAULT 0" },
         { name: 'facebook_link', type: "TEXT NULL" },
         { name: 'uploaded_files', type: "LONGTEXT NULL" },
         { name: 'is_submitted', type: "TINYINT(1) DEFAULT 0" },
         { name: 'submitted_at', type: "VARCHAR(100) NULL" },
         { name: 'existing_acc_verified', type: "TINYINT(1) DEFAULT 1" },
-        { name: 'existing_acc_visited', type: "TINYINT(1) DEFAULT 1" }
+        { name: 'existing_acc_visited', type: "TINYINT(1) DEFAULT 1" },
+        { name: 'status', type: "VARCHAR(50) DEFAULT 'PENDING'" },
+        { name: 'submitted_by', type: "VARCHAR(255) DEFAULT ''" },
+        { name: 'folder', type: "VARCHAR(255) DEFAULT 'GENERAL'" },
+        { name: 'remarks', type: "TEXT NULL" },
+        { name: 'deleted_at', type: "VARCHAR(100) NULL" }
       ];
       for (const col of missingExistCols) {
         if (!existingExistCols.has(col.name.toLowerCase())) {
@@ -2488,6 +2497,154 @@ export async function saveExistingAccountToCPanel(account: any): Promise<void> {
   } catch (err: any) {
     console.warn('[cPanel DB] Error saving existing account to MySQL:', err.message);
   }
+}
+
+/**
+ * Bulk save existing accounts to cPanel MySQL database.
+ * Batches records into safe chunks of 50 to prevent connection pool starvation and timeouts.
+ */
+export async function saveExistingAccountsBulkToCPanel(
+  accounts: any[]
+): Promise<{ success: boolean; saved: number; error?: string }> {
+  if (!pool || !currentStatus.connected) {
+    return {
+      success: false,
+      saved: 0,
+      error: currentStatus.lastError || 'cPanel MySQL Database is not connected. Operating in local storage mode.'
+    };
+  }
+
+  if (!Array.isArray(accounts) || accounts.length === 0) {
+    return { success: true, saved: 0 };
+  }
+
+  // Ensure all necessary columns exist on existing_accounts table
+  try {
+    const [colRows]: any = await pool.query(
+      `SELECT column_name, data_type, extra FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'existing_accounts'`
+    ).catch(() => [[]]);
+    const existingCols = new Set((colRows || []).map((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase()));
+    if (existingCols.size > 0) {
+      const idCol = (colRows || []).find((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase() === 'id');
+      if (idCol && (String(idCol.data_type || idCol.DATA_TYPE).toLowerCase().includes('int') || String(idCol.extra || idCol.EXTRA).toLowerCase().includes('auto_increment'))) {
+        try {
+          await pool.query(`ALTER TABLE existing_accounts MODIFY COLUMN \`id\` BIGINT NOT NULL`);
+        } catch (_) {}
+        try {
+          await pool.query(`ALTER TABLE existing_accounts MODIFY COLUMN \`id\` VARCHAR(100) NOT NULL`);
+        } catch (_) {}
+      }
+
+      const definitions: { name: string; type: string }[] = [
+        { name: 'pin', type: "VARCHAR(100) DEFAULT ''" },
+        { name: 'latitude', type: 'DECIMAL(10, 7) NULL' },
+        { name: 'longitude', type: 'DECIMAL(10, 7) NULL' },
+        { name: 'geotagged', type: 'TINYINT(1) DEFAULT 0' },
+        { name: 'facebook_link', type: 'TEXT NULL' },
+        { name: 'uploaded_files', type: 'LONGTEXT NULL' },
+        { name: 'is_submitted', type: 'TINYINT(1) DEFAULT 0' },
+        { name: 'submitted_at', type: 'VARCHAR(100) NULL' },
+        { name: 'existing_acc_verified', type: 'TINYINT(1) DEFAULT 1' },
+        { name: 'existing_acc_visited', type: 'TINYINT(1) DEFAULT 1' },
+        { name: 'status', type: "VARCHAR(50) DEFAULT 'PENDING'" },
+        { name: 'submitted_by', type: "VARCHAR(255) DEFAULT ''" },
+        { name: 'folder', type: "VARCHAR(255) DEFAULT 'GENERAL'" },
+        { name: 'remarks', type: 'TEXT NULL' },
+        { name: 'deleted_at', type: 'VARCHAR(100) NULL' }
+      ];
+
+      for (const def of definitions) {
+        if (!existingCols.has(def.name.toLowerCase())) {
+          try {
+            await pool.query(`ALTER TABLE existing_accounts ADD COLUMN \`${def.name}\` ${def.type}`);
+          } catch (_) {}
+        }
+      }
+    }
+  } catch (_) {}
+
+  let totalSaved = 0;
+  const CHUNK_SIZE = 50;
+
+  for (let i = 0; i < accounts.length; i += CHUNK_SIZE) {
+    const chunk = accounts.slice(i, i + CHUNK_SIZE);
+    const values: any[] = [];
+    const placeholders: string[] = [];
+
+    for (const acc of chunk) {
+      placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      const filesJson = acc.uploadedFiles ? JSON.stringify(acc.uploadedFiles) : (acc.uploaded_files || '[]');
+      const isGeotagged = acc.geotagged ? 1 : 0;
+      const isSubmitted = acc.isSubmitted ? 1 : 0;
+      const isVerified = acc.existingAccVerified !== false ? 1 : 0;
+      const isVisited = acc.existingAccVisited !== false ? 1 : 0;
+
+      values.push(
+        String(acc.id),
+        acc.full_name || acc.fullName || '',
+        acc.barangay || '',
+        acc.purok || '',
+        acc.contact_number || acc.contact || '',
+        acc.pin || '',
+        acc.latitude !== undefined && acc.latitude !== null && !isNaN(Number(acc.latitude)) ? Number(acc.latitude) : null,
+        acc.longitude !== undefined && acc.longitude !== null && !isNaN(Number(acc.longitude)) ? Number(acc.longitude) : null,
+        isGeotagged,
+        acc.facebookLink || acc.facebook_link || '',
+        filesJson,
+        isSubmitted,
+        acc.submittedAt || acc.submitted_at || null,
+        isVerified,
+        isVisited,
+        acc.created_at || acc.createdAt || new Date().toISOString(),
+        acc.status || 'PENDING',
+        acc.submittedBy || acc.submitted_by || '',
+        acc.folder || 'GENERAL',
+        acc.remarks || '',
+        acc.deleted_at || null
+      );
+    }
+
+    try {
+      const sql = `INSERT INTO existing_accounts (
+        id, full_name, barangay, purok, contact_number, pin, latitude, longitude, geotagged,
+        facebook_link, uploaded_files, is_submitted, submitted_at, existing_acc_verified,
+        existing_acc_visited, created_at, status, submitted_by, folder, remarks, deleted_at
+      ) VALUES ${placeholders.join(', ')}
+      ON DUPLICATE KEY UPDATE
+        full_name = VALUES(full_name),
+        barangay = VALUES(barangay),
+        purok = VALUES(purok),
+        contact_number = VALUES(contact_number),
+        pin = VALUES(pin),
+        latitude = VALUES(latitude),
+        longitude = VALUES(longitude),
+        geotagged = VALUES(geotagged),
+        facebook_link = VALUES(facebook_link),
+        uploaded_files = VALUES(uploaded_files),
+        is_submitted = VALUES(is_submitted),
+        submitted_at = VALUES(submitted_at),
+        existing_acc_verified = VALUES(existing_acc_verified),
+        existing_acc_visited = VALUES(existing_acc_visited),
+        status = VALUES(status),
+        submitted_by = VALUES(submitted_by),
+        folder = VALUES(folder),
+        remarks = VALUES(remarks),
+        deleted_at = VALUES(deleted_at)`;
+
+      await pool.query(sql, values);
+      totalSaved += chunk.length;
+    } catch (chunkErr: any) {
+      console.warn(`[cPanel DB] Batch insert failed for chunk ${i / CHUNK_SIZE + 1}, falling back to individual inserts:`, chunkErr.message);
+      for (const acc of chunk) {
+        try {
+          await saveExistingAccountToCPanel(acc);
+          totalSaved++;
+        } catch (_) {}
+      }
+    }
+  }
+
+  return { success: true, saved: totalSaved };
 }
 
 export async function deleteExistingAccountFromCPanel(

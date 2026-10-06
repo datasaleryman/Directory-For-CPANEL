@@ -47,6 +47,17 @@ import { Returned } from './components/Returned.js';
 
 export const DEFAULT_SITE_LOGO = 'https://www.image2url.com/r2/default/images/1785037750375-501bcf0e-4b15-4e0e-8be2-610bc89d072e.png';
 
+const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
+  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
+  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
+  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account'],
+  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account']
+};
+
 export default function App() {
   // Authentication & Session States
   const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem('dir_auth_token'));
@@ -113,6 +124,7 @@ export default function App() {
     navExistingAccount?: string;
     navExistAccFiles?: string;
     navSubmittedExistAcc?: string;
+    navReturned?: string;
     rolePermissions?: Record<string, string[]>;
   }>({
     title: 'PCU Uploader',
@@ -131,7 +143,8 @@ export default function App() {
     navExistingAccount: 'Existing Account',
     navExistAccFiles: 'Exist. Acc. Files',
     navSubmittedExistAcc: 'Submitted Exist. Acc.',
-    navReturned: 'Returned'
+    navReturned: 'Returned',
+    rolePermissions: DEFAULT_ROLE_PERMISSIONS
   });
 
   const userRole = adminUser?.role || 'STAFF';
@@ -148,22 +161,17 @@ export default function App() {
     // Master admin accounts can access all pages, sections, and actions without restriction
     if (isMasterUser) return true;
 
-    let targetTabId = tabId === 'exist-acc-files' ? 'existing-account' : tabId;
-    if (targetTabId === 'inbox') {
-      targetTabId = 'dashboard';
-    }
-
     // Safety check: Prevent lockouts for administrative roles
     const roleUpper = userRole.toUpperCase();
     const isAdminAccount = usernameLower === 'admin' || 
                            roleUpper === 'MASTER ADMIN' || 
                            roleUpper === 'ADMINISTRATOR';
 
-    if (isAdminAccount && (targetTabId === 'settings' || targetTabId === 'accounts' || targetTabId === 'submitted-exist-acc' || targetTabId === 'submit-pcu' || targetTabId === 'returned')) {
+    if (isAdminAccount && (tabId === 'settings' || tabId === 'accounts' || tabId === 'submitted-exist-acc' || tabId === 'submit-pcu' || tabId === 'returned')) {
       return true;
     }
 
-    if (isSuperUser && (targetTabId === 'submitted-exist-acc' || targetTabId === 'submit-pcu' || targetTabId === 'returned')) {
+    if (isSuperUser && (tabId === 'submitted-exist-acc' || tabId === 'submit-pcu' || tabId === 'returned')) {
       return true;
     }
 
@@ -175,15 +183,17 @@ export default function App() {
       if (matchingKey) {
         const rolePerms = siteSettings.rolePermissions[matchingKey];
         if (Array.isArray(rolePerms)) {
-          // Respect configured role permissions for submit-pcu, submitted-exist-acc, and all pages
-          return rolePerms.includes(tabId) || rolePerms.includes(targetTabId);
+          // Strictly adhere to what admin configured
+          if (rolePerms.includes(tabId)) return true;
+          if (tabId === 'inbox' && rolePerms.includes('dashboard')) return true;
+          return false;
         }
       }
     }
 
     // Default fallbacks if no customized permissions are configured
     if (isSuperUser) return true;
-    if (targetTabId === 'settings' || targetTabId === 'accounts') return false;
+    if (tabId === 'settings' || tabId === 'accounts') return false;
     return true;
   };
 

@@ -36,11 +36,6 @@ WHERE UPPER(TRIM(`status`)) = 'DELETED';
 DELETE FROM `submitted_exist_acc` 
 WHERE UPPER(TRIM(`status`)) = 'DELETED';
 
--- Remove any submitted records whose parent existing account was deleted
-DELETE sea FROM `submitted_exist_acc` sea
-LEFT JOIN `existing_accounts` ea ON sea.`exist_account_id` = ea.`id` OR sea.`id` = ea.`id`
-WHERE ea.`id` IS NULL;
-
 -- -----------------------------------------------------------------------------
 -- 3. Ensure Proper Indexes Exist on `existing_accounts` for Instant Deletion
 -- -----------------------------------------------------------------------------

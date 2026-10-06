@@ -1853,8 +1853,42 @@ export async function getApp(httpServer?: http.Server) {
     try {
       const username = req.user?.username || 'admin';
       const updated = saveSiteSettings(req.body);
-      addActivity(username, 'Updated website customization and settings.');
+      const actionMsg = req.body.rolePermissions && Object.keys(req.body).length <= 2
+        ? 'Updated Role Page Access Control permissions.'
+        : 'Updated website customization and settings.';
+      addActivity(username, actionMsg);
       res.json(updated);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // Dedicated Role Page Access Control endpoints
+  app.get('/api/role-permissions', async (req: Request, res: Response) => {
+    try {
+      const settings = getSiteSettings();
+      res.json({
+        rolePermissions: settings.rolePermissions || DEFAULT_ROLE_PERMISSIONS
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/role-permissions', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'admin';
+      const perms = req.body.rolePermissions || req.body;
+      if (!perms || typeof perms !== 'object') {
+        return res.status(400).json({ error: 'Invalid role permissions payload.' });
+      }
+      const updated = saveSiteSettings({ rolePermissions: perms });
+      addActivity(username, 'Updated Role Page Access Control permissions.');
+      res.json({
+        success: true,
+        message: 'Role Page Access Control permissions saved permanently.',
+        rolePermissions: updated.rolePermissions
+      });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }

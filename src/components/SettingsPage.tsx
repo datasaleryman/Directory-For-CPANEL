@@ -27,7 +27,9 @@ import {
   Check,
   Copy,
   Database,
-  Server
+  Server,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { SheetsStatus } from '../types.js';
 import { DEFAULT_SITE_LOGO } from '../App.js';
@@ -70,12 +72,55 @@ interface SettingsPageProps {
 const DEFAULT_ROLES = [
   'MASTER ADMIN',
   'IT',
+  'ADMIN',
   'LEADER',
   'CO-LEADER',
-  'ADMIN',
   'ENCODER',
   'STAFF'
 ];
+
+export const CANONICAL_ROLES = [
+  'MASTER ADMIN',
+  'IT',
+  'ADMIN',
+  'LEADER',
+  'CO-LEADER',
+  'ENCODER',
+  'STAFF'
+];
+
+export const getOrderedRolesList = (perms: Record<string, string[]> = {}, extraRoles: string[] = []): string[] => {
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+
+  const add = (r: string) => {
+    if (!r || !r.trim()) return;
+    const clean = r.trim();
+    const upper = clean.toUpperCase();
+    if (!seen.has(upper)) {
+      seen.add(upper);
+      ordered.push(clean);
+    }
+  };
+
+  // 1. Core roles in exact canonical order
+  CANONICAL_ROLES.forEach(cr => {
+    const match = Object.keys(perms).find(k => k.toUpperCase() === cr);
+    add(match || cr);
+  });
+
+  // 2. Custom roles configured in perms
+  Object.keys(perms).forEach(k => {
+    add(k);
+  });
+
+  // 3. Extra roles (e.g. from existing users or base44)
+  extraRoles.forEach(r => {
+    add(r);
+  });
+
+  return ordered;
+};
 
 const DEFAULT_BARANGAYS = [
   'BALINTAWAK',
@@ -168,19 +213,22 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [navVerificationEntry, setNavVerificationEntry] = useState(siteSettings.navVerificationEntry || 'Verification Entry');
 
   // Roles & Permissions States
-  const [rolesList, setRolesList] = useState<string[]>(DEFAULT_ROLES);
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(() => {
     return siteSettings.rolePermissions || {
-      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-      'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry'],
-      'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'bulk', 'print', 'existing-account', 'verification-entry']
+      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+      'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+      'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+      'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+      'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
+      'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
+      'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account'],
+      'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account']
     };
   });
+  const [rolesList, setRolesList] = useState<string[]>(() => {
+    return getOrderedRolesList(siteSettings.rolePermissions || {});
+  });
+  const [customRoleInput, setCustomRoleInput] = useState('');
 
   // Add Account Form States
   const [newFullName, setNewFullName] = useState('');
@@ -372,7 +420,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       const updated = current.includes(pageId)
         ? current.filter(p => p !== pageId)
         : [...current, pageId];
-      return { ...prev, [actualKey]: updated };
+      const next = { ...prev, [actualKey]: updated };
+      // Keep Administrator synchronized with ADMIN
+      if (roleUpper === 'ADMIN' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMINISTRATOR')) {
+        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMINISTRATOR') || 'Administrator';
+        next[adminKey] = updated;
+      } else if (roleUpper === 'ADMINISTRATOR' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMIN')) {
+        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMIN') || 'ADMIN';
+        next[adminKey] = updated;
+      }
+      return next;
     });
   };
 
@@ -380,10 +437,16 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setRolePermissions(prev => {
       const roleUpper = roleName.toUpperCase();
       const actualKey = Object.keys(prev).find(k => k.toUpperCase() === roleUpper) || roleName;
-      return {
-        ...prev,
-        [actualKey]: APP_PAGES.map(p => p.id)
-      };
+      const allPages = APP_PAGES.map(p => p.id);
+      const next = { ...prev, [actualKey]: allPages };
+      if (roleUpper === 'ADMIN' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMINISTRATOR')) {
+        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMINISTRATOR') || 'Administrator';
+        next[adminKey] = allPages;
+      } else if (roleUpper === 'ADMINISTRATOR' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMIN')) {
+        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMIN') || 'ADMIN';
+        next[adminKey] = allPages;
+      }
+      return next;
     });
   };
 
@@ -391,14 +454,112 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setRolePermissions(prev => {
       const roleUpper = roleName.toUpperCase();
       const actualKey = Object.keys(prev).find(k => k.toUpperCase() === roleUpper) || roleName;
-      return {
-        ...prev,
-        [actualKey]: []
-      };
+      const next = { ...prev, [actualKey]: [] };
+      if (roleUpper === 'ADMIN' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMINISTRATOR')) {
+        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMINISTRATOR') || 'Administrator';
+        next[adminKey] = [];
+      } else if (roleUpper === 'ADMINISTRATOR' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMIN')) {
+        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMIN') || 'ADMIN';
+        next[adminKey] = [];
+      }
+      return next;
     });
   };
 
-  // Fetch Base44 roles on mount
+  const handleAddCustomRole = () => {
+    const trimmed = customRoleInput.trim();
+    if (!trimmed) {
+      showToast('Please enter a role name to add.', 'warning');
+      return;
+    }
+    const upper = trimmed.toUpperCase();
+    if (rolesList.some(r => r.toUpperCase() === upper)) {
+      showToast(`Role "${trimmed}" already exists in the system.`, 'warning');
+      return;
+    }
+
+    setRolePermissions(prev => ({
+      ...prev,
+      [upper]: ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry']
+    }));
+    setRolesList(prev => [...prev, upper]);
+    setCustomRoleInput('');
+    showToast(`Role "${upper}" added! Configure page permissions below and click Save.`, 'success');
+  };
+
+  const handleDeleteRole = (roleToDelete: string) => {
+    const roleUpper = roleToDelete.toUpperCase();
+    if (CANONICAL_ROLES.includes(roleUpper)) {
+      showToast(`System core role "${roleToDelete}" cannot be deleted.`, 'warning');
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to delete role "${roleToDelete}" from access control?`)) {
+      return;
+    }
+
+    setRolePermissions(prev => {
+      const next = { ...prev };
+      delete next[roleToDelete];
+      const match = Object.keys(next).find(k => k.toUpperCase() === roleUpper);
+      if (match) delete next[match];
+      return next;
+    });
+    setRolesList(prev => prev.filter(r => r.toUpperCase() !== roleUpper));
+    showToast(`Role "${roleToDelete}" deleted. Remember to click Save to persist.`, 'info');
+  };
+
+  // Dedicated save handler for Role Page Access Control
+  const handleSaveRolePermissions = async () => {
+    setSaving(true);
+    try {
+      const res = await fetch('/api/role-permissions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          rolePermissions
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to save role permissions.');
+      }
+
+      showToast('Role Page Access Control permissions saved permanently!', 'success');
+      if (data.rolePermissions) {
+        setRolePermissions(data.rolePermissions);
+        setRolesList(getOrderedRolesList(data.rolePermissions));
+        onSettingsSaved({ ...siteSettings, rolePermissions: data.rolePermissions });
+      } else {
+        onSettingsSaved({ ...siteSettings, rolePermissions });
+      }
+    } catch (err: any) {
+      // Fallback save to site settings endpoint
+      try {
+        const fallbackRes = await fetch('/api/site/settings', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ rolePermissions })
+        });
+        const fallbackData = await fallbackRes.json();
+        if (!fallbackRes.ok) throw new Error(fallbackData.error);
+        showToast('Role Page Access Control permissions saved permanently!', 'success');
+        onSettingsSaved(fallbackData);
+      } catch (fErr: any) {
+        showToast(fErr.message || 'Failed to save role permissions.', 'error');
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Fetch Base44 roles on mount without scrambling order
   useEffect(() => {
     const fetchRoles = async () => {
       try {
@@ -406,7 +567,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         if (res.ok) {
           const data = await res.json();
           if (Array.isArray(data.roles) && data.roles.length > 0) {
-            setRolesList(data.roles);
+            setRolesList(prev => getOrderedRolesList(rolePermissions, data.roles));
           }
         }
       } catch (err) {
@@ -439,8 +600,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setNavExistAccFiles(siteSettings.navExistAccFiles || 'Exist. Acc. Files');
     setNavSubmittedExistAcc(siteSettings.navSubmittedExistAcc || 'Submitted Exist. Acc.');
     setNavVerificationEntry(siteSettings.navVerificationEntry || 'Verification Entry');
-    if (siteSettings.rolePermissions) {
+    if (siteSettings.rolePermissions && Object.keys(siteSettings.rolePermissions).length > 0) {
       setRolePermissions(siteSettings.rolePermissions);
+      setRolesList(getOrderedRolesList(siteSettings.rolePermissions));
     }
   }, [siteSettings]);
 
@@ -1253,13 +1415,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               </div>
               <div>
                 <h4 className="font-bold text-slate-800 font-display">Role Page Access Control</h4>
-                <p className="text-[11px] text-slate-500">Configure permitted application pages/tabs for each database role</p>
+                <p className="text-[11px] text-slate-500">Configure permitted application pages/tabs for each database role. Settings save permanently without resetting.</p>
               </div>
             </div>
 
             <button
               type="button"
-              onClick={handleSaveSettings}
+              onClick={handleSaveRolePermissions}
               disabled={saving}
               className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors inline-flex items-center gap-2 shadow-md shadow-indigo-600/10 cursor-pointer"
             >
@@ -1277,20 +1439,56 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             </button>
           </div>
 
+          {/* Add New Custom Role Bar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-slate-50/80 rounded-2xl border border-slate-200">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
+              <div>
+                <p className="text-xs font-bold text-slate-800">Add Custom System Role</p>
+                <p className="text-[10px] text-slate-500">Define access control for a custom clinical or organizational role</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <input
+                type="text"
+                value={customRoleInput}
+                onChange={(e) => setCustomRoleInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleAddCustomRole();
+                  }
+                }}
+                placeholder="e.g. SUPERVISOR, COORDINATOR"
+                className="flex-1 sm:w-64 px-3.5 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold uppercase"
+              />
+              <button
+                type="button"
+                onClick={handleAddCustomRole}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1.5 cursor-pointer shadow-xs shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Role
+              </button>
+            </div>
+          </div>
+
           <div className="space-y-4">
-            {rolesList.map((roleName) => {
+            {getOrderedRolesList(rolePermissions, rolesList).map((roleName) => {
               const roleUpper = roleName.toUpperCase();
               const actualKey = Object.keys(rolePermissions).find(k => k.toUpperCase() === roleUpper) || roleName;
               const allowedPages = rolePermissions[actualKey] || [];
+              const isCustomRole = !CANONICAL_ROLES.includes(roleUpper) && roleUpper !== 'ADMINISTRATOR';
               
               let roleBadgeColor = "bg-slate-100 text-slate-700 border-slate-200";
-              if (roleName === 'MASTER ADMIN') roleBadgeColor = "bg-purple-100 text-purple-800 border-purple-200";
-              else if (roleName === 'IT') roleBadgeColor = "bg-blue-100 text-blue-800 border-blue-200";
-              else if (roleName === 'ADMIN' || roleName === 'Administrator') roleBadgeColor = "bg-indigo-100 text-indigo-800 border-indigo-200";
-              else if (roleName === 'LEADER') roleBadgeColor = "bg-emerald-100 text-emerald-800 border-emerald-200";
-              else if (roleName === 'CO-LEADER') roleBadgeColor = "bg-teal-100 text-teal-800 border-teal-200";
-              else if (roleName === 'ENCODER') roleBadgeColor = "bg-amber-100 text-amber-800 border-amber-200";
-              else if (roleName === 'STAFF') roleBadgeColor = "bg-slate-100 text-slate-800 border-slate-200";
+              if (roleUpper === 'MASTER ADMIN') roleBadgeColor = "bg-purple-100 text-purple-800 border-purple-200";
+              else if (roleUpper === 'IT') roleBadgeColor = "bg-blue-100 text-blue-800 border-blue-200";
+              else if (roleUpper === 'ADMIN' || roleUpper === 'ADMINISTRATOR') roleBadgeColor = "bg-indigo-100 text-indigo-800 border-indigo-200";
+              else if (roleUpper === 'LEADER') roleBadgeColor = "bg-emerald-100 text-emerald-800 border-emerald-200";
+              else if (roleUpper === 'CO-LEADER') roleBadgeColor = "bg-teal-100 text-teal-800 border-teal-200";
+              else if (roleUpper === 'ENCODER') roleBadgeColor = "bg-amber-100 text-amber-800 border-amber-200";
+              else if (roleUpper === 'STAFF') roleBadgeColor = "bg-slate-100 text-slate-800 border-slate-200";
+              else roleBadgeColor = "bg-cyan-100 text-cyan-800 border-cyan-200";
 
               return (
                 <div key={roleName} className="p-4 bg-slate-50/80 rounded-2xl border border-slate-200 space-y-3">
@@ -1318,6 +1516,17 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       >
                         Clear All
                       </button>
+                      {isCustomRole && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRole(roleName)}
+                          className="text-[10px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2 py-1 rounded-md border border-rose-200 transition-colors cursor-pointer inline-flex items-center gap-1"
+                          title="Delete custom role"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          Delete
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -1359,7 +1568,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <div className="flex items-center justify-end border-t border-slate-100 pt-4">
             <button
               type="button"
-              onClick={handleSaveSettings}
+              onClick={handleSaveRolePermissions}
               disabled={saving}
               className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors inline-flex items-center gap-2 shadow-md shadow-indigo-600/10 cursor-pointer"
             >

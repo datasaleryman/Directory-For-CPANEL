@@ -22,7 +22,7 @@
         "uploadedBy": "Night Crow"
       }
     ],
-    "addedToFiles": false,
+    "addedToFiles": true,
     "isSubmitted": true,
     "latitude": 8.5234,
     "longitude": 123.4123,
@@ -46,7 +46,8 @@
     "facebookLink": "",
     "uploadedFiles": [],
     "addedToFiles": true,
-    "isSubmitted": false
+    "isSubmitted": false,
+    "localId": "6a9634c6aa91555bf3488b70"
   },
   {
     "id": "6a9634c790a99d514ecd49ea",
@@ -65,7 +66,8 @@
     "facebookLink": "",
     "uploadedFiles": [],
     "addedToFiles": true,
-    "isSubmitted": false
+    "isSubmitted": false,
+    "localId": "6a9634c790a99d514ecd49ea"
   },
   {
     "id": "6a9634c7183dbb33352e87a7",
@@ -84,7 +86,8 @@
     "facebookLink": "",
     "uploadedFiles": [],
     "addedToFiles": true,
-    "isSubmitted": false
+    "isSubmitted": false,
+    "localId": "6a9634c7183dbb33352e87a7"
   },
   {
     "id": "6a9634c7a4801d78740f9161",
@@ -103,7 +106,8 @@
     "facebookLink": "",
     "uploadedFiles": [],
     "addedToFiles": true,
-    "isSubmitted": false
+    "isSubmitted": false,
+    "localId": "6a9634c7a4801d78740f9161"
   },
   {
     "id": "6a9634c8b2d2748d04eba587",

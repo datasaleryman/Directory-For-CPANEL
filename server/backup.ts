@@ -336,11 +336,21 @@ export function formatBackupAsSql(backupData: BackupResult): string {
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`);
     } else if (tableName === 'existing_accounts') {
       lines.push(`CREATE TABLE IF NOT EXISTS \`existing_accounts\` (
-  \`id\` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  \`id\` VARCHAR(100) NOT NULL PRIMARY KEY,
   \`full_name\` VARCHAR(255) NOT NULL,
   \`barangay\` VARCHAR(255) DEFAULT '',
   \`purok\` VARCHAR(255) DEFAULT '',
   \`contact_number\` VARCHAR(100) DEFAULT '',
+  \`pin\` VARCHAR(100) DEFAULT '',
+  \`latitude\` DECIMAL(10, 7) NULL,
+  \`longitude\` DECIMAL(10, 7) NULL,
+  \`geotagged\` TINYINT(1) DEFAULT 0,
+  \`facebook_link\` TEXT NULL,
+  \`uploaded_files\` LONGTEXT NULL,
+  \`is_submitted\` TINYINT(1) DEFAULT 0,
+  \`submitted_at\` VARCHAR(100) NULL,
+  \`existing_acc_verified\` TINYINT(1) DEFAULT 1,
+  \`existing_acc_visited\` TINYINT(1) DEFAULT 1,
   \`created_at\` VARCHAR(100) DEFAULT '',
   \`status\` VARCHAR(50) DEFAULT 'PENDING',
   \`submitted_by\` VARCHAR(255) DEFAULT '',
