@@ -382,6 +382,15 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       INDEX idx_sea_hist_time (timestamp),
       INDEX idx_sea_hist_patient (patient_name),
       INDEX idx_sea_hist_action (action)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    // 16. Role Page Access Control Table (Permanent Role Order & Page Permissions)
+    `CREATE TABLE IF NOT EXISTS role_permissions (
+      role_name VARCHAR(100) NOT NULL PRIMARY KEY,
+      allowed_pages LONGTEXT NOT NULL,
+      sort_order INT NOT NULL DEFAULT 0,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_role_sort_order (sort_order)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
   ];
 
@@ -1007,6 +1016,17 @@ CREATE TABLE IF NOT EXISTS \`pcu_history\` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- -------------------------------------------------------------------------
+-- 13. Table: role_permissions (Role Page Access Control Permanent Storage)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS \`role_permissions\` (
+  \`role_name\` VARCHAR(100) NOT NULL PRIMARY KEY,
+  \`allowed_pages\` LONGTEXT NOT NULL,
+  \`sort_order\` INT NOT NULL DEFAULT 0,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX \`idx_role_sort_order\` (\`sort_order\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
 -- FIX FOR cPanel phpMyAdmin WARNING:
 -- "Current selection does not contain a unique column. Grid edit, checkbox, Edit, Copy and Delete features are not available."
 -- Run these lines if pcu_submissions already exists without a PRIMARY KEY:
@@ -1208,6 +1228,9 @@ export async function migrateAllDataToCPanelDb(data: {
     } catch (err: any) {
       console.warn(`[cPanel Migration] Setting ${key} insert error:`, err.message);
     }
+  }
+  if (data.settings?.rolePermissions && typeof data.settings.rolePermissions === 'object') {
+    await saveRolePermissionsToCPanel(data.settings.rolePermissions);
   }
 
   // 7. Migrate Inbox Messages if present
@@ -1747,6 +1770,17 @@ export async function fetchAllFromCPanelDb(): Promise<{
         settings[r.setting_key] = r.setting_value;
       }
     });
+
+    // Authoritative Role Page Access Control from dedicated role_permissions table
+    try {
+      const dedicatedRolePerms = await fetchRolePermissionsFromCPanel();
+      if (dedicatedRolePerms && Object.keys(dedicatedRolePerms).length > 0) {
+        settings.rolePermissions = dedicatedRolePerms;
+        settings.role_permissions = dedicatedRolePerms;
+      }
+    } catch (rpErr: any) {
+      console.warn('[cPanel DB] Notice reading role_permissions table:', rpErr.message);
+    }
 
     const maxId = contacts.reduce((max, c) => Math.max(max, Number(c.id) || 0), 0);
     const maxUpdated = contacts.reduce((max, c) => (c.updated_at > max ? c.updated_at : max), '');
@@ -2432,6 +2466,104 @@ export async function saveSettingToCPanel(key: string, val: any): Promise<void> 
   } catch (err: any) {
     console.warn('[cPanel DB] Error saving setting to MySQL:', err.message);
   }
+}
+
+export async function saveRolePermissionsToCPanel(rolePermissions: Record<string, string[]>): Promise<void> {
+  if (!pool || !currentStatus.connected || !rolePermissions || typeof rolePermissions !== 'object') return;
+  try {
+    await pool.query(
+      `CREATE TABLE IF NOT EXISTS role_permissions (
+        role_name VARCHAR(100) NOT NULL PRIMARY KEY,
+        allowed_pages LONGTEXT NOT NULL,
+        sort_order INT NOT NULL DEFAULT 0,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_role_sort_order (sort_order)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
+    );
+
+    const entries = Object.entries(rolePermissions);
+    const activeRoles: string[] = [];
+
+    for (let i = 0; i < entries.length; i++) {
+      const [roleName, pages] = entries[i];
+      const cleanRole = String(roleName || '').trim();
+      if (!cleanRole) continue;
+      activeRoles.push(cleanRole);
+      const pagesJson = JSON.stringify(Array.isArray(pages) ? pages : []);
+      await pool.query(
+        `INSERT INTO role_permissions (role_name, allowed_pages, sort_order)
+         VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           allowed_pages = VALUES(allowed_pages),
+           sort_order = VALUES(sort_order),
+           updated_at = CURRENT_TIMESTAMP`,
+        [cleanRole, pagesJson, i]
+      );
+    }
+
+    if (activeRoles.length > 0) {
+      const placeholders = activeRoles.map(() => '?').join(', ');
+      await pool.query(
+        `DELETE FROM role_permissions WHERE role_name NOT IN (${placeholders})`,
+        activeRoles
+      );
+    }
+
+    const fullJson = JSON.stringify(rolePermissions);
+    await saveSettingToCPanel('role_permissions', fullJson);
+    await saveSettingToCPanel('rolePermissions', fullJson);
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error saving role permissions to MySQL:', err.message);
+  }
+}
+
+export async function fetchRolePermissionsFromCPanel(): Promise<Record<string, string[]> | null> {
+  if (!pool || !currentStatus.connected) return null;
+  try {
+    const [rows]: any = await pool.query(
+      `SELECT role_name, allowed_pages, sort_order
+       FROM role_permissions
+       ORDER BY sort_order ASC, role_name ASC`
+    ).catch(() => [[]]);
+
+    if (Array.isArray(rows) && rows.length > 0) {
+      const result: Record<string, string[]> = {};
+      for (const r of rows) {
+        const rName = String(r.role_name || '').trim();
+        if (!rName) continue;
+        try {
+          const parsed = typeof r.allowed_pages === 'string' ? JSON.parse(r.allowed_pages) : r.allowed_pages;
+          result[rName] = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          result[rName] = [];
+        }
+      }
+      if (Object.keys(result).length > 0) {
+        return result;
+      }
+    }
+
+    // Fallback to site_settings if role_permissions table has no rows yet
+    const [sRows]: any = await pool.query(
+      `SELECT setting_value FROM site_settings
+       WHERE setting_key IN ('role_permissions', 'rolePermissions')
+       ORDER BY updated_at DESC LIMIT 1`
+    ).catch(() => [[]]);
+
+    if (Array.isArray(sRows) && sRows.length > 0 && sRows[0]?.setting_value) {
+      try {
+        const parsed = typeof sRows[0].setting_value === 'string'
+          ? JSON.parse(sRows[0].setting_value)
+          : sRows[0].setting_value;
+        if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+          return parsed;
+        }
+      } catch {}
+    }
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error fetching role permissions from MySQL:', err.message);
+  }
+  return null;
 }
 
 export async function saveExistingAccountToCPanel(account: any): Promise<void> {

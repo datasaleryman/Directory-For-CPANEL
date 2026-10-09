@@ -35,6 +35,8 @@ import {
   syncWithGoogleSheets,
   getSiteSettings,
   saveSiteSettings,
+  saveRolePermissionsPermanently,
+  DEFAULT_ROLE_PERMISSIONS,
   pullSiteSettingsOnce,
   pullAdminsOnce,
   pullBarangaysOnce,
@@ -1849,10 +1851,13 @@ export async function getApp(httpServer?: http.Server) {
   });
 
   // Save site settings (admin only)
-  app.post(['/api/site/settings', '/api/settings'], requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post(['/api/site/settings', '/api/settings'], requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const username = req.user?.username || 'admin';
       const updated = saveSiteSettings(req.body);
+      if (req.body.rolePermissions && updated.rolePermissions) {
+        await saveRolePermissionsPermanently(updated.rolePermissions);
+      }
       const actionMsg = req.body.rolePermissions && Object.keys(req.body).length <= 2
         ? 'Updated Role Page Access Control permissions.'
         : 'Updated website customization and settings.';
@@ -1875,14 +1880,14 @@ export async function getApp(httpServer?: http.Server) {
     }
   });
 
-  app.post('/api/role-permissions', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  app.post('/api/role-permissions', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const username = req.user?.username || 'admin';
       const perms = req.body.rolePermissions || req.body;
-      if (!perms || typeof perms !== 'object') {
+      if (!perms || typeof perms !== 'object' || Array.isArray(perms)) {
         return res.status(400).json({ error: 'Invalid role permissions payload.' });
       }
-      const updated = saveSiteSettings({ rolePermissions: perms });
+      const updated = await saveRolePermissionsPermanently(perms);
       addActivity(username, 'Updated Role Page Access Control permissions.');
       res.json({
         success: true,

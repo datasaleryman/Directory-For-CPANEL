@@ -126,73 +126,80 @@ export default function App() {
     navSubmittedExistAcc?: string;
     navReturned?: string;
     rolePermissions?: Record<string, string[]>;
-  }>({
-    title: 'PCU Uploader',
-    faviconTitle: 'PCU Uploader',
-    logoDataUrl: DEFAULT_SITE_LOGO,
-    faviconDataUrl: DEFAULT_SITE_LOGO,
-    navDashboard: 'Dashboard',
-    navMap: 'Clinic Map',
-    navDirectory: 'Clinic Directory',
-    navSubmitPcu: 'Submit PCU',
-    navAccounts: 'Account Management',
-    navBulk: 'Bulk Entry',
-    navPrint: 'Print List',
-    navAdmins: 'Admin Credentials',
-    navSettings: 'Website Settings',
-    navExistingAccount: 'Existing Account',
-    navExistAccFiles: 'Exist. Acc. Files',
-    navSubmittedExistAcc: 'Submitted Exist. Acc.',
-    navReturned: 'Returned',
-    rolePermissions: DEFAULT_ROLE_PERMISSIONS
+  }>(() => {
+    const defaults = {
+      title: 'PCU Uploader',
+      faviconTitle: 'PCU Uploader',
+      logoDataUrl: DEFAULT_SITE_LOGO,
+      faviconDataUrl: DEFAULT_SITE_LOGO,
+      navDashboard: 'Dashboard',
+      navMap: 'Clinic Map',
+      navDirectory: 'Clinic Directory',
+      navSubmitPcu: 'Submit PCU',
+      navAccounts: 'Account Management',
+      navBulk: 'Bulk Entry',
+      navPrint: 'Print List',
+      navAdmins: 'Admin Credentials',
+      navSettings: 'Website Settings',
+      navExistingAccount: 'Existing Account',
+      navExistAccFiles: 'Exist. Acc. Files',
+      navSubmittedExistAcc: 'Submitted Exist. Acc.',
+      navReturned: 'Returned',
+      rolePermissions: DEFAULT_ROLE_PERMISSIONS
+    };
+    try {
+      const savedSettingsRaw = localStorage.getItem('clinic_site_settings');
+      const savedPermsRaw = localStorage.getItem('clinic_role_permissions');
+      let parsedSettings: any = {};
+      if (savedSettingsRaw) {
+        parsedSettings = JSON.parse(savedSettingsRaw) || {};
+      }
+      if (savedPermsRaw) {
+        const parsedPerms = JSON.parse(savedPermsRaw);
+        if (parsedPerms && typeof parsedPerms === 'object' && !Array.isArray(parsedPerms) && Object.keys(parsedPerms).length > 0) {
+          parsedSettings.rolePermissions = parsedPerms;
+        }
+      }
+      return { ...defaults, ...parsedSettings };
+    } catch {
+      return defaults;
+    }
   });
 
-  const userRole = adminUser?.role || 'STAFF';
+  const userRole = (adminUser?.role || 'STAFF').trim();
   const usernameLower = adminUser?.username?.toLowerCase() || '';
   const emailLower = ((adminUser as any)?.email || '').toLowerCase().trim();
   const isMasterUser = usernameLower === 'admin' || 
                        usernameLower === 'melfeliciano85' || 
                        emailLower === 'melfeliciano85@gmail.com' ||
-                       userRole.toUpperCase() === 'MASTER ADMIN' || 
-                       userRole.toUpperCase() === 'ADMINISTRATOR';
+                       userRole.toUpperCase() === 'MASTER ADMIN';
   const isSuperUser = ['MASTER ADMIN', 'IT', 'ADMIN', 'Administrator', 'Master Admin'].includes(userRole) || isMasterUser;
 
   const hasTabPermission = (tabId: string) => {
-    // Master admin accounts can access all pages, sections, and actions without restriction
-    if (isMasterUser) return true;
-
-    // Safety check: Prevent lockouts for administrative roles
     const roleUpper = userRole.toUpperCase();
-    const isAdminAccount = usernameLower === 'admin' || 
-                           roleUpper === 'MASTER ADMIN' || 
-                           roleUpper === 'ADMINISTRATOR';
 
-    if (isAdminAccount && (tabId === 'settings' || tabId === 'accounts' || tabId === 'submitted-exist-acc' || tabId === 'submit-pcu' || tabId === 'returned')) {
+    // Prevent Master Admin from locking themselves out of Website Settings
+    if (isMasterUser && tabId === 'settings') {
       return true;
     }
 
-    if (isSuperUser && (tabId === 'submitted-exist-acc' || tabId === 'submit-pcu' || tabId === 'returned')) {
-      return true;
-    }
-
-    // Check custom role permissions case-insensitively
-    if (siteSettings?.rolePermissions) {
+    // Strictly respect Role Page Access Control configured by Admin for any role
+    if (siteSettings?.rolePermissions && typeof siteSettings.rolePermissions === 'object') {
       const matchingKey = Object.keys(siteSettings.rolePermissions).find(
-        (key) => key.toUpperCase() === roleUpper
+        (key) => key.trim().toUpperCase() === roleUpper
       );
       if (matchingKey) {
         const rolePerms = siteSettings.rolePermissions[matchingKey];
         if (Array.isArray(rolePerms)) {
-          // Strictly adhere to what admin configured
           if (rolePerms.includes(tabId)) return true;
-          if (tabId === 'inbox' && rolePerms.includes('dashboard')) return true;
+          if (tabId === 'inbox' && (rolePerms.includes('inbox') || rolePerms.includes('dashboard'))) return true;
           return false;
         }
       }
     }
 
-    // Default fallbacks if no customized permissions are configured
-    if (isSuperUser) return true;
+    // Default fallbacks only if the user's role is not present in rolePermissions
+    if (isMasterUser || isSuperUser) return true;
     if (tabId === 'settings' || tabId === 'accounts') return false;
     return true;
   };
@@ -202,8 +209,8 @@ export default function App() {
     activeTabRef.current = activeTab;
   }, [activeTab]);
 
-  const fetchSettings = () => {
-    if (activeTabRef.current === 'settings') {
+  const fetchSettings = (force: boolean = false) => {
+    if (!force && activeTabRef.current === 'settings') {
       return;
     }
     fetch(`/api/site/settings?_t=${Date.now()}`)
@@ -221,11 +228,22 @@ export default function App() {
         if (data && typeof data === 'object') {
           const logo = data.logoDataUrl || DEFAULT_SITE_LOGO;
           const favicon = data.faviconDataUrl || DEFAULT_SITE_LOGO;
-          setSiteSettings({
+          const nextSettings = {
             ...data,
             logoDataUrl: logo,
             faviconDataUrl: favicon
-          });
+          };
+          setSiteSettings(nextSettings);
+          try {
+            if (data.rolePermissions && typeof data.rolePermissions === 'object' && !Array.isArray(data.rolePermissions)) {
+              localStorage.setItem('clinic_role_permissions', JSON.stringify(data.rolePermissions));
+            }
+            localStorage.setItem('clinic_site_settings', JSON.stringify({
+              ...nextSettings,
+              logoDataUrl: logo.length < 100000 ? logo : DEFAULT_SITE_LOGO,
+              faviconDataUrl: favicon.length < 100000 ? favicon : DEFAULT_SITE_LOGO
+            }));
+          } catch {}
           if (data.title) {
             document.title = data.title;
           }
@@ -265,21 +283,21 @@ export default function App() {
 
   // Fetch settings on load, focus, and via polling
   useEffect(() => {
-    fetchSettings();
+    fetchSettings(true);
 
     const handleFocus = () => {
-      fetchSettings();
+      fetchSettings(false);
     };
 
     const handleDataRestoredEvent = () => {
       setLastSyncTime(new Date().toISOString());
       fetchStats();
-      fetchSettings();
+      fetchSettings(true);
     };
 
     window.addEventListener('focus', handleFocus);
     window.addEventListener('clinic-data-restored', handleDataRestoredEvent);
-    const interval = setInterval(fetchSettings, 15000);
+    const interval = setInterval(() => fetchSettings(false), 15000);
 
     return () => {
       window.removeEventListener('focus', handleFocus);
@@ -1154,6 +1172,12 @@ export default function App() {
                   siteSettings={siteSettings}
                   onSettingsSaved={(updated) => {
                     setSiteSettings(updated);
+                    try {
+                      if (updated?.rolePermissions && typeof updated.rolePermissions === 'object' && !Array.isArray(updated.rolePermissions)) {
+                        localStorage.setItem('clinic_role_permissions', JSON.stringify(updated.rolePermissions));
+                      }
+                      localStorage.setItem('clinic_site_settings', JSON.stringify(updated));
+                    } catch {}
                     if (updated.title) {
                       document.title = updated.title;
                     }

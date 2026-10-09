@@ -83,6 +83,7 @@ export const CANONICAL_ROLES = [
   'MASTER ADMIN',
   'IT',
   'ADMIN',
+  'Administrator',
   'LEADER',
   'CO-LEADER',
   'ENCODER',
@@ -103,21 +104,17 @@ export const getOrderedRolesList = (perms: Record<string, string[]> = {}, extraR
     }
   };
 
-  // 1. Core roles in exact canonical order
-  CANONICAL_ROLES.forEach(cr => {
-    const match = Object.keys(perms).find(k => k.toUpperCase() === cr);
-    add(match || cr);
-  });
+  // 1. Preserve the exact role order saved in perms without rearranging
+  const permKeys = Object.keys(perms || {});
+  if (permKeys.length > 0) {
+    permKeys.forEach(k => add(k));
+    extraRoles.forEach(r => add(r));
+    return ordered;
+  }
 
-  // 2. Custom roles configured in perms
-  Object.keys(perms).forEach(k => {
-    add(k);
-  });
-
-  // 3. Extra roles (e.g. from existing users or base44)
-  extraRoles.forEach(r => {
-    add(r);
-  });
+  // 2. Fallback to canonical roles only if perms is empty
+  CANONICAL_ROLES.forEach(cr => add(cr));
+  extraRoles.forEach(r => add(r));
 
   return ordered;
 };
@@ -189,9 +186,25 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onDataRestored,
   onNavigateTab
 }) => {
-  const [activeSettingsTab, setActiveSettingsTab] = useState<'branding' | 'cpanelDb' | 'nav' | 'roles' | 'addAccount' | 'backup'>('branding');
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'branding' | 'cpanelDb' | 'nav' | 'roles' | 'addAccount' | 'backup'>(() => {
+    try {
+      const saved = sessionStorage.getItem('clinic_active_settings_tab');
+      if (saved && ['branding', 'cpanelDb', 'nav', 'roles', 'addAccount', 'backup'].includes(saved)) {
+        return saved as any;
+      }
+    } catch {}
+    return 'branding';
+  });
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('clinic_active_settings_tab', activeSettingsTab);
+    } catch {}
+  }, [activeSettingsTab]);
+
   const [syncing, setSyncing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const hasUnsavedRoleChangesRef = useRef(false);
 
   // Form States
   const [title, setTitle] = useState(siteSettings.title);
@@ -214,7 +227,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   // Roles & Permissions States
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(() => {
-    return siteSettings.rolePermissions || {
+    try {
+      const savedLocal = localStorage.getItem('clinic_role_permissions');
+      if (savedLocal) {
+        const parsed = JSON.parse(savedLocal);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length > 0) {
+          return parsed;
+        }
+      }
+    } catch {}
+    if (siteSettings.rolePermissions && Object.keys(siteSettings.rolePermissions).length > 0) {
+      return siteSettings.rolePermissions;
+    }
+    return {
       'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
       'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
       'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
@@ -226,6 +251,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     };
   });
   const [rolesList, setRolesList] = useState<string[]>(() => {
+    try {
+      const savedLocal = localStorage.getItem('clinic_role_permissions');
+      if (savedLocal) {
+        const parsed = JSON.parse(savedLocal);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && Object.keys(parsed).length > 0) {
+          return getOrderedRolesList(parsed);
+        }
+      }
+    } catch {}
     return getOrderedRolesList(siteSettings.rolePermissions || {});
   });
   const [customRoleInput, setCustomRoleInput] = useState('');
@@ -411,8 +445,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     }
   };
 
-  // Toggle page access for a specific role
+  // Toggle page access for a specific role without modifying any other role
   const togglePageForRole = (roleName: string, pageId: string) => {
+    hasUnsavedRoleChangesRef.current = true;
     setRolePermissions(prev => {
       const roleUpper = roleName.toUpperCase();
       const actualKey = Object.keys(prev).find(k => k.toUpperCase() === roleUpper) || roleName;
@@ -420,49 +455,26 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       const updated = current.includes(pageId)
         ? current.filter(p => p !== pageId)
         : [...current, pageId];
-      const next = { ...prev, [actualKey]: updated };
-      // Keep Administrator synchronized with ADMIN
-      if (roleUpper === 'ADMIN' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMINISTRATOR')) {
-        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMINISTRATOR') || 'Administrator';
-        next[adminKey] = updated;
-      } else if (roleUpper === 'ADMINISTRATOR' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMIN')) {
-        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMIN') || 'ADMIN';
-        next[adminKey] = updated;
-      }
-      return next;
+      return { ...prev, [actualKey]: updated };
     });
   };
 
   const grantAllPages = (roleName: string) => {
+    hasUnsavedRoleChangesRef.current = true;
     setRolePermissions(prev => {
       const roleUpper = roleName.toUpperCase();
       const actualKey = Object.keys(prev).find(k => k.toUpperCase() === roleUpper) || roleName;
       const allPages = APP_PAGES.map(p => p.id);
-      const next = { ...prev, [actualKey]: allPages };
-      if (roleUpper === 'ADMIN' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMINISTRATOR')) {
-        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMINISTRATOR') || 'Administrator';
-        next[adminKey] = allPages;
-      } else if (roleUpper === 'ADMINISTRATOR' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMIN')) {
-        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMIN') || 'ADMIN';
-        next[adminKey] = allPages;
-      }
-      return next;
+      return { ...prev, [actualKey]: allPages };
     });
   };
 
   const clearAllPages = (roleName: string) => {
+    hasUnsavedRoleChangesRef.current = true;
     setRolePermissions(prev => {
       const roleUpper = roleName.toUpperCase();
       const actualKey = Object.keys(prev).find(k => k.toUpperCase() === roleUpper) || roleName;
-      const next = { ...prev, [actualKey]: [] };
-      if (roleUpper === 'ADMIN' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMINISTRATOR')) {
-        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMINISTRATOR') || 'Administrator';
-        next[adminKey] = [];
-      } else if (roleUpper === 'ADMINISTRATOR' && Object.keys(prev).some(k => k.toUpperCase() === 'ADMIN')) {
-        const adminKey = Object.keys(prev).find(k => k.toUpperCase() === 'ADMIN') || 'ADMIN';
-        next[adminKey] = [];
-      }
-      return next;
+      return { ...prev, [actualKey]: [] };
     });
   };
 
@@ -478,6 +490,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       return;
     }
 
+    hasUnsavedRoleChangesRef.current = true;
     setRolePermissions(prev => ({
       ...prev,
       [upper]: ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry']
@@ -497,6 +510,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       return;
     }
 
+    hasUnsavedRoleChangesRef.current = true;
     setRolePermissions(prev => {
       const next = { ...prev };
       delete next[roleToDelete];
@@ -512,6 +526,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const handleSaveRolePermissions = async () => {
     setSaving(true);
     try {
+      // Preserve exact role order from rolesList when constructing payload
+      const orderedPayload: Record<string, string[]> = {};
+      const currentOrderedRoles = getOrderedRolesList(rolePermissions, rolesList);
+      currentOrderedRoles.forEach(rName => {
+        const rUpper = rName.toUpperCase();
+        const actualKey = Object.keys(rolePermissions).find(k => k.toUpperCase() === rUpper) || rName;
+        orderedPayload[actualKey] = Array.isArray(rolePermissions[actualKey]) ? rolePermissions[actualKey] : [];
+      });
+
       const res = await fetch('/api/role-permissions', {
         method: 'POST',
         headers: {
@@ -519,7 +542,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           Authorization: `Bearer ${authToken}`
         },
         body: JSON.stringify({
-          rolePermissions
+          rolePermissions: orderedPayload
         })
       });
 
@@ -528,14 +551,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         throw new Error(data.error || 'Failed to save role permissions.');
       }
 
+      hasUnsavedRoleChangesRef.current = false;
+      const savedPerms = data.rolePermissions && Object.keys(data.rolePermissions).length > 0
+        ? data.rolePermissions
+        : orderedPayload;
+
+      try {
+        localStorage.setItem('clinic_role_permissions', JSON.stringify(savedPerms));
+      } catch {}
+
+      setRolePermissions(savedPerms);
+      setRolesList(getOrderedRolesList(savedPerms));
+      onSettingsSaved({ ...siteSettings, rolePermissions: savedPerms });
       showToast('Role Page Access Control permissions saved permanently!', 'success');
-      if (data.rolePermissions) {
-        setRolePermissions(data.rolePermissions);
-        setRolesList(getOrderedRolesList(data.rolePermissions));
-        onSettingsSaved({ ...siteSettings, rolePermissions: data.rolePermissions });
-      } else {
-        onSettingsSaved({ ...siteSettings, rolePermissions });
-      }
     } catch (err: any) {
       // Fallback save to site settings endpoint
       try {
@@ -549,6 +577,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         });
         const fallbackData = await fallbackRes.json();
         if (!fallbackRes.ok) throw new Error(fallbackData.error);
+        hasUnsavedRoleChangesRef.current = false;
+        try {
+          localStorage.setItem('clinic_role_permissions', JSON.stringify(fallbackData.rolePermissions || rolePermissions));
+        } catch {}
         showToast('Role Page Access Control permissions saved permanently!', 'success');
         onSettingsSaved(fallbackData);
       } catch (fErr: any) {
@@ -559,25 +591,31 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     }
   };
 
-  // Fetch Base44 roles on mount without scrambling order
+  // Load authoritative Role Page Access Control from backend on mount
   useEffect(() => {
-    const fetchRoles = async () => {
+    const loadSavedRolePermissions = async () => {
       try {
-        const res = await fetch('/api/base44/roles');
+        const res = await fetch(`/api/role-permissions?_t=${Date.now()}`);
         if (res.ok) {
           const data = await res.json();
-          if (Array.isArray(data.roles) && data.roles.length > 0) {
-            setRolesList(prev => getOrderedRolesList(rolePermissions, data.roles));
+          if (data?.rolePermissions && typeof data.rolePermissions === 'object' && !Array.isArray(data.rolePermissions) && Object.keys(data.rolePermissions).length > 0) {
+            if (!hasUnsavedRoleChangesRef.current) {
+              setRolePermissions(data.rolePermissions);
+              setRolesList(getOrderedRolesList(data.rolePermissions));
+              try {
+                localStorage.setItem('clinic_role_permissions', JSON.stringify(data.rolePermissions));
+              } catch {}
+            }
           }
         }
       } catch (err) {
-        console.warn('Failed to fetch roles:', err);
+        console.warn('Failed to fetch saved role permissions:', err);
       }
     };
-    fetchRoles();
+    loadSavedRolePermissions();
   }, []);
 
-  // Sync state if initial siteSettings changes
+  // Sync state if initial siteSettings changes (without overwriting unsaved role edits)
   useEffect(() => {
     setTitle(siteSettings.title);
     setFaviconTitle(siteSettings.faviconTitle);
@@ -600,7 +638,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setNavExistAccFiles(siteSettings.navExistAccFiles || 'Exist. Acc. Files');
     setNavSubmittedExistAcc(siteSettings.navSubmittedExistAcc || 'Submitted Exist. Acc.');
     setNavVerificationEntry(siteSettings.navVerificationEntry || 'Verification Entry');
-    if (siteSettings.rolePermissions && Object.keys(siteSettings.rolePermissions).length > 0) {
+    if (!hasUnsavedRoleChangesRef.current && siteSettings.rolePermissions && Object.keys(siteSettings.rolePermissions).length > 0) {
       setRolePermissions(siteSettings.rolePermissions);
       setRolesList(getOrderedRolesList(siteSettings.rolePermissions));
     }

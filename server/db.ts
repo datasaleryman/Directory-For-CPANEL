@@ -18,6 +18,8 @@ import {
   deleteBarangayFromCPanel,
   saveActivityToCPanel,
   saveSettingToCPanel,
+  saveRolePermissionsToCPanel,
+  fetchRolePermissionsFromCPanel,
   savePcuSubmissionToCPanel,
   updatePcuStatusInCPanel,
   fetchReturnedPcuSubmissionsFromCPanel,
@@ -937,14 +939,14 @@ const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 export const ROLE_PERMS_FILE = path.join(DATA_DIR, 'role_permissions.json');
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'accounts', 'bulk', 'print', 'existing-account', 'verification-entry', 'settings'],
-  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account', 'verification-entry'],
-  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account', 'verification-entry'],
-  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account', 'verification-entry'],
-  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'returned', 'bulk', 'print', 'existing-account', 'verification-entry']
+  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
+  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
+  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account'],
+  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account']
 };
 
 export interface SiteSettings {
@@ -1214,6 +1216,20 @@ export async function pullExistingAccountsOnce(force: boolean = false): Promise<
 }
 
 export function getSiteSettings() {
+  // Always ensure rolePermissions is a valid object loaded from permanent storage
+  if (!siteSettings.rolePermissions || typeof siteSettings.rolePermissions !== 'object' || Array.isArray(siteSettings.rolePermissions) || Object.keys(siteSettings.rolePermissions).length === 0) {
+    if (fs.existsSync(ROLE_PERMS_FILE)) {
+      try {
+        const permsData = JSON.parse(fs.readFileSync(ROLE_PERMS_FILE, 'utf-8'));
+        if (permsData && typeof permsData === 'object' && !Array.isArray(permsData) && Object.keys(permsData).length > 0) {
+          siteSettings.rolePermissions = permsData;
+        }
+      } catch (e) {}
+    }
+    if (!siteSettings.rolePermissions || typeof siteSettings.rolePermissions !== 'object' || Object.keys(siteSettings.rolePermissions).length === 0) {
+      siteSettings.rolePermissions = { ...DEFAULT_ROLE_PERMISSIONS };
+    }
+  }
   return {
     ...siteSettings,
     logoDataUrl: siteSettings.logoDataUrl || DEFAULT_SITE_LOGO,
@@ -1224,10 +1240,25 @@ export function getSiteSettings() {
 export function saveSiteSettings(settings: Partial<SiteSettings>) {
   const newLogo = settings.logoDataUrl !== undefined ? settings.logoDataUrl : siteSettings.logoDataUrl;
   const newFavicon = settings.faviconDataUrl !== undefined ? settings.faviconDataUrl : siteSettings.faviconDataUrl;
+  const preservedRolePerms = siteSettings.rolePermissions;
+
+  let nextRolePerms = preservedRolePerms;
+  if (settings.rolePermissions !== undefined && settings.rolePermissions && typeof settings.rolePermissions === 'object' && !Array.isArray(settings.rolePermissions)) {
+    const cleanPerms: Record<string, string[]> = {};
+    for (const [roleKey, pages] of Object.entries(settings.rolePermissions)) {
+      const trimmedRole = String(roleKey || '').trim();
+      if (!trimmedRole) continue;
+      cleanPerms[trimmedRole] = Array.isArray(pages) ? Array.from(new Set(pages.map(p => String(p)))) : [];
+    }
+    if (Object.keys(cleanPerms).length > 0) {
+      nextRolePerms = cleanPerms;
+    }
+  }
 
   siteSettings = {
     ...siteSettings,
     ...settings,
+    rolePermissions: nextRolePerms,
     logoDataUrl: newLogo,
     faviconDataUrl: newFavicon
   };
@@ -1251,11 +1282,9 @@ export function saveSiteSettings(settings: Partial<SiteSettings>) {
       safeWriteFileSync(PCU_CONFIG_FILE, JSON.stringify({ baseRate: pcuBaseRate }, null, 2), 'utf-8');
       saveSettingToCPanel('pcu_base_rate', String(pcuBaseRate)).catch(() => {});
     }
-    if (settings.rolePermissions !== undefined) {
-      siteSettings.rolePermissions = settings.rolePermissions;
-      safeWriteFileSync(ROLE_PERMS_FILE, JSON.stringify(siteSettings.rolePermissions, null, 2), 'utf-8');
-      saveSettingToCPanel('role_permissions', JSON.stringify(siteSettings.rolePermissions)).catch(() => {});
-      saveSettingToCPanel('rolePermissions', JSON.stringify(siteSettings.rolePermissions)).catch(() => {});
+    if (settings.rolePermissions !== undefined && nextRolePerms) {
+      safeWriteFileSync(ROLE_PERMS_FILE, JSON.stringify(nextRolePerms, null, 2), 'utf-8');
+      saveRolePermissionsToCPanel(nextRolePerms).catch(() => {});
     }
     if (settings.navSubmittedExistAcc !== undefined) {
       saveSettingToCPanel('nav_submitted_exist_acc', siteSettings.navSubmittedExistAcc).catch(() => {});
@@ -1270,6 +1299,14 @@ export function saveSiteSettings(settings: Partial<SiteSettings>) {
     console.error('Failed to write settings file:', err);
   }
   return siteSettings;
+}
+
+export async function saveRolePermissionsPermanently(perms: Record<string, string[]>) {
+  const updated = saveSiteSettings({ rolePermissions: perms });
+  if (updated.rolePermissions) {
+    await saveRolePermissionsToCPanel(updated.rolePermissions);
+  }
+  return updated;
 }
 
 export function getPcuBaseRate(): number {
@@ -2117,7 +2154,8 @@ export async function initDb() {
             safeWriteFileSync(BARANGAYS_FILE, JSON.stringify(barangaysCache, null, 2));
           }
           if (cpanelData.settings && Object.keys(cpanelData.settings).length > 0) {
-            siteSettings = { ...siteSettings, ...cpanelData.settings };
+            const localSavedPerms = siteSettings.rolePermissions;
+            siteSettings = { ...siteSettings, ...cpanelData.settings, rolePermissions: localSavedPerms };
             if (cpanelData.settings.pcu_base_rate !== undefined) {
               const remoteRate = Number(cpanelData.settings.pcu_base_rate);
               if (!isNaN(remoteRate) && remoteRate >= 0) {
@@ -2138,11 +2176,14 @@ export async function initDb() {
                 const parsedRemote = typeof remoteRolePermsRaw === 'string'
                   ? JSON.parse(remoteRolePermsRaw)
                   : remoteRolePermsRaw;
-                if (parsedRemote && typeof parsedRemote === 'object' && Object.keys(parsedRemote).length > 0) {
+                if (parsedRemote && typeof parsedRemote === 'object' && !Array.isArray(parsedRemote) && Object.keys(parsedRemote).length > 0) {
                   siteSettings.rolePermissions = parsedRemote;
                   safeWriteFileSync(ROLE_PERMS_FILE, JSON.stringify(parsedRemote, null, 2), 'utf-8');
+                  await saveRolePermissionsToCPanel(parsedRemote);
                 }
               } catch {}
+            } else if (siteSettings.rolePermissions && Object.keys(siteSettings.rolePermissions).length > 0) {
+              await saveRolePermissionsToCPanel(siteSettings.rolePermissions);
             }
             if (cpanelData.settings.nav_submitted_exist_acc) {
               siteSettings.navSubmittedExistAcc = cpanelData.settings.nav_submitted_exist_acc;
@@ -2492,22 +2533,22 @@ export async function syncWithCPanelDb(username: string = 'admin'): Promise<{ su
         barangaysCache = cpanelData.barangays;
       }
       if (cpanelData.settings && Object.keys(cpanelData.settings).length > 0) {
-        siteSettings = { ...siteSettings, ...cpanelData.settings };
+        const localSavedPerms = siteSettings.rolePermissions;
+        siteSettings = { ...siteSettings, ...cpanelData.settings, rolePermissions: localSavedPerms };
         const remoteRolePermsRaw = cpanelData.settings.role_permissions || cpanelData.settings.rolePermissions;
         if (remoteRolePermsRaw) {
           try {
             const parsedRemote = typeof remoteRolePermsRaw === 'string'
               ? JSON.parse(remoteRolePermsRaw)
               : remoteRolePermsRaw;
-            if (parsedRemote && typeof parsedRemote === 'object' && Object.keys(parsedRemote).length > 0) {
+            if (parsedRemote && typeof parsedRemote === 'object' && !Array.isArray(parsedRemote) && Object.keys(parsedRemote).length > 0) {
               siteSettings.rolePermissions = parsedRemote;
               safeWriteFileSync(ROLE_PERMS_FILE, JSON.stringify(parsedRemote, null, 2), 'utf-8');
               safeWriteFileSync(SETTINGS_FILE, JSON.stringify(siteSettings, null, 2), 'utf-8');
             }
           } catch {}
         } else if (siteSettings.rolePermissions && Object.keys(siteSettings.rolePermissions).length > 0) {
-          saveSettingToCPanel('role_permissions', JSON.stringify(siteSettings.rolePermissions)).catch(() => {});
-          saveSettingToCPanel('rolePermissions', JSON.stringify(siteSettings.rolePermissions)).catch(() => {});
+          saveRolePermissionsToCPanel(siteSettings.rolePermissions).catch(() => {});
         }
       }
 
@@ -3506,29 +3547,14 @@ export async function getBase44Roles(): Promise<string[]> {
     }
   };
 
-  // 1. Add core roles in exact canonical order, matching casing in rolePermissions if present
-  canonicalOrder.forEach(r => {
-    if (siteSettings?.rolePermissions) {
-      const match = Object.keys(siteSettings.rolePermissions).find(k => k.toUpperCase() === r.toUpperCase());
-      if (match) {
-        addRole(match);
-        return;
-      }
-    }
-    addRole(r);
-  });
-
-  // 2. Add any custom roles that the admin configured in rolePermissions
-  if (siteSettings?.rolePermissions) {
+  // 1. Preserve the exact order configured by the Admin in rolePermissions
+  if (siteSettings?.rolePermissions && Object.keys(siteSettings.rolePermissions).length > 0) {
     Object.keys(siteSettings.rolePermissions).forEach(r => addRole(r));
+    return result;
   }
 
-  // 3. Add any roles from registered users that aren't yet added
-  if (Array.isArray(usersCache)) {
-    usersCache.forEach(u => {
-      if (u.role) addRole(u.role);
-    });
-  }
+  // 2. Fallback to canonical roles if rolePermissions is empty
+  canonicalOrder.forEach(r => addRole(r));
 
   return result;
 }
@@ -8179,10 +8205,12 @@ export async function pullSiteSettingsFromGoogleSheets(): Promise<boolean> {
       if (!key) continue;
 
       if (key === 'rolePermissions') {
-        try {
-          pulledSettings.rolePermissions = JSON.parse(val);
-        } catch (e) {
-          console.error('Failed to parse rolePermissions JSON:', val);
+        if (!fs.existsSync(ROLE_PERMS_FILE)) {
+          try {
+            pulledSettings.rolePermissions = JSON.parse(val);
+          } catch (e) {
+            console.error('Failed to parse rolePermissions JSON:', val);
+          }
         }
       } else if (key === 'logoDataUrl') {
         let localLogo = '';
