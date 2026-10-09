@@ -259,3 +259,28 @@ export interface SubmittedExistAccSettlement {
   createdAt: string;
 }
 
+export interface MaintenanceRecord {
+  id: string;
+  primaryText: string;
+  fullName: string;
+  barangay?: string;
+  purok?: string;
+  contactNumber?: string;
+  maintenanceMedicine?: string;
+  disease?: string;
+  isConsulted?: boolean;
+  consultedAt?: string;
+  consultedBy?: string;
+  columns: string[];
+  columnHeaders?: string[];
+  rawData?: Record<string, string>;
+  rawText: string;
+  pdfFileName: string;
+  pdfPageNumber: number;
+  pdfFileUrl?: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  createdAt: string;
+}
+
+

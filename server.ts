@@ -93,6 +93,11 @@ import {
   setPcuBaseRate,
   getPcuHistory,
   getPcuSettlements,
+  getMaintenanceRecords,
+  addMaintenanceBulkRecords,
+  updateMaintenanceRecord,
+  deleteMaintenanceRecord,
+  clearAllMaintenanceRecords,
   recordPcuSettlement,
   deletePcuSettlement,
   getReturnedPcuRecords,
@@ -2102,6 +2107,260 @@ export async function getApp(httpServer?: http.Server) {
       res.json({ success: true, result });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- MAINTENANCE PAGE & PDF BULK ENTRY ENDPOINTS ---
+
+  app.get('/api/maintenance', requireAuth, async (_req: AuthenticatedRequest, res: Response) => {
+    try {
+      const records = await getMaintenanceRecords();
+      res.json({ records });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to load maintenance records.' });
+    }
+  });
+
+  app.post('/api/maintenance/parse-pdf', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { files } = req.body;
+      if (!Array.isArray(files) || files.length === 0) {
+        return res.status(400).json({ error: 'No PDF files provided.' });
+      }
+
+      const pdfjsLib: any = await import('pdfjs-dist/legacy/build/pdf.mjs');
+      const extractedEntries: any[] = [];
+      const fileSummaries: { fileName: string; pages: number; entriesCount: number }[] = [];
+
+      for (const fileObj of files) {
+        const fileName = String(fileObj.fileName || 'Document.pdf');
+        const rawBase64 = String(fileObj.fileData || '').replace(/^data:[^;]+;base64,/, '');
+        if (!rawBase64) continue;
+
+        const buffer = Buffer.from(rawBase64, 'base64');
+        const uint8Array = new Uint8Array(buffer);
+        const loadingTask = pdfjsLib.getDocument({
+          data: uint8Array,
+          useSystemFonts: true,
+          disableFontFace: true
+        });
+        const pdfDoc = await loadingTask.promise;
+        const numPages = pdfDoc.numPages || 1;
+        let fileEntryCount = 0;
+        let detectedHeaders: string[] | undefined = undefined;
+
+        for (let pageNum = 1; pageNum <= numPages; pageNum++) {
+          const page = await pdfDoc.getPage(pageNum);
+          const textContent = await page.getTextContent();
+          const items = (textContent.items || []).filter((it: any) => it && typeof it.str === 'string' && it.str.trim().length > 0);
+
+          // Group items into horizontal rows by Y coordinate
+          const rowGroups: { y: number; items: { x: number; width: number; text: string }[] }[] = [];
+          const rowTolerance = 4.5;
+
+          for (const it of items) {
+            const tx = Array.isArray(it.transform) ? it.transform : [1, 0, 0, 1, 0, 0];
+            const x = Number(tx[4]) || 0;
+            const y = Number(tx[5]) || 0;
+            const width = Number(it.width) || (it.str.length * 5);
+            const text = String(it.str).trim();
+
+            let matchedRow = rowGroups.find(rg => Math.abs(rg.y - y) <= rowTolerance);
+            if (!matchedRow) {
+              matchedRow = { y, items: [] };
+              rowGroups.push(matchedRow);
+            }
+            matchedRow.items.push({ x, width, text });
+          }
+
+          // Sort rows top-to-bottom (descending Y in PDF coordinate space)
+          rowGroups.sort((a, b) => b.y - a.y);
+
+          for (const rg of rowGroups) {
+            rg.items.sort((a, b) => a.x - b.x);
+            const cols: string[] = [];
+            let currentCell = '';
+            let prevRight = -99999;
+
+            for (const cellItem of rg.items) {
+              if (currentCell === '') {
+                currentCell = cellItem.text;
+                prevRight = cellItem.x + cellItem.width;
+              } else {
+                const gap = cellItem.x - prevRight;
+                if (gap > 11) {
+                  cols.push(currentCell.trim());
+                  currentCell = cellItem.text;
+                } else if (gap > 1.2) {
+                  currentCell += ' ' + cellItem.text;
+                } else {
+                  currentCell += cellItem.text;
+                }
+                prevRight = Math.max(prevRight, cellItem.x + cellItem.width);
+              }
+            }
+            if (currentCell.trim()) {
+              cols.push(currentCell.trim());
+            }
+
+            // If only 1 column was formed but it contains delimiters (\t, |, ;, or 3+ spaces), split it
+            let finalCols = cols;
+            if (finalCols.length === 1) {
+              const single = finalCols[0];
+              if (single.includes('\t')) {
+                finalCols = single.split('\t').map(s => s.trim()).filter(Boolean);
+              } else if (single.includes('|')) {
+                finalCols = single.split('|').map(s => s.trim()).filter(Boolean);
+              } else if (/\s{3,}/.test(single)) {
+                finalCols = single.split(/\s{3,}/).map(s => s.trim()).filter(Boolean);
+              }
+            }
+
+            if (finalCols.length === 0) continue;
+            const rawText = finalCols.join(' | ');
+
+            // Skip pure page number footers like "Page 1 of 3" if there are other rows
+            if (rowGroups.length > 1 && /^page\s+\d+\s*(of\s+\d+)?$/i.test(rawText.trim())) {
+              continue;
+            }
+
+            // Detect header row on first row of page if it contains common header labels
+            const upperJoined = finalCols.join(' ').toUpperCase();
+            const isHeaderRow =
+              finalCols.length >= 2 &&
+              /^(NO\.?|#|ID|FULL\s*NAME|PATIENT\s*NAME|NAME|LAST\s*NAME|BARANGAY|ADDRESS|PUROK|CONTACT|MEDICINE|MAINTENANCE)$/i.test(finalCols[0].trim()) &&
+              (upperJoined.includes('NAME') || upperJoined.includes('BARANGAY') || upperJoined.includes('MEDICINE') || upperJoined.includes('MAINTENANCE') || upperJoined.includes('CONTACT') || upperJoined.includes('ADDRESS'));
+
+            if (isHeaderRow && !detectedHeaders) {
+              detectedHeaders = finalCols;
+              continue;
+            }
+            if (isHeaderRow && detectedHeaders && finalCols.join('|').toUpperCase() === detectedHeaders.join('|').toUpperCase()) {
+              continue;
+            }
+
+            // Determine primaryText (first non-index column)
+            const nonIndexCol = finalCols.find(c => c && !/^\s*(?:\d+[\.\)\-:]?|\#\d+)\s*$/.test(c));
+            const rawPrimary = nonIndexCol || finalCols[0] || rawText;
+            const primaryText = rawPrimary.replace(/^\s*(?:\d+[\.\)\-:]|\#\d+)\s+/, '').trim() || rawPrimary;
+
+            const rawData: Record<string, string> = {};
+            finalCols.forEach((colVal, cIdx) => {
+              const headerKey = detectedHeaders && detectedHeaders[cIdx] ? detectedHeaders[cIdx] : `Column ${cIdx + 1}`;
+              rawData[headerKey] = colVal;
+            });
+
+            extractedEntries.push({
+              primaryText,
+              fullName: primaryText,
+              columns: finalCols,
+              columnHeaders: detectedHeaders,
+              rawData,
+              rawText,
+              pdfFileName: fileName,
+              pdfPageNumber: pageNum
+            });
+            fileEntryCount++;
+          }
+        }
+
+        fileSummaries.push({ fileName, pages: numPages, entriesCount: fileEntryCount });
+      }
+
+      res.json({
+        success: true,
+        entries: extractedEntries,
+        files: fileSummaries
+      });
+    } catch (err: any) {
+      console.error('[Maintenance PDF Parse Error]:', err);
+      res.status(500).json({ error: err.message || 'Failed to parse PDF file on server.' });
+    }
+  });
+
+  app.post('/api/maintenance/bulk', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { entries, pdfFiles } = req.body;
+      const username = req.user?.username || 'Admin';
+
+      if (!Array.isArray(entries) || entries.length === 0) {
+        return res.status(400).json({ error: 'No entries provided to save.' });
+      }
+
+      // Optionally store uploaded PDF files to disk so they can be viewed/downloaded later
+      const savedPdfUrls: Record<string, string> = {};
+      if (Array.isArray(pdfFiles)) {
+        const filesDir = path.join(process.cwd(), 'public', 'uploads', 'files');
+        const dataFilesDir = path.join(process.cwd(), 'data', 'uploads', 'files');
+        try { fs.mkdirSync(filesDir, { recursive: true }); } catch {}
+        try { fs.mkdirSync(dataFilesDir, { recursive: true }); } catch {}
+
+        for (const pf of pdfFiles) {
+          if (pf && pf.fileName && pf.fileData && typeof pf.fileData === 'string') {
+            try {
+              const base64Clean = pf.fileData.replace(/^data:[^;]+;base64,/, '');
+              const safeName = `${Date.now()}-${String(pf.fileName).replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+              const buf = Buffer.from(base64Clean, 'base64');
+              fs.writeFileSync(path.join(filesDir, safeName), buf);
+              fs.writeFileSync(path.join(dataFilesDir, safeName), buf);
+              savedPdfUrls[pf.fileName] = `/uploads/files/${safeName}`;
+            } catch (e) {}
+          }
+        }
+      }
+
+      const enrichedEntries = entries.map((e: any) => ({
+        ...e,
+        pdfFileUrl: e.pdfFileUrl || (e.pdfFileName && savedPdfUrls[e.pdfFileName]) || undefined
+      }));
+
+      const added = await addMaintenanceBulkRecords(enrichedEntries, username);
+      const allRecords = await getMaintenanceRecords();
+
+      res.json({
+        success: true,
+        addedCount: added.length,
+        records: allRecords
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to save bulk maintenance entries.' });
+    }
+  });
+
+  app.put('/api/maintenance/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const updated = await updateMaintenanceRecord(req.params.id, req.body || {}, username);
+      if (!updated) {
+        return res.status(404).json({ error: 'Maintenance record not found.' });
+      }
+      res.json({ success: true, record: updated });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to update maintenance record.' });
+    }
+  });
+
+  app.delete('/api/maintenance/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const ok = await deleteMaintenanceRecord(req.params.id, username);
+      if (!ok) {
+        return res.status(404).json({ error: 'Maintenance record not found.' });
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to delete maintenance record.' });
+    }
+  });
+
+  app.delete('/api/maintenance', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const pdfFileName = typeof req.query.pdfFileName === 'string' ? req.query.pdfFileName : undefined;
+      const removedCount = await clearAllMaintenanceRecords(username, pdfFileName);
+      res.json({ success: true, removedCount });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to clear maintenance records.' });
     }
   });
 

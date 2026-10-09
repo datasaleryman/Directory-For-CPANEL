@@ -164,6 +164,7 @@ const APP_PAGES = [
   { id: 'returned', name: 'Returned', desc: 'Files returned by administrators to original submitters' },
   { id: 'exist-acc-files', name: 'Exist. Acc. Files', desc: 'Patient uploaded archives and records list' },
   { id: 'submitted-exist-acc', name: 'Submitted Exist. Acc.', desc: 'Submitted existing accounts with barangay folders & ledger' },
+  { id: 'maintenance', name: 'Maintenance', desc: 'Maintenance PDF bulk entry & alphabetically sorted directory' },
   { id: 'member-verification', name: 'Member verification', desc: 'Search and verify clinical or community membership accounts' },
   { id: 'verification-entry', name: 'Verification Entry', desc: 'Sleek interface to search patients and submit a verification entry record' },
   { id: 'accounts', name: 'Account Management', desc: 'User accounts & roles' },

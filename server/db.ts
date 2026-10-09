@@ -41,6 +41,10 @@ import {
   deleteSubmittedExistAccSettlementFromCPanel,
   saveSubmittedExistAccHistoryToCPanel,
   fetchSubmittedExistAccHistoryFromCPanel,
+  saveMaintenanceRecordsBulkToCPanel,
+  fetchMaintenanceRecordsFromCPanel,
+  deleteMaintenanceRecordFromCPanel,
+  clearAllMaintenanceRecordsInCPanel,
   fetchAllFromCPanelDb,
   getCPanelDbStatus,
   isCPanelDbConnected,
@@ -937,16 +941,17 @@ export function getSheetsStatus() {
 
 const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 export const ROLE_PERMS_FILE = path.join(DATA_DIR, 'role_permissions.json');
+export const MAINTENANCE_RECORDS_FILE = path.join(DATA_DIR, 'maintenance_records.json');
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
-  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
-  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account'],
-  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account']
+  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
+  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
+  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
+  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account'],
+  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account']
 };
 
 export interface SiteSettings {
@@ -968,6 +973,7 @@ export interface SiteSettings {
   navExistAccFiles?: string;
   navSubmittedExistAcc?: string;
   navReturned?: string;
+  navMaintenance?: string;
   rolePermissions?: Record<string, string[]>;
   pcuBaseRate?: number;
   pcuPendingBaseRate?: number;
@@ -13548,6 +13554,267 @@ export async function applyRestoredData(
     totalRecords
   };
 }
+
+// ============================================================================
+// MAINTENANCE PAGE RECORDS (PDF Bulk Entry & Maintenance Directory)
+// ============================================================================
+
+export interface MaintenanceRecord {
+  id: string;
+  primaryText: string;
+  fullName: string;
+  barangay?: string;
+  purok?: string;
+  contactNumber?: string;
+  maintenanceMedicine?: string;
+  disease?: string;
+  isConsulted?: boolean;
+  consultedAt?: string;
+  consultedBy?: string;
+  columns: string[];
+  columnHeaders?: string[];
+  rawData?: Record<string, string>;
+  rawText: string;
+  pdfFileName: string;
+  pdfPageNumber: number;
+  pdfFileUrl?: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  createdAt: string;
+}
+
+let maintenanceRecordsCache: MaintenanceRecord[] = [];
+let maintenanceLoaded = false;
+
+function ensureMaintenanceLoadedSync() {
+  if (maintenanceLoaded) return;
+  maintenanceLoaded = true;
+  try {
+    if (fs.existsSync(MAINTENANCE_RECORDS_FILE)) {
+      const raw = fs.readFileSync(MAINTENANCE_RECORDS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        maintenanceRecordsCache = parsed;
+      }
+    } else {
+      safeWriteFileSync(MAINTENANCE_RECORDS_FILE, JSON.stringify([], null, 2), 'utf-8');
+    }
+  } catch (e: any) {
+    console.warn('[Maintenance DB] Could not read maintenance_records.json:', e.message);
+  }
+}
+
+export async function getMaintenanceRecords(): Promise<MaintenanceRecord[]> {
+  ensureMaintenanceLoadedSync();
+  try {
+    if (isCPanelDbConnected()) {
+      const remote = await fetchMaintenanceRecordsFromCPanel();
+      if (Array.isArray(remote) && remote.length > 0) {
+        const mergedMap = new Map<string, MaintenanceRecord>();
+        for (const r of remote) {
+          if (r && r.id) mergedMap.set(String(r.id), r);
+        }
+        const toPushRemote: MaintenanceRecord[] = [];
+        for (const localRec of maintenanceRecordsCache) {
+          if (localRec && localRec.id) {
+            const existingRemote = mergedMap.get(String(localRec.id));
+            if (!existingRemote) {
+              mergedMap.set(String(localRec.id), localRec);
+              toPushRemote.push(localRec);
+            } else {
+              const localTime = Date.parse(localRec.uploadedAt || '') || 0;
+              const remoteTime = Date.parse(existingRemote.uploadedAt || '') || 0;
+              const mergedRec: MaintenanceRecord = {
+                ...(localTime > remoteTime ? localRec : existingRemote),
+                contactNumber: (localTime >= remoteTime && localRec.contactNumber !== undefined)
+                  ? localRec.contactNumber
+                  : (existingRemote.contactNumber || localRec.contactNumber || ''),
+                barangay: (localTime >= remoteTime && localRec.barangay !== undefined)
+                  ? localRec.barangay
+                  : (existingRemote.barangay || localRec.barangay || ''),
+                purok: (localTime >= remoteTime && localRec.purok !== undefined)
+                  ? localRec.purok
+                  : (existingRemote.purok || localRec.purok || ''),
+                maintenanceMedicine: existingRemote.maintenanceMedicine || localRec.maintenanceMedicine || '',
+                disease: existingRemote.disease || localRec.disease || '',
+                isConsulted: Boolean(existingRemote.isConsulted || localRec.isConsulted)
+              };
+              mergedMap.set(String(localRec.id), mergedRec);
+              if (localTime > remoteTime) {
+                toPushRemote.push(mergedRec);
+              }
+            }
+          }
+        }
+        maintenanceRecordsCache = Array.from(mergedMap.values());
+        safeWriteFileSync(MAINTENANCE_RECORDS_FILE, JSON.stringify(maintenanceRecordsCache, null, 2), 'utf-8');
+        if (toPushRemote.length > 0) {
+          await saveMaintenanceRecordsBulkToCPanel(toPushRemote);
+        }
+      } else if (maintenanceRecordsCache.length > 0) {
+        await saveMaintenanceRecordsBulkToCPanel(maintenanceRecordsCache);
+      }
+    }
+  } catch (err: any) {
+    console.warn('[Maintenance DB] Sync note:', err.message);
+  }
+  return maintenanceRecordsCache;
+}
+
+export async function addMaintenanceBulkRecords(
+  entries: Partial<MaintenanceRecord>[],
+  uploadedBy: string = 'Admin'
+): Promise<MaintenanceRecord[]> {
+  ensureMaintenanceLoadedSync();
+  const nowIso = new Date().toISOString();
+  const added: MaintenanceRecord[] = [];
+
+  for (const item of entries) {
+    if (!item) continue;
+    const cols = Array.isArray(item.columns)
+      ? item.columns.map(c => String(c ?? '').trim())
+      : [];
+    const rawText = String(item.rawText || cols.join(' | ') || item.fullName || item.primaryText || '').trim();
+    if (!rawText && cols.every(c => !c)) continue;
+
+    // Pick primaryText for alphabetical sorting: first non-empty column that isn't just a pure row index number
+    let primaryText = String(item.primaryText || item.fullName || '').trim();
+    if (!primaryText) {
+      const nonIndexCol = cols.find(c => c && !/^\s*(?:\d+[\.\)\-:]?|\#\d+)\s*$/.test(c));
+      primaryText = nonIndexCol || cols.find(Boolean) || rawText;
+    }
+    // Strip leading numbering like "1. " or "01) " for clean alphabetical sorting
+    const cleanPrimary = primaryText.replace(/^\s*(?:\d+[\.\)\-:]|\#\d+)\s+/, '').trim() || primaryText;
+
+    const maintMed = item.maintenanceMedicine ? String(item.maintenanceMedicine).trim() : '';
+    const disease = item.disease ? String(item.disease).trim() : '';
+    const isConsulted = Boolean(item.isConsulted !== undefined ? item.isConsulted : (maintMed || disease));
+
+    const record: MaintenanceRecord = {
+      id: String(item.id || `${Date.now()}-${crypto.randomBytes(4).toString('hex')}`),
+      primaryText: cleanPrimary,
+      fullName: String(item.fullName || cleanPrimary).trim(),
+      barangay: item.barangay ? String(item.barangay).trim() : '',
+      purok: item.purok ? String(item.purok).trim() : '',
+      contactNumber: item.contactNumber ? String(item.contactNumber).trim() : '',
+      maintenanceMedicine: maintMed,
+      disease,
+      isConsulted,
+      consultedAt: item.consultedAt ? String(item.consultedAt) : (isConsulted ? nowIso : ''),
+      consultedBy: item.consultedBy ? String(item.consultedBy) : (isConsulted ? uploadedBy : ''),
+      columns: cols.length > 0 ? cols : [rawText],
+      columnHeaders: Array.isArray(item.columnHeaders) && item.columnHeaders.length > 0 ? item.columnHeaders : undefined,
+      rawData: item.rawData && typeof item.rawData === 'object' ? item.rawData : undefined,
+      rawText,
+      pdfFileName: String(item.pdfFileName || 'Bulk_Entry.pdf').trim(),
+      pdfPageNumber: Number(item.pdfPageNumber) || 1,
+      pdfFileUrl: item.pdfFileUrl || undefined,
+      uploadedBy: String(item.uploadedBy || uploadedBy || 'Admin'),
+      uploadedAt: String(item.uploadedAt || nowIso),
+      createdAt: String(item.createdAt || nowIso)
+    };
+
+    maintenanceRecordsCache.push(record);
+    added.push(record);
+  }
+
+  await safeWriteFile(MAINTENANCE_RECORDS_FILE, JSON.stringify(maintenanceRecordsCache, null, 2), 'utf-8');
+  await saveMaintenanceRecordsBulkToCPanel(added);
+
+  if (added.length > 0) {
+    await addActivity(uploadedBy, `Added ${added.length} bulk maintenance entries from PDF (${added[0].pdfFileName})`);
+  }
+
+  return added;
+}
+
+export async function updateMaintenanceRecord(
+  id: string,
+  updates: Partial<MaintenanceRecord>,
+  updatedBy: string = 'Admin'
+): Promise<MaintenanceRecord | null> {
+  ensureMaintenanceLoadedSync();
+  const idx = maintenanceRecordsCache.findIndex(r => String(r.id) === String(id));
+  if (idx === -1) return null;
+
+  const existing = maintenanceRecordsCache[idx];
+  const nowIso = new Date().toISOString();
+
+  const updatedMaintMed =
+    updates.maintenanceMedicine !== undefined
+      ? String(updates.maintenanceMedicine).trim()
+      : existing.maintenanceMedicine || '';
+  const updatedDisease =
+    updates.disease !== undefined
+      ? String(updates.disease).trim()
+      : existing.disease || '';
+
+  const hasMaintenanceData = Boolean(updatedMaintMed || updatedDisease);
+  const updatedIsConsulted =
+    updates.isConsulted !== undefined
+      ? Boolean(updates.isConsulted)
+      : hasMaintenanceData;
+
+  const updated: MaintenanceRecord = {
+    ...existing,
+    ...updates,
+    id: existing.id,
+    maintenanceMedicine: updatedMaintMed,
+    disease: updatedDisease,
+    isConsulted: updatedIsConsulted,
+    consultedAt: updatedIsConsulted
+      ? (updates.consultedAt || existing.consultedAt || nowIso)
+      : '',
+    consultedBy: updatedIsConsulted
+      ? (updates.consultedBy || existing.consultedBy || updatedBy)
+      : ''
+  };
+  if (updates.fullName && !updates.primaryText) {
+    updated.primaryText = updates.fullName.replace(/^\s*(?:\d+[\.\)\-:]|\#\d+)\s+/, '').trim() || updates.fullName;
+  }
+
+  maintenanceRecordsCache[idx] = updated;
+  await safeWriteFile(MAINTENANCE_RECORDS_FILE, JSON.stringify(maintenanceRecordsCache, null, 2), 'utf-8');
+  await saveMaintenanceRecordsBulkToCPanel([updated]);
+
+  if (updatedIsConsulted && !existing.isConsulted) {
+    await addActivity(
+      updatedBy,
+      `Added Maintenance (Medicine: "${updatedMaintMed || 'N/A'}", Disease: "${updatedDisease || 'N/A'}") for "${updated.primaryText}" and transferred to Consulted`
+    );
+  } else {
+    await addActivity(updatedBy, `Updated maintenance entry "${updated.primaryText}"`);
+  }
+  return updated;
+}
+
+export async function deleteMaintenanceRecord(id: string, deletedBy: string = 'Admin'): Promise<boolean> {
+  ensureMaintenanceLoadedSync();
+  const idx = maintenanceRecordsCache.findIndex(r => String(r.id) === String(id));
+  if (idx === -1) return false;
+  const target = maintenanceRecordsCache[idx];
+  maintenanceRecordsCache.splice(idx, 1);
+  await safeWriteFile(MAINTENANCE_RECORDS_FILE, JSON.stringify(maintenanceRecordsCache, null, 2), 'utf-8');
+  await deleteMaintenanceRecordFromCPanel(String(id));
+  await addActivity(deletedBy, `Deleted maintenance entry "${target.primaryText}"`);
+  return true;
+}
+
+export async function clearAllMaintenanceRecords(deletedBy: string = 'Admin', pdfFileName?: string): Promise<number> {
+  ensureMaintenanceLoadedSync();
+  const before = maintenanceRecordsCache.length;
+  if (pdfFileName) {
+    maintenanceRecordsCache = maintenanceRecordsCache.filter(r => r.pdfFileName !== pdfFileName);
+  } else {
+    maintenanceRecordsCache = [];
+  }
+  const removed = before - maintenanceRecordsCache.length;
+  await safeWriteFile(MAINTENANCE_RECORDS_FILE, JSON.stringify(maintenanceRecordsCache, null, 2), 'utf-8');
+  await clearAllMaintenanceRecordsInCPanel(pdfFileName);
+  await addActivity(deletedBy, pdfFileName ? `Cleared ${removed} maintenance entries from PDF "${pdfFileName}"` : `Cleared all ${removed} maintenance entries`);
+  return removed;
+}
+
 
 
 

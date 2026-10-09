@@ -391,6 +391,35 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       sort_order INT NOT NULL DEFAULT 0,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_role_sort_order (sort_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    // 17. Maintenance Records Table (PDF Bulk Entry, Maintenance Medicine, Disease & Consulted Status)
+    `CREATE TABLE IF NOT EXISTS maintenance_records (
+      id VARCHAR(100) NOT NULL PRIMARY KEY,
+      primary_text VARCHAR(500) NOT NULL DEFAULT '',
+      full_name VARCHAR(500) NOT NULL DEFAULT '',
+      barangay VARCHAR(255) DEFAULT '',
+      purok VARCHAR(255) DEFAULT '',
+      contact_number VARCHAR(100) DEFAULT '',
+      maintenance_medicine TEXT NULL,
+      disease TEXT NULL,
+      is_consulted TINYINT(1) NOT NULL DEFAULT 0,
+      consulted_at VARCHAR(100) DEFAULT '',
+      consulted_by VARCHAR(255) DEFAULT '',
+      columns_json LONGTEXT NOT NULL,
+      headers_json LONGTEXT NULL,
+      raw_data_json LONGTEXT NULL,
+      raw_text LONGTEXT NOT NULL,
+      pdf_file_name VARCHAR(500) DEFAULT '',
+      pdf_page_number INT DEFAULT 1,
+      pdf_file_url LONGTEXT NULL,
+      uploaded_by VARCHAR(255) DEFAULT 'Admin',
+      uploaded_at VARCHAR(100) DEFAULT '',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_maint_primary_text (primary_text(191)),
+      INDEX idx_maint_pdf_file (pdf_file_name(191)),
+      INDEX idx_maint_barangay (barangay),
+      INDEX idx_maint_consulted (is_consulted)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
   ];
 
@@ -554,6 +583,31 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
             console.log(`[cPanel DB] Added missing column '${col.name}' to pcu_submissions table.`);
           } catch (e: any) {
             console.warn(`[cPanel DB] Column migration notice for pcu_submissions.${col.name}:`, e.message);
+          }
+        }
+      }
+    }
+
+    // Inspect and migrate missing columns in 'maintenance_records'
+    const [maintColRows]: any = await connectionPool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'maintenance_records'`
+    ).catch(() => [[]]);
+    const existingMaintCols = new Set((maintColRows || []).map((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase()));
+    if (existingMaintCols.size > 0) {
+      const missingMaintCols = [
+        { name: 'maintenance_medicine', type: 'TEXT NULL' },
+        { name: 'disease', type: 'TEXT NULL' },
+        { name: 'is_consulted', type: 'TINYINT(1) NOT NULL DEFAULT 0' },
+        { name: 'consulted_at', type: "VARCHAR(100) DEFAULT ''" },
+        { name: 'consulted_by', type: "VARCHAR(255) DEFAULT ''" }
+      ];
+      for (const col of missingMaintCols) {
+        if (!existingMaintCols.has(col.name.toLowerCase())) {
+          try {
+            await connectionPool.query(`ALTER TABLE maintenance_records ADD COLUMN \`${col.name}\` ${col.type}`);
+            console.log(`[cPanel DB] Added missing column '${col.name}' to maintenance_records table.`);
+          } catch (e: any) {
+            console.warn(`[cPanel DB] Column migration notice for maintenance_records.${col.name}:`, e.message);
           }
         }
       }
@@ -1025,6 +1079,76 @@ CREATE TABLE IF NOT EXISTS \`role_permissions\` (
   \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX \`idx_role_sort_order\` (\`sort_order\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
+-- 14. Table: maintenance_records (Maintenance PDF Bulk Entry & Consulted Data Storage)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS \`maintenance_records\` (
+  \`id\` VARCHAR(100) NOT NULL PRIMARY KEY,
+  \`primary_text\` VARCHAR(500) NOT NULL DEFAULT '',
+  \`full_name\` VARCHAR(500) NOT NULL DEFAULT '',
+  \`barangay\` VARCHAR(255) DEFAULT '',
+  \`purok\` VARCHAR(255) DEFAULT '',
+  \`contact_number\` VARCHAR(100) DEFAULT '',
+  \`maintenance_medicine\` TEXT NULL,
+  \`disease\` TEXT NULL,
+  \`is_consulted\` TINYINT(1) NOT NULL DEFAULT 0,
+  \`consulted_at\` VARCHAR(100) DEFAULT '',
+  \`consulted_by\` VARCHAR(255) DEFAULT '',
+  \`columns_json\` LONGTEXT NOT NULL,
+  \`headers_json\` LONGTEXT NULL,
+  \`raw_data_json\` LONGTEXT NULL,
+  \`raw_text\` LONGTEXT NOT NULL,
+  \`pdf_file_name\` VARCHAR(500) DEFAULT '',
+  \`pdf_page_number\` INT DEFAULT 1,
+  \`pdf_file_url\` LONGTEXT NULL,
+  \`uploaded_by\` VARCHAR(255) DEFAULT 'Admin',
+  \`uploaded_at\` VARCHAR(100) DEFAULT '',
+  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX \`idx_maint_primary_text\` (\`primary_text\`(191)),
+  INDEX \`idx_maint_pdf_file\` (\`pdf_file_name\`(191)),
+  INDEX \`idx_maint_barangay\` (\`barangay\`),
+  INDEX \`idx_maint_consulted\` (\`is_consulted\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Safe upgrade for existing maintenance_records tables (avoids #1060 Duplicate column error)
+SET @dbname = DATABASE();
+SET @tablename = 'maintenance_records';
+
+SET @sql = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = 'maintenance_medicine') > 0,
+  'SELECT 1',
+  'ALTER TABLE \`maintenance_records\` ADD COLUMN \`maintenance_medicine\` TEXT NULL AFTER \`contact_number\`'
+));
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = 'disease') > 0,
+  'SELECT 1',
+  'ALTER TABLE \`maintenance_records\` ADD COLUMN \`disease\` TEXT NULL AFTER \`maintenance_medicine\`'
+));
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = 'is_consulted') > 0,
+  'SELECT 1',
+  'ALTER TABLE \`maintenance_records\` ADD COLUMN \`is_consulted\` TINYINT(1) NOT NULL DEFAULT 0 AFTER \`disease\`'
+));
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = 'consulted_at') > 0,
+  'SELECT 1',
+  'ALTER TABLE \`maintenance_records\` ADD COLUMN \`consulted_at\` VARCHAR(100) DEFAULT '''' AFTER \`is_consulted\`'
+));
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = 'consulted_by') > 0,
+  'SELECT 1',
+  'ALTER TABLE \`maintenance_records\` ADD COLUMN \`consulted_by\` VARCHAR(255) DEFAULT '''' AFTER \`consulted_at\`'
+));
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- -------------------------------------------------------------------------
 -- FIX FOR cPanel phpMyAdmin WARNING:
@@ -3900,3 +4024,230 @@ export async function fetchSubmittedExistAccHistoryFromCPanel(limit: number = 50
     return [];
   }
 }
+
+/**
+ * Saves multiple Maintenance records to cPanel MySQL.
+ */
+export async function saveMaintenanceRecordsBulkToCPanel(records: any[]): Promise<void> {
+  if (!pool || !currentStatus.connected || !Array.isArray(records) || records.length === 0) return;
+  try {
+    for (const r of records) {
+      const id = String(r.id || crypto.randomUUID());
+      const columnsJson = JSON.stringify(Array.isArray(r.columns) ? r.columns : []);
+      const headersJson = r.columnHeaders ? JSON.stringify(r.columnHeaders) : null;
+      const rawDataJson = r.rawData ? JSON.stringify(r.rawData) : null;
+      const isConsulted = Boolean(
+        r.isConsulted !== undefined
+          ? r.isConsulted
+          : Boolean(String(r.maintenanceMedicine || '').trim() || String(r.disease || '').trim())
+      );
+      try {
+        await pool.query(
+          `INSERT INTO maintenance_records
+            (id, primary_text, full_name, barangay, purok, contact_number, maintenance_medicine,
+             disease, is_consulted, consulted_at, consulted_by,
+             columns_json, headers_json, raw_data_json, raw_text, pdf_file_name, pdf_page_number,
+             pdf_file_url, uploaded_by, uploaded_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+            primary_text = VALUES(primary_text),
+            full_name = VALUES(full_name),
+            barangay = VALUES(barangay),
+            purok = VALUES(purok),
+            contact_number = VALUES(contact_number),
+            maintenance_medicine = VALUES(maintenance_medicine),
+            disease = VALUES(disease),
+            is_consulted = VALUES(is_consulted),
+            consulted_at = VALUES(consulted_at),
+            consulted_by = VALUES(consulted_by),
+            columns_json = VALUES(columns_json),
+            headers_json = VALUES(headers_json),
+            raw_data_json = VALUES(raw_data_json),
+            raw_text = VALUES(raw_text),
+            pdf_file_name = VALUES(pdf_file_name),
+            pdf_page_number = VALUES(pdf_page_number),
+            pdf_file_url = VALUES(pdf_file_url),
+            uploaded_by = VALUES(uploaded_by),
+            uploaded_at = VALUES(uploaded_at)`,
+          [
+            id,
+            String(r.primaryText || r.fullName || '').slice(0, 500),
+            String(r.fullName || r.primaryText || '').slice(0, 500),
+            String(r.barangay || '').slice(0, 255),
+            String(r.purok || '').slice(0, 255),
+            String(r.contactNumber || '').slice(0, 100),
+            String(r.maintenanceMedicine || ''),
+            String(r.disease || ''),
+            isConsulted ? 1 : 0,
+            String(r.consultedAt || '').slice(0, 100),
+            String(r.consultedBy || '').slice(0, 255),
+            columnsJson,
+            headersJson,
+            rawDataJson,
+            String(r.rawText || ''),
+            String(r.pdfFileName || '').slice(0, 500),
+            Number(r.pdfPageNumber) || 1,
+            r.pdfFileUrl || null,
+            String(r.uploadedBy || 'Admin').slice(0, 255),
+            String(r.uploadedAt || new Date().toISOString()).slice(0, 100)
+          ]
+        );
+      } catch (rowErr: any) {
+        // Fallback if newer columns (disease, is_consulted, consulted_at, consulted_by) do not exist yet
+        if (rowErr && (rowErr.code === 'ER_BAD_FIELD_ERROR' || String(rowErr.message || '').includes('Unknown column'))) {
+          try { await pool.query(`ALTER TABLE maintenance_records ADD COLUMN barangay VARCHAR(255) DEFAULT ''`); } catch {}
+          try { await pool.query(`ALTER TABLE maintenance_records ADD COLUMN purok VARCHAR(255) DEFAULT ''`); } catch {}
+          try { await pool.query(`ALTER TABLE maintenance_records ADD COLUMN contact_number VARCHAR(100) DEFAULT ''`); } catch {}
+          try { await pool.query(`ALTER TABLE maintenance_records ADD COLUMN maintenance_medicine TEXT NULL`); } catch {}
+          try { await pool.query(`ALTER TABLE maintenance_records ADD COLUMN disease TEXT NULL`); } catch {}
+          try { await pool.query(`ALTER TABLE maintenance_records ADD COLUMN is_consulted TINYINT(1) NOT NULL DEFAULT 0`); } catch {}
+          try { await pool.query(`ALTER TABLE maintenance_records ADD COLUMN consulted_at VARCHAR(100) DEFAULT ''`); } catch {}
+          try { await pool.query(`ALTER TABLE maintenance_records ADD COLUMN consulted_by VARCHAR(255) DEFAULT ''`); } catch {}
+          await pool.query(
+            `INSERT INTO maintenance_records
+              (id, primary_text, full_name, barangay, purok, contact_number, maintenance_medicine,
+               disease, is_consulted, consulted_at, consulted_by,
+               columns_json, headers_json, raw_data_json, raw_text, pdf_file_name, pdf_page_number,
+               pdf_file_url, uploaded_by, uploaded_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+              primary_text = VALUES(primary_text),
+              full_name = VALUES(full_name),
+              barangay = VALUES(barangay),
+              purok = VALUES(purok),
+              contact_number = VALUES(contact_number),
+              maintenance_medicine = VALUES(maintenance_medicine),
+              disease = VALUES(disease),
+              is_consulted = VALUES(is_consulted),
+              consulted_at = VALUES(consulted_at),
+              consulted_by = VALUES(consulted_by),
+              columns_json = VALUES(columns_json),
+              headers_json = VALUES(headers_json),
+              raw_data_json = VALUES(raw_data_json),
+              raw_text = VALUES(raw_text),
+              pdf_file_name = VALUES(pdf_file_name),
+              pdf_page_number = VALUES(pdf_page_number),
+              pdf_file_url = VALUES(pdf_file_url),
+              uploaded_by = VALUES(uploaded_by),
+              uploaded_at = VALUES(uploaded_at)`,
+            [
+              id,
+              String(r.primaryText || r.fullName || '').slice(0, 500),
+              String(r.fullName || r.primaryText || '').slice(0, 500),
+              String(r.barangay || '').slice(0, 255),
+              String(r.purok || '').slice(0, 255),
+              String(r.contactNumber || '').slice(0, 100),
+              String(r.maintenanceMedicine || ''),
+              String(r.disease || ''),
+              isConsulted ? 1 : 0,
+              String(r.consultedAt || '').slice(0, 100),
+              String(r.consultedBy || '').slice(0, 255),
+              columnsJson,
+              headersJson,
+              rawDataJson,
+              String(r.rawText || ''),
+              String(r.pdfFileName || '').slice(0, 500),
+              Number(r.pdfPageNumber) || 1,
+              r.pdfFileUrl || null,
+              String(r.uploadedBy || 'Admin').slice(0, 255),
+              String(r.uploadedAt || new Date().toISOString()).slice(0, 100)
+            ]
+          );
+        } else {
+          throw rowErr;
+        }
+      }
+    }
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error saving Maintenance records to MySQL:', err.message || err);
+  }
+}
+
+/**
+ * Fetches all Maintenance records from cPanel MySQL.
+ */
+export async function fetchMaintenanceRecordsFromCPanel(): Promise<any[]> {
+  if (!pool || !currentStatus.connected) return [];
+  try {
+    const [rows]: any = await pool.query('SELECT * FROM maintenance_records ORDER BY primary_text ASC, id ASC');
+    return (rows || []).map((r: any) => {
+      let columns: string[] = [];
+      let columnHeaders: string[] | undefined = undefined;
+      let rawData: Record<string, string> | undefined = undefined;
+      try {
+        columns = JSON.parse(r.columns_json || '[]');
+      } catch {}
+      try {
+        if (r.headers_json) columnHeaders = JSON.parse(r.headers_json);
+      } catch {}
+      try {
+        if (r.raw_data_json) rawData = JSON.parse(r.raw_data_json);
+      } catch {}
+      const maintMed = r.maintenance_medicine || '';
+      const disease = r.disease || '';
+      const isConsulted = Boolean(
+        Number(r.is_consulted) === 1 ||
+        Boolean(String(maintMed).trim() || String(disease).trim())
+      );
+      return {
+        id: String(r.id),
+        primaryText: r.primary_text || r.full_name || '',
+        fullName: r.full_name || r.primary_text || '',
+        barangay: r.barangay || '',
+        purok: r.purok || '',
+        contactNumber: r.contact_number || '',
+        maintenanceMedicine: maintMed,
+        disease,
+        isConsulted,
+        consultedAt: r.consulted_at || '',
+        consultedBy: r.consulted_by || '',
+        columns: Array.isArray(columns) ? columns : [],
+        columnHeaders,
+        rawData,
+        rawText: r.raw_text || '',
+        pdfFileName: r.pdf_file_name || '',
+        pdfPageNumber: Number(r.pdf_page_number) || 1,
+        pdfFileUrl: r.pdf_file_url || undefined,
+        uploadedBy: r.uploaded_by || 'Admin',
+        uploadedAt: r.uploaded_at || (r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()),
+        createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()
+      };
+    });
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error fetching Maintenance records from MySQL:', err.message || err);
+    return [];
+  }
+}
+
+/**
+ * Deletes a single Maintenance record from cPanel MySQL.
+ */
+export async function deleteMaintenanceRecordFromCPanel(id: string): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    await pool.query('DELETE FROM maintenance_records WHERE id = ?', [String(id)]);
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error deleting Maintenance record from MySQL:', err.message || err);
+    return false;
+  }
+}
+
+/**
+ * Clears all Maintenance records (or by pdfFileName) in cPanel MySQL.
+ */
+export async function clearAllMaintenanceRecordsInCPanel(pdfFileName?: string): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    if (pdfFileName) {
+      await pool.query('DELETE FROM maintenance_records WHERE pdf_file_name = ?', [pdfFileName]);
+    } else {
+      await pool.query('DELETE FROM maintenance_records');
+    }
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error clearing Maintenance records in MySQL:', err.message || err);
+    return false;
+  }
+}
+
