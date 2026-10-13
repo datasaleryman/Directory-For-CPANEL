@@ -10,8 +10,9 @@ import { ExistingAccountItem } from '../types.js';
 interface BarangayFolderData {
   barangay: string;
   count: number;
-  verifiedCount: number;
-  list: ExistingAccountItem[];
+  verifiedCount?: number;
+  purokCount?: number;
+  list?: ExistingAccountItem[];
 }
 
 interface BarangaySummaryAnalyticsProps {
@@ -56,26 +57,32 @@ export const BarangaySummaryAnalytics: React.FC<BarangaySummaryAnalyticsProps> =
 
   // Compute detailed analytics metrics per barangay
   const barangayAnalytics = useMemo(() => {
+    if (!Array.isArray(barangayFolders)) return [];
     return barangayFolders.map(folder => {
-      const totalMembers = folder.count;
+      const totalMembers = folder.count || 0;
 
       // Group puroks in this barangay
       const purokSet = new Set<string>();
-      folder.list.forEach(item => {
-        const rawP = (item.purok || '').trim();
-        if (rawP) {
-          purokSet.add(rawP.toUpperCase());
-        }
-      });
+      if (Array.isArray(folder.list)) {
+        folder.list.forEach(item => {
+          const rawP = (item.purok || '').trim();
+          if (rawP) {
+            purokSet.add(rawP.toUpperCase());
+          }
+        });
+      }
 
-      const purokCount = Math.max(1, purokSet.size);
+      const purokCount =
+        folder.purokCount !== undefined && folder.purokCount > 0
+          ? folder.purokCount
+          : Math.max(1, purokSet.size);
 
       return {
-        rawName: folder.barangay,
-        displayName: formatBarangayName(folder.barangay),
+        rawName: folder.barangay || '',
+        displayName: formatBarangayName(folder.barangay || ''),
         totalMembers,
         purokCount,
-        list: folder.list
+        list: folder.list || []
       };
     });
   }, [barangayFolders]);

@@ -162,15 +162,14 @@ const APP_PAGES = [
   { id: 'directory', name: 'Clinic Directory', desc: 'Patient records & search' },
   { id: 'submit-pcu', name: 'Submit PCU', desc: 'Uploaded PCU records, folders & ledger' },
   { id: 'returned', name: 'Returned', desc: 'Files returned by administrators to original submitters' },
-  { id: 'exist-acc-files', name: 'Exist. Acc. Files', desc: 'Patient uploaded archives and records list' },
-  { id: 'submitted-exist-acc', name: 'Submitted Exist. Acc.', desc: 'Submitted existing accounts with barangay folders & ledger' },
   { id: 'maintenance', name: 'Maintenance', desc: 'Maintenance PDF bulk entry & alphabetically sorted directory' },
+  { id: 'exist-directory', name: 'Exist. Directory', desc: 'Directory of existing accounts & records' },
+  { id: 'submit-exist', name: 'Submit Exist.', desc: 'Submitted existing account records, files & verification' },
   { id: 'member-verification', name: 'Member verification', desc: 'Search and verify clinical or community membership accounts' },
   { id: 'verification-entry', name: 'Verification Entry', desc: 'Sleek interface to search patients and submit a verification entry record' },
   { id: 'accounts', name: 'Account Management', desc: 'User accounts & roles' },
   { id: 'bulk', name: 'Bulk Entry', desc: 'CSV & batch patient imports' },
   { id: 'print', name: 'Print List', desc: 'Formatted printable directory' },
-  { id: 'existing-account', name: 'Existing Account', desc: 'Directory of patient records flagged as existing accounts' },
   { id: 'admins', name: 'Admin Credentials', desc: 'Administrator username and credentials management' },
   { id: 'settings', name: 'Website Settings', desc: 'Branding & access rules' }
 ];
@@ -221,10 +220,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [navPrint, setNavPrint] = useState(siteSettings.navPrint || 'Print List');
   const [navAdmins, setNavAdmins] = useState(siteSettings.navAdmins || 'Admin Credentials');
   const [navSettings, setNavSettings] = useState(siteSettings.navSettings || 'Website Settings');
-  const [navExistingAccount, setNavExistingAccount] = useState(siteSettings.navExistingAccount || 'Existing Account');
-  const [navExistAccFiles, setNavExistAccFiles] = useState(siteSettings.navExistAccFiles || 'Exist. Acc. Files');
-  const [navSubmittedExistAcc, setNavSubmittedExistAcc] = useState(siteSettings.navSubmittedExistAcc || 'Submitted Exist. Acc.');
   const [navVerificationEntry, setNavVerificationEntry] = useState(siteSettings.navVerificationEntry || 'Verification Entry');
+  const [navExistDirectory, setNavExistDirectory] = useState(siteSettings.navExistDirectory || 'Exist. Directory');
+  const [navSubmitExist, setNavSubmitExist] = useState(siteSettings.navSubmitExist || 'Submit Exist.');
 
   // Roles & Permissions States
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(() => {
@@ -241,14 +239,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       return siteSettings.rolePermissions;
     }
     return {
-      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-      'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-      'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-      'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-      'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
-      'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
-      'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account'],
-      'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry', 'existing-account']
+      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+      'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+      'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+      'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+      'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
+      'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
+      'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry'],
+      'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry']
     };
   });
   const [rolesList, setRolesList] = useState<string[]>(() => {
@@ -494,7 +492,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     hasUnsavedRoleChangesRef.current = true;
     setRolePermissions(prev => ({
       ...prev,
-      [upper]: ['dashboard', 'map', 'directory', 'submit-pcu', 'exist-acc-files', 'submitted-exist-acc', 'member-verification', 'verification-entry']
+      [upper]: ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry']
     }));
     setRolesList(prev => [...prev, upper]);
     setCustomRoleInput('');
@@ -635,10 +633,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setNavPrint(siteSettings.navPrint || 'Print List');
     setNavAdmins(siteSettings.navAdmins || 'Admin Credentials');
     setNavSettings(siteSettings.navSettings || 'Website Settings');
-    setNavExistingAccount(siteSettings.navExistingAccount || 'Existing Account');
-    setNavExistAccFiles(siteSettings.navExistAccFiles || 'Exist. Acc. Files');
-    setNavSubmittedExistAcc(siteSettings.navSubmittedExistAcc || 'Submitted Exist. Acc.');
     setNavVerificationEntry(siteSettings.navVerificationEntry || 'Verification Entry');
+    setNavExistDirectory(siteSettings.navExistDirectory || 'Exist. Directory');
+    setNavSubmitExist(siteSettings.navSubmitExist || 'Submit Exist.');
     if (!hasUnsavedRoleChangesRef.current && siteSettings.rolePermissions && Object.keys(siteSettings.rolePermissions).length > 0) {
       setRolePermissions(siteSettings.rolePermissions);
       setRolesList(getOrderedRolesList(siteSettings.rolePermissions));
@@ -800,10 +797,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           navPrint: navPrint.trim() || 'Print List',
           navAdmins: navAdmins.trim() || 'Admin Credentials',
           navSettings: navSettings.trim() || 'Website Settings',
-          navExistingAccount: navExistingAccount.trim() || 'Existing Account',
-          navExistAccFiles: navExistAccFiles.trim() || 'Exist. Acc. Files',
-          navSubmittedExistAcc: navSubmittedExistAcc.trim() || 'Submitted Exist. Acc.',
           navVerificationEntry: navVerificationEntry.trim() || 'Verification Entry',
+          navExistDirectory: navExistDirectory.trim() || 'Exist. Directory',
+          navSubmitExist: navSubmitExist.trim() || 'Submit Exist.',
           rolePermissions
         })
       });
@@ -837,10 +833,9 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setNavPrint('Print List');
       setNavAdmins('Admin Credentials');
       setNavSettings('Website Settings');
-      setNavExistingAccount('Existing Account');
-      setNavExistAccFiles('Exist. Acc. Files');
-      setNavSubmittedExistAcc('Submitted Exist. Acc.');
       setNavVerificationEntry('Verification Entry');
+      setNavExistDirectory('Exist. Directory');
+      setNavSubmitExist('Submit Exist.');
       showToast('Form reset to default presets. Make sure to click Save to persist!', 'info');
     }
   };
@@ -1334,19 +1329,6 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
               <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Existing Account Link Title
-                </label>
-                <input
-                  type="text"
-                  value={navExistingAccount}
-                  onChange={(e) => setNavExistingAccount(e.target.value)}
-                  placeholder="e.g. Existing Account"
-                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
-                />
-              </div>
-
-              <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
                   Submit PCU Link Title
                 </label>
                 <input
@@ -1360,26 +1342,26 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
               <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Exist. Acc. Files Link Title
+                  Exist. Directory Link Title
                 </label>
                 <input
                   type="text"
-                  value={navExistAccFiles}
-                  onChange={(e) => setNavExistAccFiles(e.target.value)}
-                  placeholder="e.g. Exist. Acc. Files"
+                  value={navExistDirectory}
+                  onChange={(e) => setNavExistDirectory(e.target.value)}
+                  placeholder="e.g. Exist. Directory"
                   className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
                 />
               </div>
 
               <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Submitted Exist. Acc. Link Title
+                  Submit Exist. Link Title
                 </label>
                 <input
                   type="text"
-                  value={navSubmittedExistAcc}
-                  onChange={(e) => setNavSubmittedExistAcc(e.target.value)}
-                  placeholder="e.g. Submitted Exist. Acc."
+                  value={navSubmitExist}
+                  onChange={(e) => setNavSubmitExist(e.target.value)}
+                  placeholder="e.g. Submit Exist."
                   className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
                 />
               </div>

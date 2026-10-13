@@ -843,19 +843,9 @@ export const BackupDataSettings: React.FC<BackupDataSettingsProps> = ({
                       </div>
                       <div className="mt-1 text-[11px] text-emerald-700 flex items-center gap-1 font-medium">
                         <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
-                        <span>Existing Account Directory</span>
+                        <span>Restored Accounts</span>
                       </div>
                     </div>
-                    {onNavigateTab && (
-                      <button
-                        type="button"
-                        onClick={() => onNavigateTab('existing-account')}
-                        className="mt-3 w-full py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[11px] rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1"
-                      >
-                        View in Accounts
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-                    )}
                   </div>
                 )}
 

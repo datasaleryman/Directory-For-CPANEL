@@ -248,7 +248,10 @@ export interface SubmittedExistAccSettlement {
   id: string;
   submitter: string;
   totalSubmissions: number;
+  verifiedCount?: number;
+  pendingCount?: number;
   baseRate: number;
+  pendingBaseRate?: number;
   totalSalary: number;
   amountPaid: number;
   paymentStatus: string;

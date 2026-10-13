@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, ChevronDown, ChevronUp, Edit2, Trash2, Eye, FileText, ArrowDownToLine, Loader2, Calendar, Phone, User, Clock, ChevronLeft, ChevronRight, Check, Folder, FolderOpen, ArrowLeft, Grid, List, Plus, Layers, Navigation, Upload, Image, UserCheck, ShieldCheck, CheckSquare, Square, BarChart3, AlertTriangle, CheckCircle2, Lock, ShieldAlert, X, SearchX, UserX, UserPlus, RotateCcw, Database, Save, Pill, FolderInput } from 'lucide-react';
+import { Search, ChevronDown, ChevronUp, Edit2, Trash2, Eye, FileText, ArrowDownToLine, Loader2, Calendar, Phone, User, Clock, ChevronLeft, ChevronRight, Check, Folder, FolderOpen, ArrowLeft, Grid, List, Plus, Layers, Navigation, Upload, Image, UserCheck, ShieldCheck, CheckSquare, Square, BarChart3, AlertTriangle, CheckCircle2, Lock, ShieldAlert, X, SearchX, UserX, UserPlus, RotateCcw, Database, Save, Pill, FolderInput, FileSpreadsheet } from 'lucide-react';
 import { Contact } from '../types.js';
 
 export const isContactLocked = (c: Contact | null | undefined): boolean => {
@@ -78,6 +78,7 @@ interface ContactTableProps {
   } | null;
   backNavigateContact?: Contact | null;
   onClearBackNavigateContact?: () => void;
+  onNavigateToExistDirectory?: () => void;
 }
 
 const DEFAULT_BARANGAYS = [
@@ -125,13 +126,22 @@ export const ContactTable: React.FC<ContactTableProps> = ({
   lastSyncTime,
   currentUser,
   backNavigateContact,
-  onClearBackNavigateContact
+  onClearBackNavigateContact,
+  onNavigateToExistDirectory
 }) => {
   // Role permissions check for LEADER and CO-LEADER
   const userRoleNormalized = (currentUser?.role || '').toUpperCase();
   const isLeaderOrCoLeader = userRoleNormalized === 'LEADER' || userRoleNormalized === 'CO-LEADER' || userRoleNormalized.includes('LEADER');
   const isAdmin = userRoleNormalized === 'ADMINISTRATOR' || userRoleNormalized === 'ADMIN' || userRoleNormalized === 'MASTER ADMIN' || userRoleNormalized === 'IT';
+  const isAllowedBulkExist =
+    ['MASTER ADMIN', 'MASTER_ADMIN', 'MASTERADMIN', 'IT', 'ADMIN', 'ADMINISTRATOR'].includes(userRoleNormalized) ||
+    (currentUser?.username || '').toLowerCase() === 'admin';
   const userBarangay = currentUser?.barangay || '';
+
+  // Bulk Entry of Exist. Acc. State
+  const [showBulkExistModal, setShowBulkExistModal] = useState(false);
+  const [bulkExistText, setBulkExistText] = useState('');
+  const [bulkExistSubmitting, setBulkExistSubmitting] = useState(false);
 
   // Folder View state vs Table View
   const [activeFolder, setActiveFolder] = useState<string | null>(null); // null = Folder Overview, string = specific Barangay folder
@@ -1393,6 +1403,18 @@ export const ContactTable: React.FC<ContactTableProps> = ({
               <span>Purok</span>
             </button>
           </div>
+
+          {/* Bulk Entry of Exist. Acc. button - ONLY visible for admin/IT/MASTER ADMIN/Administrator */}
+          {isAllowedBulkExist && (
+            <button
+              onClick={() => setShowBulkExistModal(true)}
+              className="px-3.5 py-2 bg-gradient-to-r from-teal-700 to-emerald-800 hover:from-teal-600 hover:to-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5 border border-emerald-500/30"
+              title="Bulk Register Existing Accounts into Exist. Directory"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-300" />
+              <span>Bulk Exist. Acc.</span>
+            </button>
+          )}
 
           <button
             onClick={handleSyncSheets}
@@ -3602,6 +3624,254 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                   )}
                 </button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* BULK ENTRY OF EXIST. ACC. MODAL (ONLY ACCESSIBLE BY ADMIN/IT/MASTER ADMIN/ADMINISTRATOR) */}
+      <AnimatePresence>
+        {showBulkExistModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+            <motion.div
+              initial={{ opacity: 0, y: 15, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 15, scale: 0.98 }}
+              className="bg-white rounded-3xl max-w-3xl w-full overflow-hidden shadow-2xl border border-slate-100 flex flex-col"
+            >
+              <div className="bg-gradient-to-r from-slate-900 to-slate-950 px-6 py-5 flex items-center justify-between text-white">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-400 border border-emerald-500/30">
+                    <FileSpreadsheet className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-base font-display">Bulk Register Existing Accounts</h3>
+                    <p className="text-xs text-slate-400 font-medium">
+                      Enter multiple existing patient profiles to save into Exist. Directory
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowBulkExistModal(false)}
+                  className="p-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {(() => {
+                const lines = bulkExistText.split('\n');
+                const parsed = lines
+                  .map((line, idx) => {
+                    const trimmed = line.trim();
+                    if (!trimmed) return null;
+
+                    let parts: string[] = [];
+                    if (trimmed.includes('\t')) parts = trimmed.split('\t').map(s => s.trim());
+                    else if (trimmed.includes('|')) parts = trimmed.split('|').map(s => s.trim());
+                    else if (trimmed.includes(';')) parts = trimmed.split(';').map(s => s.trim());
+                    else if (trimmed.includes(',')) parts = trimmed.split(',').map(s => s.trim());
+                    else parts = [trimmed];
+
+                    const fullName = parts[0] || '';
+                    const b = parts[1] || '';
+                    const p = parts[2] || '';
+                    let contact = parts[3] || '';
+                    if (contact.startsWith("'")) contact = contact.substring(1).trim();
+                    if (/^9\d{9}$/.test(contact)) contact = '0' + contact;
+                    let pin = parts[4] || '';
+                    if (pin.startsWith("'")) pin = pin.substring(1).trim();
+
+                    const errors: string[] = [];
+                    if (!fullName) errors.push('Name is required');
+                    if (!b) errors.push('Barangay is required');
+
+                    return {
+                      lineIndex: idx + 1,
+                      raw: trimmed,
+                      fullName,
+                      barangay: b.toUpperCase(),
+                      purok: p,
+                      contactNumber: contact,
+                      pin,
+                      isValid: errors.length === 0,
+                      errors
+                    };
+                  })
+                  .filter(Boolean) as Array<{
+                    lineIndex: number;
+                    raw: string;
+                    fullName: string;
+                    barangay: string;
+                    purok: string;
+                    contactNumber: string;
+                    pin: string;
+                    isValid: boolean;
+                    errors: string[];
+                  }>;
+
+                const handleSubmit = async (e: React.FormEvent) => {
+                  e.preventDefault();
+                  if (parsed.length === 0) {
+                    showToast('Please enter at least one valid record.', 'error');
+                    return;
+                  }
+                  const invalid = parsed.filter(r => !r.isValid);
+                  if (invalid.length > 0) {
+                    showToast(`Please fix formatting error on line ${invalid[0].lineIndex}: ${invalid[0].errors.join(', ')}`, 'error');
+                    return;
+                  }
+
+                  setBulkExistSubmitting(true);
+                  try {
+                    const payload = parsed.map(r => ({
+                      full_name: r.fullName,
+                      barangay: r.barangay,
+                      purok: r.purok,
+                      contact_number: r.contactNumber,
+                      status: 'approved',
+                      existingAccVerified: true,
+                      existingAccVisited: true,
+                      pin: r.pin || ''
+                    }));
+
+                    const res = await fetch('/api/existing-accounts/bulk', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${authToken}`
+                      },
+                      body: JSON.stringify({ accounts: payload })
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.error || 'Failed to register bulk accounts.');
+
+                    showToast(`Successfully registered ${data.count || parsed.length} account(s) to Exist. Directory!`, 'success');
+                    setBulkExistText('');
+                    setShowBulkExistModal(false);
+                  } catch (err: any) {
+                    showToast(err.message, 'error');
+                  } finally {
+                    setBulkExistSubmitting(false);
+                  }
+                };
+
+                return (
+                  <form onSubmit={handleSubmit} className="flex-1 flex flex-col min-h-0">
+                    <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+                      <div className="bg-emerald-50 border border-emerald-200/60 rounded-2xl p-4 text-xs text-emerald-900 font-semibold space-y-2">
+                        <p className="font-extrabold text-sm flex items-center gap-2">
+                          <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-600 text-white text-[10px]">FORMAT</span>
+                          <span>Full Name | Barangay | Purok | Contact # | PIN Code (optional)</span>
+                        </p>
+                        <p className="text-emerald-700 font-medium">
+                          Enter each patient on a new line. Supports Pipe (|), Tab (Excel/Google Sheets copy paste), or Comma separation:
+                        </p>
+                        <pre className="font-mono bg-white/80 p-2.5 rounded-lg border border-emerald-200 text-slate-700 select-all block text-[11px]">
+                          JUAN DELA CRUZ | DAMPALAN | Purok Mabuhay | 09171234567 | 12-345678901-2{'\n'}
+                          MARIA SANTIAGO	KALINGAYAN	Narra	09228881122	23-456789012-3
+                        </pre>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider block">
+                            Paste / Type Data Here *
+                          </label>
+                          <textarea
+                            required
+                            value={bulkExistText}
+                            onChange={e => setBulkExistText(e.target.value)}
+                            placeholder="Type or paste records here..."
+                            rows={9}
+                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-mono font-semibold text-slate-800 outline-none focus:border-emerald-500 focus:bg-white transition-all leading-relaxed"
+                          />
+                        </div>
+
+                        <div className="space-y-1.5 flex flex-col min-h-0">
+                          <label className="text-xs font-extrabold text-slate-500 uppercase tracking-wider block">
+                            Live Parsing Verification Preview ({parsed.length})
+                          </label>
+                          <div className="flex-1 bg-slate-50 border border-slate-200 rounded-2xl p-3 max-h-[220px] overflow-y-auto space-y-2 text-xs">
+                            {parsed.length === 0 ? (
+                              <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 p-4">
+                                <FileText className="w-6 h-6 mb-1 text-slate-300" />
+                                <p className="text-xs">No records parsed yet.</p>
+                                <p className="text-[10px] text-slate-400 mt-0.5">Start typing or paste lines on the left.</p>
+                              </div>
+                            ) : (
+                              parsed.map((rec, idx) => (
+                                <div
+                                  key={idx}
+                                  className={`p-2.5 rounded-xl border ${
+                                    rec.isValid ? 'bg-white border-emerald-100' : 'bg-rose-50 border-rose-100'
+                                  }`}
+                                >
+                                  <div className="flex items-center justify-between text-[10px] font-bold">
+                                    <span className="text-slate-400">Line #{rec.lineIndex}</span>
+                                    {rec.isValid ? (
+                                      <span className="text-emerald-700 flex items-center gap-1">
+                                        <CheckCircle2 className="w-3 h-3" /> Valid
+                                      </span>
+                                    ) : (
+                                      <span className="text-rose-600 flex items-center gap-1">
+                                        <X className="w-3 h-3" /> Error
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="font-extrabold text-slate-800 mt-0.5">{rec.fullName}</p>
+                                  <p className="text-[10px] text-slate-500">
+                                    {rec.barangay} · {rec.purok || 'No Purok'} · {rec.contactNumber || 'No Phone'}
+                                  </p>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+                      {onNavigateToExistDirectory ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowBulkExistModal(false);
+                            onNavigateToExistDirectory();
+                          }}
+                          className="text-xs text-emerald-700 hover:text-emerald-800 font-bold underline cursor-pointer"
+                        >
+                          Go to Exist. Directory →
+                        </button>
+                      ) : <div />}
+
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setShowBulkExistModal(false)}
+                          className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={bulkExistSubmitting || parsed.length === 0}
+                          className="px-5 py-2.5 bg-emerald-800 hover:bg-emerald-900 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+                        >
+                          {bulkExistSubmitting ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <Plus className="w-3.5 h-3.5" />
+                          )}
+                          <span>
+                            {bulkExistSubmitting ? 'Registering...' : `Register Bulk Accounts (${parsed.length})`}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  </form>
+                );
+              })()}
             </motion.div>
           </div>
         )}

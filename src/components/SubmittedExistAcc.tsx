@@ -35,7 +35,10 @@ import {
   CheckCheck,
   RotateCcw,
   Sparkles,
-  Link as LinkIcon
+  Link as LinkIcon,
+  Users,
+  BookOpen,
+  Banknote
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SubmittedExistAccRecord, SubmittedExistAccHistoryItem, SubmittedExistAccSettlement } from '../types';
@@ -48,20 +51,22 @@ interface SubmittedExistAccProps {
     barangay?: string;
   } | null;
   showToast: (message: string, type: 'success' | 'warning' | 'error' | 'info') => void;
+  onNavigateToExistDirectory?: () => void;
 }
 
 export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
   authToken,
   currentUser,
-  showToast
+  showToast,
+  onNavigateToExistDirectory
 }) => {
   // Main Data States
   const [records, setRecords] = useState<SubmittedExistAccRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Tab State: 'files' | 'verified' | 'pending' | 'updated' | 'ledger'
-  const [activeTab, setActiveTab] = useState<'files' | 'verified' | 'pending' | 'updated' | 'ledger'>('files');
+  // Tab State: 'files' | 'verified' | 'pending' | 'updated' | 'ledger' | 'settlement-logs'
+  const [activeTab, setActiveTab] = useState<'files' | 'verified' | 'pending' | 'updated' | 'ledger' | 'settlement-logs'>('files');
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -90,6 +95,23 @@ export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
   const [savingRates, setSavingRates] = useState(false);
   const [settlements, setSettlements] = useState<SubmittedExistAccSettlement[]>([]);
   const [loadingSettlements, setLoadingSettlements] = useState(false);
+
+  // Print Ledger Modal & Reports
+  const [showPrintLedgerModal, setShowPrintLedgerModal] = useState<boolean>(false);
+  const [printReportType, setPrintReportType] = useState<'pending' | 'verified' | 'all'>('all');
+
+  // Custom Print Blank Payroll Form States
+  const [showCustomPrintModal, setShowCustomPrintModal] = useState<boolean>(false);
+  const [blankRowCount, setBlankRowCount] = useState<number>(15);
+  const [blankPayrollTitle, setBlankPayrollTitle] = useState<string>('EXIST. ACC. SUBMITTERS PAYROLL REGISTER');
+  const [blankBarangay, setBlankBarangay] = useState<string>('');
+  const [blankPeriod, setBlankPeriod] = useState<string>(
+    new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  );
+  const [blankOrientation, setBlankOrientation] = useState<'landscape' | 'portrait'>('landscape');
+
+  // Settlement Logs Tab State & Search
+  const [settlementSearch, setSettlementSearch] = useState<string>('');
   
   // Settle Payroll Modal
   const [settleModalTarget, setSettleModalTarget] = useState<{
@@ -228,7 +250,7 @@ export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
   }, [authToken]);
 
   useEffect(() => {
-    if (activeTab === 'ledger') {
+    if (activeTab === 'ledger' || activeTab === 'settlement-logs') {
       fetchSettlements();
       fetchBaseRates();
     }
@@ -329,7 +351,10 @@ export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
         body: JSON.stringify({
           submitter: settleModalTarget.submitter,
           totalSubmissions: settleModalTarget.totalSubmissions,
+          verifiedCount: settleModalTarget.verifiedCount,
+          pendingCount: settleModalTarget.pendingCount,
           baseRate: baseRate,
+          pendingBaseRate: pendingBaseRate,
           totalSalary: settleModalTarget.totalSalary,
           amountPaid: amountNum,
           paymentStatus: amountNum >= settleModalTarget.unpaidAmount ? 'SETTLED' : 'PARTIALLY_PAID',
@@ -545,6 +570,820 @@ export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
     return displayRecords.slice(start, start + ITEMS_PER_PAGE);
   }, [displayRecords, currentPage]);
 
+  const formatTimestamp = (ts?: string) => {
+    if (!ts) return 'N/A';
+    try {
+      const d = new Date(ts);
+      if (isNaN(d.getTime())) return ts;
+      return d.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return ts;
+    }
+  };
+
+  const formatPrintDate = (d: Date = new Date()) => {
+    try {
+      const monthDayYear = d.toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+      });
+      const timeStr = d.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+      return `${monthDayYear} at ${timeStr}`;
+    } catch {
+      return d.toLocaleDateString();
+    }
+  };
+
+  // Filtered settlements for Settlement Logs tab
+  const filteredSettlements = useMemo(() => {
+    if (!settlementSearch.trim()) return settlements;
+    const q = settlementSearch.toLowerCase().trim();
+    return settlements.filter((st) =>
+      (st.submitter && st.submitter.toLowerCase().includes(q)) ||
+      (st.settledBy && st.settledBy.toLowerCase().includes(q)) ||
+      (st.paymentMethod && st.paymentMethod.toLowerCase().includes(q)) ||
+      (st.referenceNotes && st.referenceNotes.toLowerCase().includes(q)) ||
+      (st.settledAt && st.settledAt.toLowerCase().includes(q))
+    );
+  }, [settlements, settlementSearch]);
+
+  // Aggregate stats for Settlement Logs tab
+  const totalSettledAmount = useMemo(() => {
+    return settlements.reduce((sum, s) => sum + (Number(s.amountPaid ?? s.totalSalary) || 0), 0);
+  }, [settlements]);
+
+  const totalSettledSubmissions = useMemo(() => {
+    return settlements.reduce((sum, s) => sum + (Number(s.totalSubmissions) || 0), 0);
+  }, [settlements]);
+
+  // Export Settlement Logs to CSV Function
+  const exportSettlementsToCsv = () => {
+    if (settlements.length === 0) {
+      showToast('No settlement logs available to export', 'warning');
+      return;
+    }
+    const headers = [
+      'Settlement Date & Time',
+      'Submitter Name',
+      'Total Accounts',
+      'Verified Accounts',
+      'Pending Accounts',
+      'Settled Salary (PHP)',
+      'Amount Paid (PHP)',
+      'Payment Status',
+      'Disbursement Method',
+      'Settled By',
+      'Reference Notes'
+    ];
+    const rows = filteredSettlements.map((st) => [
+      `"${formatTimestamp(st.settledAt || st.createdAt || '').replace(/"/g, '""')}"`,
+      `"${(st.submitter || '').replace(/"/g, '""')}"`,
+      st.totalSubmissions,
+      st.verifiedCount ?? '',
+      st.pendingCount ?? '',
+      (Number(st.totalSalary) || 0).toFixed(2),
+      (Number(st.amountPaid ?? st.totalSalary) || 0).toFixed(2),
+      `"${(st.paymentStatus || 'SETTLED').replace(/"/g, '""')}"`,
+      `"${(st.paymentMethod || 'CASH').replace(/"/g, '""')}"`,
+      `"${(st.settledBy || 'Master Admin').replace(/"/g, '""')}"`,
+      `"${(st.referenceNotes || '').replace(/"/g, '""')}"`
+    ]);
+
+    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement('a');
+    link.setAttribute('href', encodedUri);
+    link.setAttribute('download', `exist_acc_settlement_logs_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast('Settlement Logs exported to CSV successfully', 'success');
+  };
+
+  // Print Ledger Data computation
+  const printLedgerData = useMemo(() => {
+    let list: {
+      name: string;
+      households: number;
+      payout: number;
+    }[] = [];
+
+    let sectionTitle = 'PENDING PAYOUT';
+    let reportSubtitle = 'Submitted Exist. Acc. — Pending Payout Report';
+    let rateLabel = `Base Rate per Account: PHP ${pendingBaseRate.toFixed(2)}`;
+    let householdLabel = 'TOTAL PENDING ACCOUNTS';
+    let payoutLabel = 'TOTAL PENDING PAYOUT';
+
+    if (printReportType === 'pending') {
+      sectionTitle = 'PENDING PAYOUT';
+      reportSubtitle = 'Submitted Exist. Acc. — Pending Payout Report';
+      rateLabel = `Base Rate per Account: PHP ${pendingBaseRate.toFixed(2)}`;
+      householdLabel = 'TOTAL PENDING ACCOUNTS';
+      payoutLabel = 'TOTAL PENDING PAYOUT';
+      list = submitterSalaries
+        .filter(sub => sub.pendingCount > 0)
+        .map(sub => ({
+          name: sub.submitter,
+          households: sub.pendingCount,
+          payout: sub.pendingCount * pendingBaseRate
+        }))
+        .sort((a, b) => b.households - a.households || b.payout - a.payout);
+    } else if (printReportType === 'verified') {
+      sectionTitle = 'VERIFIED PAYOUT';
+      reportSubtitle = 'Submitted Exist. Acc. — Verified Payout Report';
+      rateLabel = `Base Rate per Account: PHP ${baseRate.toFixed(2)}`;
+      householdLabel = 'TOTAL VERIFIED ACCOUNTS';
+      payoutLabel = 'TOTAL VERIFIED PAYOUT';
+      list = submitterSalaries
+        .filter(sub => sub.verifiedCount > 0)
+        .map(sub => ({
+          name: sub.submitter,
+          households: sub.verifiedCount,
+          payout: sub.verifiedCount * baseRate
+        }))
+        .sort((a, b) => b.households - a.households || b.payout - a.payout);
+    } else {
+      sectionTitle = 'COMBINED EXIST. ACC. PAYOUT';
+      reportSubtitle = 'Submitted Exist. Acc. — Total Contributor Payroll Ledger';
+      rateLabel = `Base Rates: Verified PHP ${baseRate.toFixed(2)} | Pending PHP ${pendingBaseRate.toFixed(2)}`;
+      householdLabel = 'TOTAL SUBMITTED ACCOUNTS';
+      payoutLabel = 'TOTAL COMPUTED PAYOUT';
+      list = submitterSalaries
+        .filter(sub => (sub.verifiedCount + sub.pendingCount) > 0)
+        .map(sub => ({
+          name: sub.submitter,
+          households: sub.verifiedCount + sub.pendingCount,
+          payout: (sub.verifiedCount * baseRate) + (sub.pendingCount * pendingBaseRate)
+        }))
+        .sort((a, b) => b.households - a.households || b.payout - a.payout);
+    }
+
+    const totalHouseholds = list.reduce((sum, item) => sum + item.households, 0);
+    const totalPayout = list.reduce((sum, item) => sum + item.payout, 0);
+
+    return {
+      list,
+      sectionTitle,
+      reportSubtitle,
+      rateLabel,
+      householdLabel,
+      payoutLabel,
+      totalHouseholds,
+      totalPayout
+    };
+  }, [submitterSalaries, printReportType, pendingBaseRate, baseRate]);
+
+  // Execute High-Fidelity Print formatted identically to official Saint Francis Clinic PDF
+  const handleExecutePrintLedger = () => {
+    const printFrame = document.createElement('iframe');
+    printFrame.style.position = 'fixed';
+    printFrame.style.top = '-9999px';
+    printFrame.style.left = '-9999px';
+    printFrame.style.width = '0';
+    printFrame.style.height = '0';
+    printFrame.style.border = 'none';
+    document.body.appendChild(printFrame);
+
+    const formattedDate = formatPrintDate(new Date());
+
+    const rowsHtml = printLedgerData.list.map(item => `
+      <tr>
+        <td class="col-sub">${item.name}</td>
+        <td class="col-hh">${item.households}</td>
+        <td class="col-pay">PHP ${item.payout.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+      </tr>
+    `).join('');
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Submitted Exist. Acc. Files Ledger - ${printLedgerData.sectionTitle}</title>
+        <style>
+          @page {
+            size: portrait;
+            margin: 15mm 18mm;
+          }
+          * { box-sizing: border-box; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #0f172a;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .ledger-page {
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 8px 0;
+          }
+          .clinic-brand {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.32em;
+            color: #475569;
+            text-align: center;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+          }
+          .main-title {
+            font-size: 26px;
+            font-weight: 800;
+            color: #0f172a;
+            text-align: center;
+            margin: 0 0 6px 0;
+            letter-spacing: -0.02em;
+          }
+          .subtitle {
+            font-size: 13px;
+            font-weight: 500;
+            color: #475569;
+            text-align: center;
+            margin: 0 0 28px 0;
+          }
+          .meta-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            font-weight: 500;
+            color: #334155;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e2e8f0;
+            margin-bottom: 24px;
+          }
+          .section-title {
+            font-size: 12.5px;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            color: #0f172a;
+            text-transform: uppercase;
+            margin-bottom: 14px;
+          }
+          .summary-cards {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-bottom: 28px;
+          }
+          .summary-card {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 16px 20px;
+            background: #ffffff;
+          }
+          .card-label {
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: #64748b;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+          }
+          .card-value {
+            font-size: 28px;
+            font-weight: 800;
+            color: #0f172a;
+            margin: 0;
+            line-height: 1.2;
+          }
+          .card-value.payout {
+            color: #059669;
+          }
+          .ledger-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 32px;
+          }
+          .ledger-table th {
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            text-transform: uppercase;
+            color: #64748b;
+            padding: 12px 4px;
+            border-bottom: 1px solid #cbd5e1;
+          }
+          .ledger-table th.col-sub {
+            text-align: left;
+            width: 45%;
+          }
+          .ledger-table th.col-hh {
+            text-align: left;
+            width: 25%;
+            padding-left: 8px;
+          }
+          .ledger-table th.col-pay {
+            text-align: right;
+            width: 30%;
+            padding-right: 4px;
+          }
+          .ledger-table td {
+            padding: 11px 4px;
+            border-bottom: 1px solid #f1f5f9;
+            font-size: 12px;
+          }
+          .ledger-table td.col-sub {
+            font-weight: 600;
+            color: #0f172a;
+            text-align: left;
+          }
+          .ledger-table td.col-hh {
+            font-weight: 500;
+            color: #475569;
+            text-align: left;
+            padding-left: 8px;
+          }
+          .ledger-table td.col-pay {
+            font-weight: 700;
+            color: #059669;
+            text-align: right;
+            padding-right: 4px;
+          }
+          .ledger-footer {
+            font-size: 10.5px;
+            color: #94a3b8;
+            text-align: center;
+            padding-top: 20px;
+            margin-top: 24px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="ledger-page">
+          <div class="clinic-brand">S A I N T &nbsp; F R A N C I S &nbsp; C L I N I C &nbsp; ( S F C )</div>
+          <h1 class="main-title">Submitted Exist. Acc. Files Ledger</h1>
+          <div class="subtitle">${printLedgerData.reportSubtitle}</div>
+
+          <div class="meta-bar">
+            <span>${printLedgerData.rateLabel}</span>
+            <span>Generated: ${formattedDate}</span>
+          </div>
+
+          <div class="section-title">${printLedgerData.sectionTitle}</div>
+
+          <div class="summary-cards">
+            <div class="summary-card">
+              <div class="card-label">${printLedgerData.householdLabel}</div>
+              <div class="card-value">${printLedgerData.totalHouseholds}</div>
+            </div>
+            <div class="summary-card">
+              <div class="card-label">${printLedgerData.payoutLabel}</div>
+              <div class="card-value payout">PHP ${printLedgerData.totalPayout.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+            </div>
+          </div>
+
+          <table class="ledger-table">
+            <thead>
+              <tr>
+                <th class="col-sub">SUBMITTED BY</th>
+                <th class="col-hh">ACCOUNTS SUBMITTED</th>
+                <th class="col-pay">TOTAL PAYOUT</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml || '<tr><td colspan="3" style="text-align:center; padding:24px; color:#94a3b8;">No submissions recorded.</td></tr>'}
+            </tbody>
+          </table>
+
+          <div class="ledger-footer">
+            Saint Francis Clinic — Submitted Exist. Acc. Files Ledger &middot; Generated ${formattedDate}
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const doc = printFrame.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(html);
+      doc.close();
+      setTimeout(() => {
+        printFrame.contentWindow?.focus();
+        printFrame.contentWindow?.print();
+        setTimeout(() => {
+          if (document.body.contains(printFrame)) {
+            document.body.removeChild(printFrame);
+          }
+        }, 2000);
+      }, 300);
+    } else {
+      window.print();
+    }
+  };
+
+  // Execute High-Fidelity Custom Print Blank Payroll Form matching Saint Francis Clinic format
+  const handleExecutePrintBlankPayroll = () => {
+    const printFrame = document.createElement('iframe');
+    printFrame.style.position = 'fixed';
+    printFrame.style.top = '-9999px';
+    printFrame.style.left = '-9999px';
+    printFrame.style.width = '0';
+    printFrame.style.height = '0';
+    printFrame.style.border = 'none';
+    document.body.appendChild(printFrame);
+
+    const rowsCount = Math.max(1, Math.min(100, Number(blankRowCount) || 15));
+    const formattedDate = formatPrintDate(new Date());
+
+    let rowsHtml = '';
+    for (let i = 1; i <= rowsCount; i++) {
+      rowsHtml += `
+        <tr>
+          <td class="col-num">${i}</td>
+          <td class="col-name"><div class="blank-line"></div></td>
+          <td class="col-brgy"><div class="blank-line"></div></td>
+          <td class="col-v"><div class="blank-line"></div></td>
+          <td class="col-p"><div class="blank-line"></div></td>
+          <td class="col-amt"><div class="blank-line"></div></td>
+          <td class="col-sig"><div class="blank-sig"></div></td>
+          <td class="col-rem"><div class="blank-line"></div></td>
+        </tr>
+      `;
+    }
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>${blankPayrollTitle} - Saint Francis Clinic</title>
+        <style>
+          @page {
+            size: ${blankOrientation};
+            margin: 10mm 12mm;
+          }
+          * { box-sizing: border-box; }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            color: #0f172a;
+            background: #ffffff;
+            margin: 0;
+            padding: 0;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          .sheet-container {
+            width: 100%;
+            max-width: 1080px;
+            margin: 0 auto;
+            padding: 4px 0;
+          }
+          .header-clinic {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.3em;
+            color: #047857;
+            text-align: center;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+          }
+          .header-title {
+            font-size: 20px;
+            font-weight: 900;
+            color: #0f172a;
+            text-align: center;
+            margin: 0 0 3px 0;
+            letter-spacing: -0.01em;
+            text-transform: uppercase;
+          }
+          .header-subtitle {
+            font-size: 11px;
+            font-weight: 600;
+            color: #475569;
+            text-align: center;
+            margin: 0 0 14px 0;
+            letter-spacing: 0.05em;
+          }
+          .meta-box {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 10.5px;
+            padding: 6px 12px;
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            margin-bottom: 12px;
+          }
+          .meta-item {
+            font-weight: 600;
+            color: #334155;
+          }
+          .meta-item strong {
+            color: #0f172a;
+          }
+          .payroll-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 16px;
+          }
+          .payroll-table th {
+            border: 1.5px solid #0f172a;
+            background: #f1f5f9;
+            color: #0f172a;
+            font-size: 9.5px;
+            font-weight: 800;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+            padding: 7px 4px;
+            text-align: center;
+          }
+          .payroll-table td {
+            border: 1px solid #94a3b8;
+            padding: 4px 4px;
+            height: 32px;
+            vertical-align: middle;
+            font-size: 11px;
+          }
+          .col-num { width: 32px; text-align: center; font-weight: 700; color: #475569; }
+          .col-name { width: 220px; }
+          .col-brgy { width: 140px; }
+          .col-v { width: 95px; text-align: center; }
+          .col-p { width: 95px; text-align: center; }
+          .col-amt { width: 120px; text-align: right; }
+          .col-sig { width: 160px; }
+          .col-rem { width: 120px; }
+          .blank-line {
+            width: 100%;
+            height: 100%;
+            min-height: 16px;
+          }
+          .blank-sig {
+            width: 85%;
+            margin: 0 auto;
+            border-bottom: 1px dashed #94a3b8;
+            height: 14px;
+          }
+          .totals-row td {
+            font-weight: 800;
+            background: #f8fafc;
+            border-top: 2px solid #0f172a;
+            border-bottom: 2px solid #0f172a;
+            font-size: 10px;
+            padding: 6px 6px;
+          }
+          .signatures-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+            padding-top: 4px;
+            page-break-inside: avoid;
+          }
+          .sig-card {
+            text-align: center;
+          }
+          .sig-underline {
+            border-bottom: 1.5px solid #0f172a;
+            margin: 32px 16px 5px 16px;
+          }
+          .sig-title {
+            font-size: 10px;
+            font-weight: 700;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+          }
+          .sig-name {
+            font-size: 11.5px;
+            font-weight: 800;
+            color: #0f172a;
+            margin-top: 2px;
+          }
+          .footer-note {
+            font-size: 9px;
+            color: #94a3b8;
+            text-align: center;
+            margin-top: 18px;
+            padding-top: 8px;
+            border-top: 1px solid #e2e8f0;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="sheet-container">
+          <div class="header-clinic">S A I N T &nbsp; F R A N C I S &nbsp; C L I N I C &nbsp; ( S F C )</div>
+          <h1 class="header-title">${blankPayrollTitle}</h1>
+          <div class="header-subtitle">Official Submissions Payroll & Disbursement Sheet &bull; Exist. Acc. Division</div>
+
+          <div class="meta-box">
+            <div class="meta-item">Coverage / Area: <strong>${blankBarangay || 'All SFC Coverage Areas'}</strong></div>
+            <div class="meta-item">Payroll Period: <strong>${blankPeriod}</strong></div>
+            <div class="meta-item">Form Rows: <strong>${rowsCount} Line Entries</strong></div>
+            <div class="meta-item">Print Date: <strong>${formattedDate}</strong></div>
+          </div>
+
+          <table class="payroll-table">
+            <thead>
+              <tr>
+                <th class="col-num">#</th>
+                <th class="col-name">Name of Submitter / Worker</th>
+                <th class="col-brgy">Barangay / Purok</th>
+                <th class="col-v">Verified (Qty)</th>
+                <th class="col-p">Pending (Qty)</th>
+                <th class="col-amt">Total Salary (PHP)</th>
+                <th class="col-sig">Signature of Recipient</th>
+                <th class="col-rem">Remarks / Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+              <tr class="totals-row">
+                <td colspan="3" style="text-align: right; padding-right: 12px; font-weight: 900; letter-spacing: 0.05em;">BATCH TOTALS:</td>
+                <td style="text-align: center; font-weight: 900;">—</td>
+                <td style="text-align: center; font-weight: 900;">—</td>
+                <td style="text-align: right; font-weight: 900; padding-right: 8px;">PHP &nbsp; ________________</td>
+                <td colspan="2" style="text-align: center; font-size: 9px; color: #64748b; font-style: italic;">All disbursed funds verified against official audit</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="signatures-grid">
+            <div class="sig-card">
+              <div class="sig-underline"></div>
+              <div class="sig-title">Prepared & Encoded By</div>
+              <div class="sig-name">${currentUser?.username || 'Encoder / Staff'}</div>
+            </div>
+            <div class="sig-card">
+              <div class="sig-underline"></div>
+              <div class="sig-title">Certified & Audited By</div>
+              <div class="sig-name">Mel Feliciano (Master Admin)</div>
+            </div>
+            <div class="sig-card">
+              <div class="sig-underline"></div>
+              <div class="sig-title">Approved for Disbursement</div>
+              <div class="sig-name">Clinic Director / Finance Head</div>
+            </div>
+          </div>
+
+          <div class="footer-note">
+            Saint Francis Clinic &bull; Submitted Exist. Acc. Payroll Form &bull; Generated: ${formattedDate} &bull; Confidential & Official Record
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const doc = printFrame.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(html);
+      doc.close();
+      setTimeout(() => {
+        printFrame.contentWindow?.focus();
+        printFrame.contentWindow?.print();
+        setTimeout(() => {
+          if (document.body.contains(printFrame)) {
+            document.body.removeChild(printFrame);
+          }
+        }, 2000);
+      }, 300);
+    } else {
+      window.print();
+    }
+  };
+
+  // Print Official Settlement Voucher
+  const handlePrintVoucher = (
+    subName: string,
+    submissionsCount: number,
+    salary: number,
+    amount: number,
+    method: string,
+    notes: string,
+    settledAt?: string
+  ) => {
+    const printFrame = document.createElement('iframe');
+    printFrame.style.position = 'fixed';
+    printFrame.style.top = '-9999px';
+    printFrame.style.left = '-9999px';
+    printFrame.style.width = '0';
+    printFrame.style.height = '0';
+    printFrame.style.border = 'none';
+    document.body.appendChild(printFrame);
+
+    const dateFormatted = formatPrintDate(settledAt ? new Date(settledAt) : new Date());
+
+    const voucherHtml = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Exist. Acc. Settlement Voucher - ${subName}</title>
+        <style>
+          @page { margin: 15mm; size: auto; }
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 24px; color: #0f172a; margin: 0; background: #fff; }
+          .voucher-container { border: 2px solid #0f172a; padding: 32px; border-radius: 12px; max-width: 680px; margin: 0 auto; box-sizing: border-box; }
+          .header { text-align: center; border-bottom: 2px dashed #94a3b8; padding-bottom: 18px; margin-bottom: 24px; }
+          .clinic-name { font-size: 22px; font-weight: 900; letter-spacing: -0.5px; text-transform: uppercase; color: #047857; margin-bottom: 4px; }
+          .doc-title { font-size: 15px; font-weight: 800; letter-spacing: 1px; color: #0f172a; text-transform: uppercase; margin-bottom: 4px; }
+          .meta-info { font-size: 12px; color: #64748b; font-weight: 500; }
+          .table { width: 100%; border-collapse: collapse; margin-top: 16px; margin-bottom: 24px; }
+          .table td { padding: 12px; font-size: 13px; border-bottom: 1px solid #f1f5f9; }
+          .table td.label { font-weight: 600; color: #334155; width: 45%; }
+          .table td.value { font-weight: 700; color: #0f172a; text-align: right; }
+          .highlight-row td { background-color: #ecfdf5; font-size: 15px; color: #065f46; font-weight: 900; border-top: 1px solid #a7f3d0; border-bottom: 1px solid #a7f3d0; }
+          .notes-box { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; font-size: 12px; color: #475569; margin-bottom: 28px; }
+          .signatures { display: flex; justify-content: space-between; margin-top: 36px; padding-top: 16px; }
+          .sig-block { text-align: center; width: 42%; }
+          .sig-line { border-bottom: 1px solid #0f172a; margin-top: 48px; margin-bottom: 6px; }
+          .sig-title { font-size: 11px; font-weight: 700; text-transform: uppercase; color: #64748b; }
+          .sig-name { font-size: 13px; font-weight: 800; color: #0f172a; }
+          @media print {
+            body { padding: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="voucher-container">
+          <div class="header">
+            <div class="clinic-name">SAINT FRANCIS CLINIC</div>
+            <div class="doc-title">SUBMITTED EXIST. ACC. SALARY SETTLEMENT VOUCHER</div>
+            <div class="meta-info">Date Issued: ${dateFormatted} &bull; Official Payroll Record</div>
+          </div>
+
+          <table class="table">
+            <tr>
+              <td class="label">Submitter / Recipient</td>
+              <td class="value">${subName}</td>
+            </tr>
+            <tr>
+              <td class="label">Total Accounts Submitted</td>
+              <td class="value">${submissionsCount} accounts</td>
+            </tr>
+            <tr>
+              <td class="label">Approved Base Rate</td>
+              <td class="value">₱${baseRate.toFixed(2)} (Verified) / ₱${pendingBaseRate.toFixed(2)} (Pending)</td>
+            </tr>
+            <tr>
+              <td class="label">Computed Total Salary</td>
+              <td class="value">₱${salary.toFixed(2)}</td>
+            </tr>
+            <tr class="highlight-row">
+              <td class="label">Amount Settled & Disbursed</td>
+              <td class="value">₱${amount.toFixed(2)}</td>
+            </tr>
+            <tr>
+              <td class="label">Disbursement Method</td>
+              <td class="value">${(method || 'CASH').toUpperCase()}</td>
+            </tr>
+            <tr>
+              <td class="label">Settlement Status</td>
+              <td class="value" style="color: #047857; font-weight: 800;">PAID & SETTLED</td>
+            </tr>
+          </table>
+
+          ${notes ? `<div class="notes-box"><strong>Remarks / Memo:</strong> ${notes}</div>` : ''}
+
+          <div class="signatures">
+            <div class="sig-block">
+              <div class="sig-line"></div>
+              <div class="sig-name">${currentUser?.username || 'Master Admin'}</div>
+              <div class="sig-title">Disbursing Officer / Master Admin</div>
+            </div>
+            <div class="sig-block">
+              <div class="sig-line"></div>
+              <div class="sig-name">${subName}</div>
+              <div class="sig-title">Received By (Submitter)</div>
+            </div>
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    const doc = printFrame.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(voucherHtml);
+      doc.close();
+      setTimeout(() => {
+        printFrame.contentWindow?.focus();
+        printFrame.contentWindow?.print();
+        setTimeout(() => {
+          if (document.body.contains(printFrame)) {
+            document.body.removeChild(printFrame);
+          }
+        }, 2000);
+      }, 300);
+    } else {
+      window.print();
+    }
+  };
+
   const totalPages = Math.ceil(displayRecords.length / ITEMS_PER_PAGE) || 1;
 
   return (
@@ -559,7 +1398,7 @@ export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h1 className="text-xl sm:text-2xl font-black font-display tracking-tight text-white">
-                  Submitted Exist. Acc.
+                  Submit Exist.
                 </h1>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-emerald-400/20 text-emerald-200 border border-emerald-400/30">
                   {stats.totalRecords} Accounts · {stats.totalFiles} Documents
@@ -573,6 +1412,17 @@ export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
 
           {/* Quick Actions */}
           <div className="flex items-center gap-2 flex-wrap">
+            {onNavigateToExistDirectory && (
+              <button
+                onClick={onNavigateToExistDirectory}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 rounded-xl text-xs font-bold text-white transition-all flex items-center gap-2 cursor-pointer shadow-xs border border-emerald-400/30"
+                title="Go to Exist. Directory"
+              >
+                <Folder className="w-3.5 h-3.5 text-emerald-200" />
+                <span>Exist. Directory</span>
+              </button>
+            )}
+
             <button
               onClick={() => fetchRecords(true)}
               disabled={refreshing}
@@ -605,6 +1455,7 @@ export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
             { id: 'pending', label: 'Pending', count: stats.pending, icon: Clock },
             { id: 'updated', label: 'Updated', count: stats.updated, icon: RotateCcw },
             { id: 'ledger', label: 'Ledger & Payroll', count: submitterSalaries.length, icon: Receipt },
+            { id: 'settlement-logs', label: 'Settlement Logs', count: settlements.length, icon: ShieldCheck },
           ].map(tab => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;

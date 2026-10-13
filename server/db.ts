@@ -944,14 +944,14 @@ export const ROLE_PERMS_FILE = path.join(DATA_DIR, 'role_permissions.json');
 export const MAINTENANCE_RECORDS_FILE = path.join(DATA_DIR, 'maintenance_records.json');
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
-  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
-  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account'],
-  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account']
+  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
+  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
+  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry'],
+  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry']
 };
 
 export interface SiteSettings {
@@ -974,6 +974,8 @@ export interface SiteSettings {
   navSubmittedExistAcc?: string;
   navReturned?: string;
   navMaintenance?: string;
+  navExistDirectory?: string;
+  navSubmitExist?: string;
   rolePermissions?: Record<string, string[]>;
   pcuBaseRate?: number;
   pcuPendingBaseRate?: number;
@@ -1002,10 +1004,10 @@ let siteSettings: SiteSettings = {
   navPrint: 'Print List',
   navAdmins: 'Admin Credentials',
   navSettings: 'Website Settings',
-  navExistingAccount: 'Existing Account',
-  navExistAccFiles: 'Exist. Acc. Files',
-  navSubmittedExistAcc: 'Submitted Exist. Acc.',
   navReturned: 'Returned',
+  navMaintenance: 'Maintenance',
+  navExistDirectory: 'Exist. Directory',
+  navSubmitExist: 'Submit Exist.',
   rolePermissions: DEFAULT_ROLE_PERMISSIONS
 };
 
@@ -1221,6 +1223,8 @@ export async function pullExistingAccountsOnce(force: boolean = false): Promise<
   return existingAccountsPullPromise;
 }
 
+const REMOVED_PAGES_SET = new Set(['exist-acc-files', 'submitted-exist-acc', 'existing-account']);
+
 export function getSiteSettings() {
   // Always ensure rolePermissions is a valid object loaded from permanent storage
   if (!siteSettings.rolePermissions || typeof siteSettings.rolePermissions !== 'object' || Array.isArray(siteSettings.rolePermissions) || Object.keys(siteSettings.rolePermissions).length === 0) {
@@ -1236,6 +1240,16 @@ export function getSiteSettings() {
       siteSettings.rolePermissions = { ...DEFAULT_ROLE_PERMISSIONS };
     }
   }
+
+  // Strip removed pages from rolePermissions
+  if (siteSettings.rolePermissions && typeof siteSettings.rolePermissions === 'object') {
+    const sanitized: Record<string, string[]> = {};
+    for (const [r, p] of Object.entries(siteSettings.rolePermissions)) {
+      sanitized[r] = Array.isArray(p) ? p.filter(pageId => !REMOVED_PAGES_SET.has(pageId)) : [];
+    }
+    siteSettings.rolePermissions = sanitized;
+  }
+
   return {
     ...siteSettings,
     logoDataUrl: siteSettings.logoDataUrl || DEFAULT_SITE_LOGO,
@@ -1254,7 +1268,7 @@ export function saveSiteSettings(settings: Partial<SiteSettings>) {
     for (const [roleKey, pages] of Object.entries(settings.rolePermissions)) {
       const trimmedRole = String(roleKey || '').trim();
       if (!trimmedRole) continue;
-      cleanPerms[trimmedRole] = Array.isArray(pages) ? Array.from(new Set(pages.map(p => String(p)))) : [];
+      cleanPerms[trimmedRole] = Array.isArray(pages) ? Array.from(new Set(pages.map(p => String(p)).filter(p => !REMOVED_PAGES_SET.has(p)))) : [];
     }
     if (Object.keys(cleanPerms).length > 0) {
       nextRolePerms = cleanPerms;
@@ -12071,7 +12085,10 @@ export async function recordSubmittedExistAccSettlement(data: {
   id?: string;
   submitter: string;
   totalSubmissions: number;
+  verifiedCount?: number;
+  pendingCount?: number;
   baseRate?: number;
+  pendingBaseRate?: number;
   totalSalary?: number;
   amountPaid?: number;
   paymentStatus?: string;
@@ -12083,7 +12100,10 @@ export async function recordSubmittedExistAccSettlement(data: {
   const id = data.id || `set_sea_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const submitter = (data.submitter || '').trim();
   const totalSubmissions = Number(data.totalSubmissions) || 0;
+  const verifiedCount = data.verifiedCount !== undefined ? Number(data.verifiedCount) : 0;
+  const pendingCount = data.pendingCount !== undefined ? Number(data.pendingCount) : 0;
   const baseRate = Number(data.baseRate) || submittedExistAccBaseRate;
+  const pendingBaseRate = Number(data.pendingBaseRate) || submittedExistAccPendingBaseRate;
   const totalSalary = Number(data.totalSalary) || (totalSubmissions * baseRate);
   const amountPaid = data.amountPaid !== undefined ? Number(data.amountPaid) : totalSalary;
   const paymentStatus = data.paymentStatus || 'SETTLED';
@@ -12096,7 +12116,10 @@ export async function recordSubmittedExistAccSettlement(data: {
     id,
     submitter,
     totalSubmissions,
+    verifiedCount,
+    pendingCount,
     baseRate,
+    pendingBaseRate,
     totalSalary,
     amountPaid,
     paymentStatus,
@@ -13749,6 +13772,19 @@ export async function updateMaintenanceRecord(
       ? String(updates.disease).trim()
       : existing.disease || '';
 
+  const updatedContactNumber =
+    updates.contactNumber !== undefined
+      ? String(updates.contactNumber).trim()
+      : existing.contactNumber || '';
+  const updatedBarangay =
+    updates.barangay !== undefined
+      ? String(updates.barangay).trim()
+      : existing.barangay || '';
+  const updatedPurok =
+    updates.purok !== undefined
+      ? String(updates.purok).trim()
+      : existing.purok || '';
+
   const hasMaintenanceData = Boolean(updatedMaintMed || updatedDisease);
   const updatedIsConsulted =
     updates.isConsulted !== undefined
@@ -13759,6 +13795,9 @@ export async function updateMaintenanceRecord(
     ...existing,
     ...updates,
     id: existing.id,
+    contactNumber: updatedContactNumber,
+    barangay: updatedBarangay,
+    purok: updatedPurok,
     maintenanceMedicine: updatedMaintMed,
     disease: updatedDisease,
     isConsulted: updatedIsConsulted,
@@ -13767,7 +13806,8 @@ export async function updateMaintenanceRecord(
       : '',
     consultedBy: updatedIsConsulted
       ? (updates.consultedBy || existing.consultedBy || updatedBy)
-      : ''
+      : '',
+    uploadedAt: nowIso
   };
   if (updates.fullName && !updates.primaryText) {
     updated.primaryText = updates.fullName.replace(/^\s*(?:\d+[\.\)\-:]|\#\d+)\s+/, '').trim() || updates.fullName;

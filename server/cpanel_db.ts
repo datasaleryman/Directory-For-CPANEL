@@ -1116,6 +1116,27 @@ SET @dbname = DATABASE();
 SET @tablename = 'maintenance_records';
 
 SET @sql = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = 'barangay') > 0,
+  'SELECT 1',
+  'ALTER TABLE \`maintenance_records\` ADD COLUMN \`barangay\` VARCHAR(255) DEFAULT '''' AFTER \`full_name\`'
+));
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = 'purok') > 0,
+  'SELECT 1',
+  'ALTER TABLE \`maintenance_records\` ADD COLUMN \`purok\` VARCHAR(255) DEFAULT '''' AFTER \`barangay\`'
+));
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(
+  (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = 'contact_number') > 0,
+  'SELECT 1',
+  'ALTER TABLE \`maintenance_records\` ADD COLUMN \`contact_number\` VARCHAR(100) DEFAULT '''' AFTER \`purok\`'
+));
+PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
+
+SET @sql = (SELECT IF(
   (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = @dbname AND TABLE_NAME = @tablename AND COLUMN_NAME = 'maintenance_medicine') > 0,
   'SELECT 1',
   'ALTER TABLE \`maintenance_records\` ADD COLUMN \`maintenance_medicine\` TEXT NULL AFTER \`contact_number\`'
@@ -3874,7 +3895,10 @@ export async function saveSubmittedExistAccSettlementToCPanel(settlement: {
   id: string;
   submitter: string;
   totalSubmissions: number;
+  verifiedCount?: number;
+  pendingCount?: number;
   baseRate: number;
+  pendingBaseRate?: number;
   totalSalary: number;
   amountPaid?: number;
   paymentStatus?: string;
@@ -3888,7 +3912,10 @@ export async function saveSubmittedExistAccSettlementToCPanel(settlement: {
     const id = settlement.id || crypto.randomUUID();
     const submitter = (settlement.submitter || '').trim();
     const totalSubmissions = Number(settlement.totalSubmissions) || 0;
+    const verifiedCount = settlement.verifiedCount !== undefined ? Number(settlement.verifiedCount) : 0;
+    const pendingCount = settlement.pendingCount !== undefined ? Number(settlement.pendingCount) : 0;
     const baseRate = Number(settlement.baseRate) || 0;
+    const pendingBaseRate = settlement.pendingBaseRate !== undefined ? Number(settlement.pendingBaseRate) : 0;
     const totalSalary = Number(settlement.totalSalary) || (totalSubmissions * baseRate);
     const amountPaid = settlement.amountPaid !== undefined ? Number(settlement.amountPaid) : totalSalary;
     const paymentStatus = settlement.paymentStatus || 'SETTLED';
@@ -3897,22 +3924,49 @@ export async function saveSubmittedExistAccSettlementToCPanel(settlement: {
     const settledBy = settlement.settledBy || 'Master Admin';
     const settledAt = settlement.settledAt || new Date().toISOString();
 
-    await pool.query(
-      `INSERT INTO submitted_exist_acc_settlements
-        (id, submitter, total_submissions, base_rate, total_salary, amount_paid, payment_status, payment_method, reference_notes, settled_by, settled_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-        total_submissions = VALUES(total_submissions),
-        base_rate = VALUES(base_rate),
-        total_salary = VALUES(total_salary),
-        amount_paid = VALUES(amount_paid),
-        payment_status = VALUES(payment_status),
-        payment_method = VALUES(payment_method),
-        reference_notes = VALUES(reference_notes),
-        settled_by = VALUES(settled_by),
-        settled_at = VALUES(settled_at)`,
-      [id, submitter, totalSubmissions, baseRate, totalSalary, amountPaid, paymentStatus, paymentMethod, referenceNotes, settledBy, settledAt]
-    );
+    try {
+      await pool.query(
+        `INSERT INTO submitted_exist_acc_settlements
+          (id, submitter, total_submissions, verified_count, pending_count, base_rate, pending_base_rate, total_salary, amount_paid, payment_status, payment_method, reference_notes, settled_by, settled_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+          total_submissions = VALUES(total_submissions),
+          verified_count = VALUES(verified_count),
+          pending_count = VALUES(pending_count),
+          base_rate = VALUES(base_rate),
+          pending_base_rate = VALUES(pending_base_rate),
+          total_salary = VALUES(total_salary),
+          amount_paid = VALUES(amount_paid),
+          payment_status = VALUES(payment_status),
+          payment_method = VALUES(payment_method),
+          referenceNotes = VALUES(reference_notes),
+          settled_by = VALUES(settled_by),
+          settled_at = VALUES(settled_at)`,
+        [id, submitter, totalSubmissions, verifiedCount, pendingCount, baseRate, pendingBaseRate, totalSalary, amountPaid, paymentStatus, paymentMethod, referenceNotes, settledBy, settledAt]
+      );
+    } catch (insertErr: any) {
+      if (insertErr.errno === 1054 || insertErr.code === 'ER_BAD_FIELD_ERROR') {
+        // Fallback for older table schema without verified_count / pending_count
+        await pool.query(
+          `INSERT INTO submitted_exist_acc_settlements
+            (id, submitter, total_submissions, base_rate, total_salary, amount_paid, payment_status, payment_method, reference_notes, settled_by, settled_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+            total_submissions = VALUES(total_submissions),
+            base_rate = VALUES(base_rate),
+            total_salary = VALUES(total_salary),
+            amount_paid = VALUES(amount_paid),
+            payment_status = VALUES(payment_status),
+            payment_method = VALUES(payment_method),
+            reference_notes = VALUES(reference_notes),
+            settled_by = VALUES(settled_by),
+            settled_at = VALUES(settled_at)`,
+          [id, submitter, totalSubmissions, baseRate, totalSalary, amountPaid, paymentStatus, paymentMethod, referenceNotes, settledBy, settledAt]
+        );
+      } else {
+        throw insertErr;
+      }
+    }
     console.log(`[cPanel DB] Saved Submitted Exist. Acc. settlement ${id} for "${submitter}" to MySQL.`);
   } catch (err: any) {
     console.warn('[cPanel DB] Error saving Submitted Exist. Acc. settlement to MySQL:', err.message || err);
@@ -3930,7 +3984,10 @@ export async function fetchSubmittedExistAccSettlementsFromCPanel(): Promise<any
       id: String(r.id),
       submitter: r.submitter,
       totalSubmissions: Number(r.total_submissions) || 0,
+      verifiedCount: r.verified_count !== undefined ? Number(r.verified_count) : undefined,
+      pendingCount: r.pending_count !== undefined ? Number(r.pending_count) : undefined,
       baseRate: Number(r.base_rate) || 0,
+      pendingBaseRate: r.pending_base_rate !== undefined ? Number(r.pending_base_rate) : undefined,
       totalSalary: Number(r.total_salary) || 0,
       amountPaid: Number(r.amount_paid) || 0,
       paymentStatus: r.payment_status || 'SETTLED',

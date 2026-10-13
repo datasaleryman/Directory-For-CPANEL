@@ -115,6 +115,9 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
   const [isEditingRecord, setIsEditingRecord] = useState<boolean>(false);
   const [editColumns, setEditColumns] = useState<string[]>([]);
   const [editPrimaryText, setEditPrimaryText] = useState<string>('');
+  const [editContactNumber, setEditContactNumber] = useState<string>('');
+  const [editBarangay, setEditBarangay] = useState<string>('');
+  const [editPurok, setEditPurok] = useState<string>('');
   const [savingRecordEdit, setSavingRecordEdit] = useState<boolean>(false);
 
   // "Add Maintenance" Form States (Maintain Medicine text box, Disease text box)
@@ -715,7 +718,7 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
     }
   };
 
-  // Save edited record
+  // Save edited record (including Contact #, Barangay, Purok permanently to database)
   const handleSaveRecordEdit = async () => {
     if (!selectedRecord) return;
     setSavingRecordEdit(true);
@@ -736,6 +739,9 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
         body: JSON.stringify({
           primaryText: newPrimary,
           fullName: newPrimary,
+          contactNumber: editContactNumber.trim(),
+          barangay: editBarangay.trim(),
+          purok: editPurok.trim(),
           columns: cleanedCols,
           rawText: cleanedCols.join(' | ')
         })
@@ -748,7 +754,7 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
       setRecords(prev => prev.map(r => (r.id === updatedRec.id ? updatedRec : r)));
       setSelectedRecord(updatedRec);
       setIsEditingRecord(false);
-      showToast('Entry updated successfully!', 'success');
+      showToast('Entry data (including Contact #, Barangay, Purok) saved permanently!', 'success');
     } catch (err: any) {
       showToast(err.message || 'Failed to update entry.', 'error');
     } finally {
@@ -847,15 +853,18 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
         }
       }
 
-      // 3. Search Query across ALL PDF columns, Maintain Medicine, Disease, and metadata
+      // 3. Search Query across ALL PDF columns, Maintain Medicine, Disease, Contact #, Barangay, Purok, and metadata
       if (q) {
         const inPrimary = (rec.primaryText || '').toLowerCase().includes(q);
         const inRaw = (rec.rawText || '').toLowerCase().includes(q);
         const inPdf = (rec.pdfFileName || '').toLowerCase().includes(q);
         const inMed = (rec.maintenanceMedicine || '').toLowerCase().includes(q);
         const inDisease = (rec.disease || '').toLowerCase().includes(q);
+        const inContact = (rec.contactNumber || '').toLowerCase().includes(q);
+        const inBarangay = (rec.barangay || '').toLowerCase().includes(q);
+        const inPurok = (rec.purok || '').toLowerCase().includes(q);
         const inCols = Array.isArray(rec.columns) && rec.columns.some(c => String(c).toLowerCase().includes(q));
-        if (!inPrimary && !inRaw && !inPdf && !inMed && !inDisease && !inCols) {
+        if (!inPrimary && !inRaw && !inPdf && !inMed && !inDisease && !inContact && !inBarangay && !inPurok && !inCols) {
           return false;
         }
       }
@@ -1441,6 +1450,9 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
                     setDiseaseInput(rec.disease || '');
                     setEditColumns(cols);
                     setEditPrimaryText(rec.primaryText);
+                    setEditContactNumber(rec.contactNumber || '');
+                    setEditBarangay(rec.barangay || '');
+                    setEditPurok(rec.purok || '');
                   };
 
                   return (
@@ -2141,6 +2153,34 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
                       </div>
                     )}
 
+                    {/* Display Contact #, Barangay, Purok */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 block mb-0.5">
+                          Contact #
+                        </span>
+                        <span className="text-xs sm:text-sm font-bold text-slate-900 break-words">
+                          {selectedRecord.contactNumber || '—'}
+                        </span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 block mb-0.5">
+                          Barangay
+                        </span>
+                        <span className="text-xs sm:text-sm font-bold text-slate-900 break-words">
+                          {selectedRecord.barangay || '—'}
+                        </span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-500 block mb-0.5">
+                          Purok
+                        </span>
+                        <span className="text-xs sm:text-sm font-bold text-slate-900 break-words">
+                          {selectedRecord.purok || '—'}
+                        </span>
+                      </div>
+                    </div>
+
                     <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-3">
                       <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-400 block">
                         All Extracted Data Columns from PDF
@@ -2229,6 +2269,47 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
                         className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 focus:bg-white focus:border-emerald-600 focus:outline-none"
                       />
                     </div>
+
+                    {/* Contact #, Barangay, Purok Form Fields */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 p-4 rounded-xl bg-emerald-50/50 border border-emerald-200/80">
+                      <div>
+                        <label className="text-xs font-extrabold text-slate-700 uppercase block mb-1.5">
+                          Contact #
+                        </label>
+                        <input
+                          type="text"
+                          value={editContactNumber}
+                          onChange={e => setEditContactNumber(e.target.value)}
+                          placeholder="Enter Contact #..."
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs sm:text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-extrabold text-slate-700 uppercase block mb-1.5">
+                          Barangay
+                        </label>
+                        <input
+                          type="text"
+                          value={editBarangay}
+                          onChange={e => setEditBarangay(e.target.value)}
+                          placeholder="Enter Barangay..."
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs sm:text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-extrabold text-slate-700 uppercase block mb-1.5">
+                          Purok
+                        </label>
+                        <input
+                          type="text"
+                          value={editPurok}
+                          onChange={e => setEditPurok(e.target.value)}
+                          placeholder="Enter Purok..."
+                          className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs sm:text-sm font-semibold text-slate-900 placeholder:text-slate-400 focus:border-emerald-600 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
                     <div className="space-y-2.5">
                       <label className="text-xs font-bold text-slate-700 uppercase block">
                         PDF Data Columns
@@ -2280,18 +2361,18 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
                       <button
                         type="button"
                         onClick={() => {
-                          setMaintainMedicineInput(selectedRecord.maintenanceMedicine || '');
-                          setDiseaseInput(selectedRecord.disease || '');
-                          setIsAddingMaintenance(true);
+                          setEditPrimaryText(selectedRecord.primaryText || '');
+                          setEditColumns(
+                            Array.isArray(selectedRecord.columns) && selectedRecord.columns.length > 0
+                              ? [...selectedRecord.columns]
+                              : [selectedRecord.rawText || selectedRecord.primaryText]
+                          );
+                          setEditContactNumber(selectedRecord.contactNumber || '');
+                          setEditBarangay(selectedRecord.barangay || '');
+                          setEditPurok(selectedRecord.purok || '');
+                          setIsAddingMaintenance(false);
+                          setIsEditingRecord(true);
                         }}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                        <span>Add Maintenance</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsEditingRecord(true)}
                         className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer"
                       >
                         <Edit3 className="w-3.5 h-3.5" />

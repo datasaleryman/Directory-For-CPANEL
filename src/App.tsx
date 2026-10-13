@@ -40,24 +40,24 @@ import { AccountManagement } from './components/AccountManagement.js';
 import { SettingsPage } from './components/SettingsPage.js';
 import { ProfileModal } from './components/ProfileModal.js';
 import { ClinicMap } from './components/ClinicMap.js';
-import { ExistingAccount } from './components/ExistingAccount.js';
 import { Inbox } from './components/Inbox.js';
 import { SubmitPcu } from './components/SubmitPcu.js';
-import { SubmittedExistAcc } from './components/SubmittedExistAcc.js';
 import { Returned } from './components/Returned.js';
 import { Maintenance } from './components/Maintenance.js';
+import { ExistDirectory } from './components/ExistDirectory.js';
+import { SubmittedExistAcc } from './components/SubmittedExistAcc.js';
 
 export const DEFAULT_SITE_LOGO = 'https://www.image2url.com/r2/default/images/1785037750375-501bcf0e-4b15-4e0e-8be2-610bc89d072e.png';
 
 const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'existing-account', 'admins', 'settings'],
-  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
-  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account', 'bulk', 'print'],
-  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account'],
-  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'maintenance', 'member-verification', 'verification-entry', 'existing-account']
+  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
+  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
+  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry'],
+  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry']
 };
 
 export default function App() {
@@ -69,10 +69,12 @@ export default function App() {
   });
 
   // Navigation Panel Routing
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'map' | 'directory' | 'submit-pcu' | 'returned' | 'submitted-exist-acc' | 'maintenance' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings'>(() => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'map' | 'directory' | 'submit-pcu' | 'returned' | 'maintenance' | 'exist-directory' | 'submit-exist' | 'accounts' | 'bulk' | 'print' | 'admins' | 'settings'>(() => {
     try {
       const saved = sessionStorage.getItem('clinic_active_tab') || localStorage.getItem('clinic_active_tab');
-      if (saved && saved !== 'recent-upload') return saved as any;
+      if (saved && saved !== 'recent-upload' && !['existing-account', 'exist-acc-files', 'submitted-exist-acc'].includes(saved)) {
+        return saved as any;
+      }
     } catch {}
     return 'dashboard';
   });
@@ -98,12 +100,12 @@ export default function App() {
 
   // Auto-expand "DATA ENTRY" if a sub-tab is active
   useEffect(() => {
-    if (['bulk', 'print', 'existing-account'].includes(activeTab)) {
+    if (['bulk', 'print'].includes(activeTab)) {
       setIsDataEntryOpen(true);
     }
   }, [activeTab]);
 
-  const handleTabChange = (tab: 'dashboard' | 'inbox' | 'map' | 'directory' | 'submit-pcu' | 'returned' | 'submitted-exist-acc' | 'maintenance' | 'accounts' | 'bulk' | 'print' | 'existing-account' | 'exist-acc-files' | 'admins' | 'settings') => {
+  const handleTabChange = (tab: 'dashboard' | 'inbox' | 'map' | 'directory' | 'submit-pcu' | 'returned' | 'maintenance' | 'exist-directory' | 'submit-exist' | 'accounts' | 'bulk' | 'print' | 'admins' | 'settings') => {
     setActiveTab(tab);
     setIsMobileMenuOpen(false);
   };
@@ -128,6 +130,8 @@ export default function App() {
     navSubmittedExistAcc?: string;
     navReturned?: string;
     navMaintenance?: string;
+    navExistDirectory?: string;
+    navSubmitExist?: string;
     rolePermissions?: Record<string, string[]>;
   }>(() => {
     const defaults = {
@@ -144,11 +148,10 @@ export default function App() {
       navPrint: 'Print List',
       navAdmins: 'Admin Credentials',
       navSettings: 'Website Settings',
-      navExistingAccount: 'Existing Account',
-      navExistAccFiles: 'Exist. Acc. Files',
-      navSubmittedExistAcc: 'Submitted Exist. Acc.',
       navReturned: 'Returned',
       navMaintenance: 'Maintenance',
+      navExistDirectory: 'Exist. Directory',
+      navSubmitExist: 'Submit Exist.',
       rolePermissions: DEFAULT_ROLE_PERMISSIONS
     };
     try {
@@ -320,7 +323,7 @@ export default function App() {
   // Redirect if current active tab is not permitted for user's role
   useEffect(() => {
     if (adminUser && !hasTabPermission(activeTab)) {
-      const allTabs = ['dashboard', 'inbox', 'map', 'directory', 'submit-pcu', 'returned', 'exist-acc-files', 'submitted-exist-acc', 'accounts', 'bulk', 'print', 'existing-account'];
+      const allTabs = ['dashboard', 'inbox', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'accounts', 'bulk', 'print'];
       const allowed = allTabs.find(t => hasTabPermission(t));
       if (allowed) {
         setActiveTab(allowed as any);
@@ -756,9 +759,9 @@ export default function App() {
             { id: 'directory', label: siteSettings.navDirectory || 'Patient List', icon: Users },
             { id: 'submit-pcu', label: siteSettings.navSubmitPcu || 'Submit PCU', icon: UploadCloud },
             { id: 'returned', label: siteSettings.navReturned || 'Returned', icon: RotateCcw },
-            { id: 'exist-acc-files', label: siteSettings.navExistAccFiles || 'Exist. Acc. Files', icon: UserCheck },
-            { id: 'submitted-exist-acc', label: siteSettings.navSubmittedExistAcc || 'Submitted Exist. Acc.', icon: FolderCheck },
             { id: 'maintenance', label: siteSettings.navMaintenance || 'Maintenance', icon: HeartPulse },
+            { id: 'exist-directory', label: siteSettings.navExistDirectory || 'Exist. Directory', icon: FolderCheck },
+            { id: 'submit-exist', label: siteSettings.navSubmitExist || 'Submit Exist.', icon: UploadCloud },
             { id: 'accounts', label: siteSettings.navAccounts || 'Account Management', icon: ShieldCheck },
           ] as const)
             .filter((item) => hasTabPermission(item.id))
@@ -803,7 +806,6 @@ export default function App() {
             const dataEntryItems = [
               { id: 'bulk', label: siteSettings.navBulk || 'Bulk Entry', icon: FileSpreadsheet },
               { id: 'print', label: siteSettings.navPrint || 'Patient Data List', icon: Printer },
-              { id: 'existing-account', label: siteSettings.navExistingAccount || 'Existing Account', icon: UserCheck },
             ] as const;
 
             const visibleDataEntryItems = dataEntryItems.filter((item) => hasTabPermission(item.id));
@@ -904,16 +906,14 @@ export default function App() {
                         ? (siteSettings.navSubmitPcu || 'Submit PCU')
                       : activeTab === 'returned'
                         ? (siteSettings.navReturned || 'Returned')
-                      : activeTab === 'submitted-exist-acc'
-                        ? (siteSettings.navSubmittedExistAcc || 'Submitted Exist. Acc.')
                       : activeTab === 'maintenance'
                         ? (siteSettings.navMaintenance || 'Maintenance')
+                      : activeTab === 'exist-directory'
+                        ? (siteSettings.navExistDirectory || 'Exist. Directory')
+                      : activeTab === 'submit-exist'
+                        ? (siteSettings.navSubmitExist || 'Submit Exist.')
                         : activeTab === 'accounts'
                         ? (siteSettings.navAccounts || 'Account Management')
-                          : activeTab === 'existing-account'
-                            ? (siteSettings.navExistingAccount || 'Existing Account')
-                          : activeTab === 'exist-acc-files'
-                            ? (siteSettings.navExistAccFiles || 'Exist. Acc. Files')
                           : activeTab === 'admins' 
                             ? (siteSettings.navAdmins || 'Admin Credentials') 
                             : activeTab === 'settings'
@@ -1109,6 +1109,7 @@ export default function App() {
                   }}
                   backNavigateContact={mapNavigateContact}
                   onClearBackNavigateContact={() => setMapNavigateContact(null)}
+                  onNavigateToExistDirectory={() => setActiveTab('exist-directory')}
                 />
               </div>
 
@@ -1141,15 +1142,6 @@ export default function App() {
                 />
               )}
 
-              {(activeTab === 'existing-account' || activeTab === 'exist-acc-files') && (
-                <ExistingAccount
-                  authToken={authToken}
-                  showToast={showToast}
-                  activeTab={activeTab}
-                  currentUser={adminUser}
-                />
-              )}
-
               {activeTab === 'submit-pcu' && (
                 <SubmitPcu
                   authToken={authToken}
@@ -1168,19 +1160,29 @@ export default function App() {
                 />
               )}
 
-              {activeTab === 'submitted-exist-acc' && (
-                <SubmittedExistAcc
+              {activeTab === 'maintenance' && (
+                <Maintenance
                   authToken={authToken || ''}
                   currentUser={adminUser}
                   showToast={showToast}
                 />
               )}
 
-              {activeTab === 'maintenance' && (
-                <Maintenance
+              {activeTab === 'exist-directory' && (
+                <ExistDirectory
+                  authToken={authToken}
+                  showToast={showToast}
+                  currentUser={adminUser}
+                  onNavigateToSubmitExist={() => setActiveTab('submit-exist')}
+                />
+              )}
+
+              {activeTab === 'submit-exist' && (
+                <SubmittedExistAcc
                   authToken={authToken || ''}
                   currentUser={adminUser}
                   showToast={showToast}
+                  onNavigateToExistDirectory={() => setActiveTab('exist-directory')}
                 />
               )}
 
@@ -1231,7 +1233,7 @@ export default function App() {
                   }}
                   onNavigateTab={(tab) => {
                     setActiveTab(tab as any);
-                    if (['bulk', 'print', 'existing-account'].includes(tab)) {
+                    if (['bulk', 'print'].includes(tab)) {
                       setIsDataEntryOpen(true);
                     }
                   }}
