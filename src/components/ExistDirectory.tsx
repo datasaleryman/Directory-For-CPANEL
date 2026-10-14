@@ -100,6 +100,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
   const [editBarangay, setEditBarangay] = useState('');
   const [editPurok, setEditPurok] = useState('');
   const [editContactNumber, setEditContactNumber] = useState('');
+  const [editAlternateContactNumber, setEditAlternateContactNumber] = useState('');
   const [editPin, setEditPin] = useState('');
   const [editLatitude, setEditLatitude] = useState('');
   const [editLongitude, setEditLongitude] = useState('');
@@ -203,18 +204,25 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
 
     return Array.from(map.entries())
       .map(([purok, count]) => ({ purok, count }))
-      .sort((a, b) => b.count - a.count || a.purok.localeCompare(b.purok));
+      .sort((a, b) => a.purok.localeCompare(b.purok, undefined, { numeric: true, sensitivity: 'base' }));
   }, [existingAccounts, activeFolder]);
 
-  // Accounts inside active Barangay folder
+  // Accounts inside active Barangay folder - Sorted based on the Purok, then by Full Name
   const accountsInActiveFolder = useMemo(() => {
     if (!activeFolder) return [];
-    return existingAccounts.filter(
+    const list = existingAccounts.filter(
       acc => (acc.barangay || '').trim().toUpperCase() === activeFolder.trim().toUpperCase()
     );
+    return list.slice().sort((a, b) => {
+      const pA = (a.purok || 'No Purok').trim();
+      const pB = (b.purok || 'No Purok').trim();
+      const pCmp = pA.localeCompare(pB, undefined, { numeric: true, sensitivity: 'base' });
+      if (pCmp !== 0) return pCmp;
+      return (a.full_name || '').localeCompare(b.full_name || '');
+    });
   }, [existingAccounts, activeFolder]);
 
-  // Filtered accounts inside folder (by search & purok)
+  // Filtered accounts inside folder (by search & purok) - preserves sorting based on Purok
   const filteredAccountsInFolder = useMemo(() => {
     let result = accountsInActiveFolder;
     if (activePurokFolder) {
@@ -233,6 +241,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
           (acc.full_name || '').toLowerCase().includes(q) ||
           (acc.purok || '').toLowerCase().includes(q) ||
           (acc.contact_number || '').includes(q) ||
+          (acc.alternate_contact_number || '').includes(q) ||
           (acc.pin || '').toLowerCase().includes(q)
       );
     }
@@ -356,11 +365,11 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
     setEditBarangay(item.barangay || '');
     setEditPurok(item.purok || '');
     setEditContactNumber(item.contact_number || '');
+    setEditAlternateContactNumber(item.alternate_contact_number || (item as any).alternateContactNumber || '');
     setEditPin(item.pin || '');
     setEditLatitude(item.latitude !== undefined && item.latitude !== null ? item.latitude.toString() : '');
     setEditLongitude(item.longitude !== undefined && item.longitude !== null ? item.longitude.toString() : '');
     setEditGeotagged(Boolean(item.geotagged));
-    setFacebookLink(item.facebookLink || '');
     setShowManualCoords(Boolean(item.latitude || item.longitude));
     setShowSingleAddModal(true);
   };
@@ -372,11 +381,11 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
     setEditBarangay(activeFolder || uniqueBarangays[0] || '');
     setEditPurok(activePurokFolder || '');
     setEditContactNumber('');
+    setEditAlternateContactNumber('');
     setEditPin('');
     setEditLatitude('');
     setEditLongitude('');
     setEditGeotagged(false);
-    setFacebookLink('');
     setShowManualCoords(false);
     setShowSingleAddModal(true);
   };
@@ -392,6 +401,14 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
       showToast('Barangay is required.', 'error');
       return;
     }
+    if (!editContactNumber.trim()) {
+      showToast('Primary Contact # is required.', 'error');
+      return;
+    }
+    if (!editAlternateContactNumber.trim()) {
+      showToast('Alternate Contact # is required.', 'error');
+      return;
+    }
 
     setIsSavingRecord(true);
     try {
@@ -404,11 +421,11 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
         barangay: editBarangay.trim().toUpperCase(),
         purok: editPurok.trim(),
         contact_number: editContactNumber.trim(),
+        alternate_contact_number: editAlternateContactNumber.trim(),
         pin: editPin.trim(),
         latitude: isGeotagged ? latNum : undefined,
         longitude: isGeotagged ? lngNum : undefined,
-        geotagged: isGeotagged,
-        facebookLink: facebookLink.trim()
+        geotagged: isGeotagged
       };
 
       if (selectedItem) {
@@ -597,11 +614,24 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
       {/* Header Bar matching PCU Directory */}
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
         <div className="flex items-center gap-3">
-          {activeFolder ? (
+          {activePurokFolder ? (
+            <button
+              onClick={() => {
+                setActivePurokFolder(null);
+                setSelectedPurokFilter('all');
+                setFolderPage(1);
+              }}
+              className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/80 text-emerald-800 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-2"
+            >
+              <ArrowLeft className="w-4 h-4" /> Back to Purok Folders
+            </button>
+          ) : activeFolder ? (
             <button
               onClick={() => {
                 setActiveFolder(null);
                 setActivePurokFolder(null);
+                setSelectedPurokFilter('all');
+                setSelectedBarangay('all');
                 setSearchQuery('');
                 setFolderPage(1);
               }}
@@ -617,7 +647,14 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
 
           <div>
             <h2 className="text-lg font-extrabold text-slate-800 font-display flex items-center gap-2">
-              {activeFolder ? (
+              {activePurokFolder ? (
+                <>
+                  <FolderOpen className="w-5 h-5 text-emerald-600" />
+                  <span>{activeFolder}</span>
+                  <span className="text-slate-400 font-normal">/</span>
+                  <span className="text-emerald-700">{activePurokFolder} Folder</span>
+                </>
+              ) : activeFolder ? (
                 <>
                   <FolderOpen className="w-5 h-5 text-emerald-600" />
                   {activeFolder} Folder
@@ -627,8 +664,10 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
               )}
             </h2>
             <p className="text-xs text-slate-400 font-medium">
-              {activeFolder
-                ? `Showing existing account records in ${activeFolder}`
+              {activePurokFolder
+                ? `Showing existing account records in ${activeFolder} > ${activePurokFolder} (${filteredAccountsInFolder.length} Accounts)`
+                : activeFolder
+                ? `Showing existing account records in ${activeFolder} (${purokFolders.length} Purok Folders, sorted by Purok)`
                 : `Organized into ${barangayFolders.length} Barangay Folders (${existingAccounts.length} Total Accounts)`}
             </p>
           </div>
@@ -878,6 +917,111 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
             </div>
           </div>
 
+          {/* Purok Folders Grid inside Barangay Folder */}
+          <div className="bg-slate-50 border border-slate-200/90 rounded-2xl p-4 sm:p-4.5 space-y-3 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
+                  <Folder className="w-4 h-4 text-emerald-700" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 font-display flex items-center gap-1.5">
+                    <span>Purok Folders ({purokFolders.length})</span>
+                    {activePurokFolder && (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-tight">
+                        Active: {activePurokFolder}
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    Click any Purok Folder to filter records. All data is automatically sorted base on the Purok.
+                  </p>
+                </div>
+              </div>
+
+              {activePurokFolder && (
+                <button
+                  onClick={() => {
+                    setActivePurokFolder(null);
+                    setSelectedPurokFilter('all');
+                    setFolderPage(1);
+                  }}
+                  className="text-xs font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1.5 cursor-pointer bg-white hover:bg-emerald-50 px-3 py-1.5 rounded-xl border border-slate-200 transition-all shadow-2xs"
+                >
+                  <RotateCw className="w-3.5 h-3.5" />
+                  <span>Show All Purok Folders ({accountsInActiveFolder.length})</span>
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
+              {/* All Puroks Folder Tile */}
+              <button
+                type="button"
+                onClick={() => {
+                  setActivePurokFolder(null);
+                  setSelectedPurokFilter('all');
+                  setFolderPage(1);
+                }}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                  !activePurokFolder && selectedPurokFilter === 'all'
+                    ? 'bg-gradient-to-r from-[#064e3b] to-[#047857] text-white border-emerald-800 shadow-sm ring-2 ring-emerald-500/20'
+                    : 'bg-white hover:bg-emerald-50/50 text-slate-800 border-slate-200 hover:border-emerald-300'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-1 mb-1.5">
+                  <FolderOpen className={`w-4 h-4 ${!activePurokFolder && selectedPurokFilter === 'all' ? 'text-emerald-100' : 'text-emerald-600'}`} />
+                  <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md ${
+                    !activePurokFolder && selectedPurokFilter === 'all' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    ALL
+                  </span>
+                </div>
+                <div className="font-extrabold text-xs truncate">All Puroks</div>
+                <div className={`text-[10px] font-medium mt-0.5 ${!activePurokFolder && selectedPurokFilter === 'all' ? 'text-emerald-100' : 'text-slate-400'}`}>
+                  {accountsInActiveFolder.length} total
+                </div>
+              </button>
+
+              {/* Individual Purok Folder Tiles */}
+              {purokFolders.map(p => {
+                const isActive = (activePurokFolder && activePurokFolder.toUpperCase() === p.purok.toUpperCase()) ||
+                  (selectedPurokFilter !== 'all' && selectedPurokFilter.toUpperCase() === p.purok.toUpperCase());
+                return (
+                  <button
+                    key={p.purok}
+                    type="button"
+                    onClick={() => {
+                      setActivePurokFolder(p.purok);
+                      setSelectedPurokFilter(p.purok.toUpperCase());
+                      setFolderPage(1);
+                    }}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex flex-col justify-between group ${
+                      isActive
+                        ? 'bg-gradient-to-r from-[#064e3b] to-[#047857] text-white border-emerald-800 shadow-sm ring-2 ring-emerald-500/20'
+                        : 'bg-white hover:bg-emerald-50/50 text-slate-800 border-slate-200 hover:border-emerald-300'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-1 mb-1.5">
+                      <Folder className={`w-4 h-4 transition-transform group-hover:scale-110 ${isActive ? 'text-emerald-100' : 'text-emerald-600'}`} />
+                      <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md tabular-nums ${
+                        isActive ? 'bg-white/20 text-white' : 'bg-emerald-50 text-emerald-800 border border-emerald-200/60'
+                      }`}>
+                        {p.count}
+                      </span>
+                    </div>
+                    <div className="font-extrabold text-xs truncate capitalize" title={p.purok}>
+                      {p.purok}
+                    </div>
+                    <div className={`text-[10px] font-medium mt-0.5 ${isActive ? 'text-emerald-100' : 'text-slate-400'}`}>
+                      {p.count} {p.count === 1 ? 'account' : 'accounts'}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Accounts Table Card */}
           <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
             <div className="overflow-x-auto">
@@ -888,7 +1032,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                     <th className="py-3.5 px-4">Full Name</th>
                     <th className="py-3.5 px-4">Barangay</th>
                     <th className="py-3.5 px-4">Purok</th>
-                    <th className="py-3.5 px-4">Contact Number</th>
+                    <th className="py-3.5 px-4">Primary Contact # / Alt #</th>
                     <th className="py-3.5 px-4">PIN Code</th>
                     <th className="py-3.5 px-4 text-center w-52">Actions</th>
                   </tr>
@@ -924,8 +1068,26 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                           </div>
                         </td>
                         <td className="py-3 px-4 font-bold text-emerald-700">{item.barangay}</td>
-                        <td className="py-3 px-4 text-slate-600 font-medium">{item.purok || '—'}</td>
-                        <td className="py-3 px-4 font-mono text-slate-600">{item.contact_number || '—'}</td>
+                        <td className="py-3 px-4 font-semibold text-slate-700">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200/80 font-bold text-xs">
+                            <Folder className="w-3 h-3 text-emerald-600" />
+                            {item.purok || 'No Purok'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-mono text-slate-600">
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-center gap-1">
+                              <span className="text-[10px] font-bold uppercase text-slate-400">Pri:</span>
+                              <span className="font-semibold text-slate-800">{item.contact_number || '—'}</span>
+                            </div>
+                            {item.alternate_contact_number && (
+                              <div className="flex items-center gap-1 text-[11px] text-slate-500">
+                                <span className="text-[10px] font-bold uppercase text-slate-400">Alt:</span>
+                                <span className="font-medium text-slate-600">{item.alternate_contact_number}</span>
+                              </div>
+                            )}
+                          </div>
+                        </td>
                         <td className="py-3 px-4 font-mono text-slate-500">{item.pin || '—'}</td>
                         <td className="py-3 px-4 text-center">
                           <div className="flex items-center justify-center gap-1.5">
@@ -1212,10 +1374,11 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      Contact #
+                      Primary Contact # <span className="text-red-500 font-bold">*</span>
                     </label>
                     <input
                       type="text"
+                      required
                       value={editContactNumber}
                       onChange={e => setEditContactNumber(e.target.value)}
                       placeholder="e.g. 09171234567"
@@ -1238,14 +1401,15 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
 
                 <div>
                   <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Facebook Profile Link
+                    Alternate Contact # <span className="text-red-500 font-bold">*</span>
                   </label>
                   <input
-                    type="url"
-                    value={facebookLink}
-                    onChange={e => setFacebookLink(e.target.value)}
-                    placeholder="https://facebook.com/..."
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-500 rounded-xl text-xs font-semibold text-slate-800 outline-none"
+                    type="text"
+                    required
+                    value={editAlternateContactNumber}
+                    onChange={e => setEditAlternateContactNumber(e.target.value)}
+                    placeholder="e.g. 09987654321"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-500 rounded-xl text-xs font-mono font-semibold text-slate-800 outline-none"
                   />
                 </div>
 
@@ -1397,7 +1561,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                     className="px-5 py-2 bg-emerald-800 hover:bg-emerald-900 text-white font-extrabold text-xs rounded-xl cursor-pointer flex items-center gap-1.5 shadow-md"
                   >
                     {isTransferring ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <UploadCloud className="w-3.5 h-3.5" />}
-                    <span>{isTransferring ? 'Submitting...' : 'Confirm Submit to Submit Exist.'}</span>
+                    <span>{isTransferring ? 'Submitting...' : 'Confirm Submit'}</span>
                   </button>
                 </div>
               </div>
@@ -1440,10 +1604,14 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                     <span className="font-bold text-slate-700 text-sm">{selectedItem.purok || '—'}</span>
                   </div>
                   <div>
-                    <span className="text-[10px] text-slate-400 font-bold uppercase block">Contact Number</span>
+                    <span className="text-[10px] text-slate-400 font-bold uppercase block">Primary Contact #</span>
                     <span className="font-mono font-bold text-slate-700">{selectedItem.contact_number || '—'}</span>
                   </div>
                   <div>
+                    <span className="text-[10px] text-slate-400 font-bold uppercase block">Alternate Contact #</span>
+                    <span className="font-mono font-bold text-slate-700">{selectedItem.alternate_contact_number || '—'}</span>
+                  </div>
+                  <div className="col-span-2">
                     <span className="text-[10px] text-slate-400 font-bold uppercase block">PhilHealth / PIN</span>
                     <span className="font-mono font-bold text-slate-700">{selectedItem.pin || '—'}</span>
                   </div>

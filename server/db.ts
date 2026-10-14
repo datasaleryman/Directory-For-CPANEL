@@ -287,6 +287,8 @@ export interface PCUUpdate {
   pending_credit_added?: boolean;
   credit_added?: boolean;
   contact_number?: string;
+  alternate_contact_number?: string;
+  alternateContactNumber?: string;
   uploadedFiles?: {
     name: string;
     url: string;
@@ -9997,6 +9999,7 @@ export async function transferContactToSubmitPcu(contactIdOrName: string | numbe
     added_from_website: true,
     status: 'FILES',
     contact_number: contactNumber,
+    alternate_contact_number: contact.alternate_contact_number || '',
     uploadedFiles
   };
 
@@ -10017,6 +10020,7 @@ export async function transferContactToSubmitPcu(contactIdOrName: string | numbe
         barangay,
         purok,
         contactNumber,
+        alternateContactNumber: contact.alternate_contact_number || '',
         fileName: newSubmission.fileName,
         fileUrl: newSubmission.fileData,
         uploadedFiles,
@@ -12185,7 +12189,8 @@ export async function addOrUpdateSubmittedExistAccount(recordData: Partial<Submi
   const fullName = (recordData.fullName || '').trim().toUpperCase();
   const barangay = (recordData.barangay || 'General / Unassigned').trim().toUpperCase();
   const purok = (recordData.purok || '').trim();
-  const contactNumber = (recordData.contactNumber || '').trim();
+  const contactNumber = (recordData.contactNumber || (recordData as any).contact_number || '').trim();
+  const alternateContactNumber = (recordData.alternateContactNumber || (recordData as any).alternate_contact_number || '').trim();
   const pin = (recordData.pin || '').trim();
   const latitude = recordData.latitude !== undefined && recordData.latitude !== null ? Number(recordData.latitude) : null;
   const longitude = recordData.longitude !== undefined && recordData.longitude !== null ? Number(recordData.longitude) : null;
@@ -12203,6 +12208,7 @@ export async function addOrUpdateSubmittedExistAccount(recordData: Partial<Submi
     barangay,
     purok,
     contactNumber,
+    alternateContactNumber,
     pin,
     latitude,
     longitude,
@@ -12479,6 +12485,7 @@ export async function updateLocalExistingAccount(
         barangay: updatedAccount.barangay || 'General / Unassigned',
         purok: updatedAccount.purok || '',
         contactNumber: updatedAccount.contact_number || '',
+        alternateContactNumber: updatedAccount.alternate_contact_number || (updatedAccount as any).alternateContactNumber || '',
         pin: updatedAccount.pin || '',
         latitude: updatedAccount.latitude,
         longitude: updatedAccount.longitude,
@@ -12587,6 +12594,7 @@ export async function uploadFilesForExistingAccount(
         barangay: existingAccount.barangay || 'General / Unassigned',
         purok: existingAccount.purok || '',
         contactNumber: existingAccount.contact_number || '',
+        alternateContactNumber: existingAccount.alternate_contact_number || (existingAccount as any).alternateContactNumber || '',
         pin: existingAccount.pin || '',
         latitude: existingAccount.latitude,
         longitude: existingAccount.longitude,

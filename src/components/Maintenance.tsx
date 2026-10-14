@@ -1273,6 +1273,18 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
               {consultedRecords.length.toLocaleString()}
             </span>
           </button>
+
+          {activeSectionTab === 'consulted' && (
+            <button
+              type="button"
+              onClick={() => setIsAddPatientModalOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-extrabold bg-gradient-to-r from-teal-700 to-emerald-600 hover:from-teal-800 hover:to-emerald-700 text-white shadow-xs transition-all cursor-pointer ml-auto"
+              title="Add Patient directly to Consulted tab"
+            >
+              <UserPlus className="w-4 h-4 stroke-[2.5]" />
+              <span>+ Add Patient</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -1487,6 +1499,15 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
               >
                 <Plus className="w-4 h-4" />
                 <span>Add Bulk Entry from PDF</span>
+              </button>
+            )}
+            {activeSectionTab === 'consulted' && consultedRecords.length === 0 && (
+              <button
+                onClick={() => setIsAddPatientModalOpen(true)}
+                className="inline-flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-teal-700 to-emerald-600 hover:from-teal-800 hover:to-emerald-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md transition-all cursor-pointer"
+              >
+                <UserPlus className="w-4 h-4 stroke-[2.5]" />
+                <span>Add Patient</span>
               </button>
             )}
           </div>

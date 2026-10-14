@@ -174,6 +174,7 @@ export interface SubmittedExistAccRecord {
   barangay: string;
   purok: string;
   contactNumber: string;
+  alternateContactNumber?: string;
   pin: string;
   latitude?: number | null;
   longitude?: number | null;

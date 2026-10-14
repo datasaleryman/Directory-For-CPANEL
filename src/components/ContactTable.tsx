@@ -265,6 +265,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
   const [modalEditBarangay, setModalEditBarangay] = useState('');
   const [modalEditPurok, setModalEditPurok] = useState('');
   const [modalEditContactNumber, setModalEditContactNumber] = useState('');
+  const [modalEditAlternateContactNumber, setModalEditAlternateContactNumber] = useState('');
   const [modalEditMaintenance, setModalEditMaintenance] = useState<'None' | 'Yes'>('None');
   const [modalEditMaintenanceMedicine, setModalEditMaintenanceMedicine] = useState('');
   const [modalIsSaving, setModalIsSaving] = useState(false);
@@ -280,6 +281,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
       setModalEditBarangay(viewContact.barangay || '');
       setModalEditPurok(viewContact.purok || '');
       setModalEditContactNumber(viewContact.contact_number || '');
+      setModalEditAlternateContactNumber(viewContact.alternate_contact_number || (viewContact as any).alternateContactNumber || '');
       const maint = (viewContact.maintenance === 'Yes' || (viewContact.maintenance_medicine && viewContact.maintenance !== 'None')) ? 'Yes' : 'None';
       setModalEditMaintenance(maint);
       setModalEditMaintenanceMedicine(viewContact.maintenance_medicine || '');
@@ -611,11 +613,12 @@ export const ContactTable: React.FC<ContactTableProps> = ({
     setUploadProgressText(stagedPcuFiles.length > 15 ? `Preparing ${stagedPcuFiles.length} files...` : 'Saving to Base44 DB...');
 
     try {
-      // 1. If Barangay, Purok, Contact Number or Maintenance was updated, synchronize contact record first
+      // 1. If Barangay, Purok, Contact Number, Alternate Contact Number or Maintenance was updated, synchronize contact record first
       const needsContactUpdate = 
         currentBarangay !== (viewContact.barangay || '') ||
         currentPurok !== (viewContact.purok || '') ||
         modalEditContactNumber.trim() !== (viewContact.contact_number || '').trim() ||
+        modalEditAlternateContactNumber.trim() !== (viewContact.alternate_contact_number || '').trim() ||
         modalEditMaintenance !== (viewContact.maintenance || 'None') ||
         modalEditMaintenanceMedicine.trim() !== (viewContact.maintenance_medicine || '').trim();
 
@@ -631,6 +634,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
             barangay: currentBarangay,
             purok: currentPurok,
             contact_number: modalEditContactNumber.trim() || viewContact.contact_number,
+            alternate_contact_number: modalEditAlternateContactNumber.trim() || viewContact.alternate_contact_number || '',
             maintenance: modalEditMaintenance,
             maintenance_medicine: modalEditMaintenance === 'Yes' ? modalEditMaintenanceMedicine.trim() : ''
           })
@@ -957,7 +961,11 @@ export const ContactTable: React.FC<ContactTableProps> = ({
       return;
     }
     if (!modalEditContactNumber.trim()) {
-      showToast('Contact Number is required.', 'error');
+      showToast('Primary Contact # is required.', 'error');
+      return;
+    }
+    if (!modalEditAlternateContactNumber.trim()) {
+      showToast('Alternate Contact # is required.', 'error');
       return;
     }
     if (modalEditMaintenance === 'Yes' && !modalEditMaintenanceMedicine.trim()) {
@@ -979,6 +987,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
           barangay: modalEditBarangay.trim(),
           purok: modalEditPurok.trim(),
           contact_number: modalEditContactNumber.trim(),
+          alternate_contact_number: modalEditAlternateContactNumber.trim(),
           maintenance: modalEditMaintenance,
           maintenance_medicine: modalEditMaintenance === 'Yes' ? modalEditMaintenanceMedicine.trim() : ''
         })
@@ -997,6 +1006,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
       setModalEditBarangay(data.barangay || modalEditBarangay);
       setModalEditPurok(data.purok || modalEditPurok);
       setModalEditContactNumber(data.contact_number || modalEditContactNumber);
+      setModalEditAlternateContactNumber(data.alternate_contact_number || (data as any).alternateContactNumber || modalEditAlternateContactNumber);
       setModalEditMaintenance((data.maintenance === 'Yes' || (data.maintenance_medicine && data.maintenance !== 'None')) ? 'Yes' : 'None');
       setModalEditMaintenanceMedicine(data.maintenance_medicine || '');
       setIsEditingContactInModal(false);
@@ -1010,6 +1020,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
             ...c,
             ...data,
             contact_number: data.contact_number || c.contact_number,
+            alternate_contact_number: data.alternate_contact_number !== undefined ? data.alternate_contact_number : c.alternate_contact_number,
             barangay: data.barangay || c.barangay,
             purok: data.purok || c.purok,
             maintenance: data.maintenance || c.maintenance,
@@ -1736,7 +1747,13 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                             {contact.contact_number && (
                               <>
                                 <span>•</span>
-                                <span className="font-mono text-slate-600">{contact.contact_number}</span>
+                                <span className="font-mono text-slate-700 font-semibold" title="Primary Contact #">Pri: {contact.contact_number}</span>
+                              </>
+                            )}
+                            {contact.alternate_contact_number && (
+                              <>
+                                <span>•</span>
+                                <span className="font-mono text-slate-600" title="Alternate Contact #">Alt: {contact.alternate_contact_number}</span>
                               </>
                             )}
                           </div>
@@ -2028,7 +2045,13 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                             {contact.contact_number && (
                               <>
                                 <span>•</span>
-                                <span className="font-mono text-slate-600">{contact.contact_number}</span>
+                                <span className="font-mono text-slate-700 font-semibold" title="Primary Contact #">Pri: {contact.contact_number}</span>
+                              </>
+                            )}
+                            {contact.alternate_contact_number && (
+                              <>
+                                <span>•</span>
+                                <span className="font-mono text-slate-600" title="Alternate Contact #">Alt: {contact.alternate_contact_number}</span>
                               </>
                             )}
                           </div>
@@ -2313,7 +2336,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
 
                     <th className="py-4 px-5">Barangay</th>
                     <th className="py-4 px-5">Purok</th>
-                    <th className="py-4 px-5">Contact Number</th>
+                    <th className="py-4 px-5">Primary Contact # / Alt #</th>
 
                     <th
                       onClick={() => handleSort('date')}
@@ -2415,17 +2438,25 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                             {contact.purok || '-'}
                           </td>
                           <td className={`py-3.5 px-5 font-mono text-xs ${isLocked ? 'text-emerald-900 font-semibold' : 'text-slate-600'}`}>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <Phone className={`w-3 h-3 ${isLocked ? 'text-emerald-600' : 'text-slate-400'}`} />
-                              <span>{contact.contact_number}</span>
-                              {contact.maintenance === 'Yes' && (
-                                <span 
-                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-100 text-teal-800 border border-teal-200" 
-                                  title={contact.maintenance_medicine ? `Maintained: ${contact.maintenance_medicine}` : 'Maintenance: Yes'}
-                                >
-                                  <Pill className="w-2.5 h-2.5" />
-                                  <span className="max-w-[120px] truncate">{contact.maintenance_medicine || 'Med'}</span>
-                                </span>
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <Phone className={`w-3 h-3 ${isLocked ? 'text-emerald-600' : 'text-slate-400'}`} />
+                                <span className="font-bold text-slate-800" title="Primary Contact #">{contact.contact_number || '—'}</span>
+                                {contact.maintenance === 'Yes' && (
+                                  <span 
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-teal-100 text-teal-800 border border-teal-200" 
+                                    title={contact.maintenance_medicine ? `Maintained: ${contact.maintenance_medicine}` : 'Maintenance: Yes'}
+                                  >
+                                    <Pill className="w-2.5 h-2.5" />
+                                    <span className="max-w-[120px] truncate">{contact.maintenance_medicine || 'Med'}</span>
+                                  </span>
+                                )}
+                              </div>
+                              {contact.alternate_contact_number && (
+                                <div className="flex items-center gap-1 text-[11px] text-slate-500 pl-4.5">
+                                  <span className="text-[10px] font-bold uppercase text-slate-400">Alt:</span>
+                                  <span className="font-semibold text-slate-600" title="Alternate Contact #">{contact.alternate_contact_number}</span>
+                                </div>
                               )}
                             </div>
                           </td>
@@ -2791,14 +2822,29 @@ export const ContactTable: React.FC<ContactTableProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
-                      Contact Number <span className="text-red-500 font-bold">*</span>
+                      Primary Contact # <span className="text-red-500 font-bold">*</span>
                     </label>
                     <input
                       type="text"
+                      required
                       value={modalEditContactNumber}
                       onChange={(e) => setModalEditContactNumber(e.target.value)}
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl outline-none font-semibold text-slate-700 text-xs transition-all"
                       placeholder="e.g. 09123456789"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">
+                      Alternate Contact # <span className="text-red-500 font-bold">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={modalEditAlternateContactNumber}
+                      onChange={(e) => setModalEditAlternateContactNumber(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 focus:border-indigo-500 rounded-xl outline-none font-semibold text-slate-700 text-xs transition-all"
+                      placeholder="e.g. 09987654321"
                     />
                   </div>
 
@@ -2942,16 +2988,32 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                           />
                         </div>
 
-                        {/* Contact Number - Editable in Modal */}
+                        {/* Primary Contact Number - Editable in Modal */}
                         <div className="p-3 bg-slate-50 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                           <span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
-                            Contact Number <span className="text-red-500 font-bold">*</span>
+                            Primary Contact # <span className="text-red-500 font-bold">*</span>
                           </span>
                           <input
                             type="text"
+                            required
                             value={modalEditContactNumber}
                             onChange={(e) => setModalEditContactNumber(e.target.value)}
                             placeholder="e.g. 09123456789"
+                            className="w-full sm:w-64 px-3 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl outline-none text-xs font-bold text-slate-800 placeholder-slate-400 shadow-xs"
+                          />
+                        </div>
+
+                        {/* Alternate Contact Number - Editable in Modal */}
+                        <div className="p-3 bg-slate-50 rounded-2xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                          <span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
+                            Alternate Contact # <span className="text-red-500 font-bold">*</span>
+                          </span>
+                          <input
+                            type="text"
+                            required
+                            value={modalEditAlternateContactNumber}
+                            onChange={(e) => setModalEditAlternateContactNumber(e.target.value)}
+                            placeholder="e.g. 09987654321"
                             className="w-full sm:w-64 px-3 py-2 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl outline-none text-xs font-bold text-slate-800 placeholder-slate-400 shadow-xs"
                           />
                         </div>
@@ -3284,8 +3346,14 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                 )}
                 {alreadySubmittedModalContact.contact_number && (
                   <div className="flex items-center justify-between">
-                    <span className="text-slate-400 font-semibold uppercase text-[10px]">Contact Number</span>
-                    <span className="font-mono text-slate-800">{alreadySubmittedModalContact.contact_number}</span>
+                    <span className="text-slate-400 font-semibold uppercase text-[10px]">Primary Contact #</span>
+                    <span className="font-mono text-slate-800 font-bold">{alreadySubmittedModalContact.contact_number}</span>
+                  </div>
+                )}
+                {alreadySubmittedModalContact.alternate_contact_number && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400 font-semibold uppercase text-[10px]">Alternate Contact #</span>
+                    <span className="font-mono text-slate-800 font-bold">{alreadySubmittedModalContact.alternate_contact_number}</span>
                   </div>
                 )}
                 {alreadySubmittedModalContact.maintenance && (

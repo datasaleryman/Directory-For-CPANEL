@@ -201,20 +201,40 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
           </div>
         </div>
 
-        {/* Contact Number */}
+        {/* Primary Contact Number */}
         <div className="space-y-1.5">
           <div className="flex justify-between items-center">
             <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">
-              Contact Number
+              Primary Contact #
             </label>
             <span className="text-red-500 text-xs font-bold">* Required</span>
           </div>
           <input
             type="text"
+            required
             value={contactNumber}
             onChange={(e) => setContactNumber(e.target.value)}
             className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-slate-800 text-sm font-medium outline-none placeholder:text-slate-400"
             placeholder="e.g. 09171234567"
+            disabled={saving}
+          />
+        </div>
+
+        {/* Alternate Contact Number */}
+        <div className="space-y-1.5">
+          <div className="flex justify-between items-center">
+            <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wider">
+              Alternate Contact #
+            </label>
+            <span className="text-red-500 text-xs font-bold">* Required</span>
+          </div>
+          <input
+            type="text"
+            required
+            value={alternateContactNumber}
+            onChange={(e) => setAlternateContactNumber(e.target.value)}
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-slate-800 text-sm font-medium outline-none placeholder:text-slate-400"
+            placeholder="e.g. 09987654321"
             disabled={saving}
           />
         </div>

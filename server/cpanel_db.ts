@@ -322,6 +322,7 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       barangay VARCHAR(255) NOT NULL DEFAULT '',
       purok VARCHAR(255) DEFAULT '',
       contact_number VARCHAR(100) DEFAULT '',
+      alternate_contact_number VARCHAR(100) DEFAULT '',
       pin VARCHAR(100) DEFAULT '',
       latitude DECIMAL(10, 7) NULL,
       longitude DECIMAL(10, 7) NULL,
@@ -636,6 +637,27 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
             console.log(`[cPanel DB] Added missing column '${col.name}' to submitted_exist_acc_settlements table.`);
           } catch (e: any) {
             console.warn(`[cPanel DB] Column migration notice for submitted_exist_acc_settlements.${col.name}:`, e.message);
+          }
+        }
+      }
+    }
+
+    // Inspect and migrate missing columns in 'submitted_exist_acc'
+    const [seaCols]: any = await connectionPool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'submitted_exist_acc'`
+    ).catch(() => [[]]);
+    const existingSeaTableCols = new Set((seaCols || []).map((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase()));
+    if (existingSeaTableCols.size > 0) {
+      const missingSeaTableCols = [
+        { name: 'alternate_contact_number', type: "VARCHAR(100) DEFAULT ''" }
+      ];
+      for (const col of missingSeaTableCols) {
+        if (!existingSeaTableCols.has(col.name.toLowerCase())) {
+          try {
+            await connectionPool.query(`ALTER TABLE submitted_exist_acc ADD COLUMN \`${col.name}\` ${col.type}`);
+            console.log(`[cPanel DB] Added missing column '${col.name}' to submitted_exist_acc table.`);
+          } catch (e: any) {
+            console.warn(`[cPanel DB] Column migration notice for submitted_exist_acc.${col.name}:`, e.message);
           }
         }
       }
@@ -3049,6 +3071,8 @@ export async function savePcuSubmissionToCPanel(submission: {
   barangay?: string;
   purok?: string;
   contactNumber?: string;
+  alternateContactNumber?: string;
+  alternate_contact_number?: string;
   fileName?: string;
   fileUrl?: string;
   uploadedFiles?: any[];
@@ -3671,6 +3695,8 @@ export async function saveSubmittedExistAccToCPanel(record: {
   barangay?: string;
   purok?: string;
   contactNumber?: string;
+  alternateContactNumber?: string;
+  alternate_contact_number?: string;
   pin?: string;
   latitude?: number | null;
   longitude?: number | null;
@@ -3698,6 +3724,7 @@ export async function saveSubmittedExistAccToCPanel(record: {
     const barangay = (record.barangay || '').trim().toUpperCase();
     const purok = (record.purok || '').trim();
     const contactNumber = (record.contactNumber || '').trim();
+    const alternateContactNumber = (record.alternateContactNumber || (record as any).alternate_contact_number || '').trim();
     const pin = (record.pin || '').trim();
     const latitude = record.latitude !== undefined && record.latitude !== null && !isNaN(Number(record.latitude)) ? Number(record.latitude) : null;
     const longitude = record.longitude !== undefined && record.longitude !== null && !isNaN(Number(record.longitude)) ? Number(record.longitude) : null;
@@ -3717,38 +3744,75 @@ export async function saveSubmittedExistAccToCPanel(record: {
     const pendingCreditAdded = record.pending_credit_added ? 1 : 0;
     const remarks = record.remarks || '';
 
-    await pool.query(
-      `INSERT INTO submitted_exist_acc
-        (id, exist_account_id, full_name, barangay, purok, contact_number, pin, latitude, longitude, geotagged, facebook_link, uploaded_files, uploaded_by, uploaded_at, status, verified_at, verified_by, pending_at, pending_by, updated_status_at, updated_status_by, verified_credit_added, pending_credit_added, remarks)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-        exist_account_id = VALUES(exist_account_id),
-        full_name = VALUES(full_name),
-        barangay = VALUES(barangay),
-        purok = VALUES(purok),
-        contact_number = VALUES(contact_number),
-        pin = VALUES(pin),
-        latitude = VALUES(latitude),
-        longitude = VALUES(longitude),
-        geotagged = VALUES(geotagged),
-        facebook_link = VALUES(facebook_link),
-        uploaded_files = VALUES(uploaded_files),
-        uploaded_by = VALUES(uploaded_by),
-        uploaded_at = VALUES(uploaded_at),
-        status = VALUES(status),
-        verified_at = VALUES(verified_at),
-        verified_by = VALUES(verified_by),
-        pending_at = VALUES(pending_at),
-        pending_by = VALUES(pending_by),
-        updated_status_at = VALUES(updated_status_at),
-        updated_status_by = VALUES(updated_status_by),
-        verified_credit_added = VALUES(verified_credit_added),
-        pending_credit_added = VALUES(pending_credit_added),
-        remarks = VALUES(remarks)`,
-      [
-        id, existAccountId, fullName, barangay, purok, contactNumber, pin, latitude, longitude, geotagged, facebookLink, uploadedFiles, uploadedBy, uploadedAt, status, verifiedAt, verifiedBy, pendingAt, pendingBy, updatedStatusAt, updatedStatusBy, verifiedCreditAdded, pendingCreditAdded, remarks
-      ]
-    );
+    try {
+      await pool.query(
+        `INSERT INTO submitted_exist_acc
+          (id, exist_account_id, full_name, barangay, purok, contact_number, alternate_contact_number, pin, latitude, longitude, geotagged, facebook_link, uploaded_files, uploaded_by, uploaded_at, status, verified_at, verified_by, pending_at, pending_by, updated_status_at, updated_status_by, verified_credit_added, pending_credit_added, remarks)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+          exist_account_id = VALUES(exist_account_id),
+          full_name = VALUES(full_name),
+          barangay = VALUES(barangay),
+          purok = VALUES(purok),
+          contact_number = VALUES(contact_number),
+          alternate_contact_number = VALUES(alternate_contact_number),
+          pin = VALUES(pin),
+          latitude = VALUES(latitude),
+          longitude = VALUES(longitude),
+          geotagged = VALUES(geotagged),
+          facebook_link = VALUES(facebook_link),
+          uploaded_files = VALUES(uploaded_files),
+          uploaded_by = VALUES(uploaded_by),
+          uploaded_at = VALUES(uploaded_at),
+          status = VALUES(status),
+          verified_at = VALUES(verified_at),
+          verified_by = VALUES(verified_by),
+          pending_at = VALUES(pending_at),
+          pending_by = VALUES(pending_by),
+          updated_status_at = VALUES(updated_status_at),
+          updated_status_by = VALUES(updated_status_by),
+          verified_credit_added = VALUES(verified_credit_added),
+          pending_credit_added = VALUES(pending_credit_added),
+          remarks = VALUES(remarks)`,
+        [
+          id, existAccountId, fullName, barangay, purok, contactNumber, alternateContactNumber, pin, latitude, longitude, geotagged, facebookLink, uploadedFiles, uploadedBy, uploadedAt, status, verifiedAt, verifiedBy, pendingAt, pendingBy, updatedStatusAt, updatedStatusBy, verifiedCreditAdded, pendingCreditAdded, remarks
+        ]
+      );
+    } catch (insertErr: any) {
+      // Fallback in case alternate_contact_number column is not yet present on remote cPanel MySQL table
+      await pool.query(
+        `INSERT INTO submitted_exist_acc
+          (id, exist_account_id, full_name, barangay, purok, contact_number, pin, latitude, longitude, geotagged, facebook_link, uploaded_files, uploaded_by, uploaded_at, status, verified_at, verified_by, pending_at, pending_by, updated_status_at, updated_status_by, verified_credit_added, pending_credit_added, remarks)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+          exist_account_id = VALUES(exist_account_id),
+          full_name = VALUES(full_name),
+          barangay = VALUES(barangay),
+          purok = VALUES(purok),
+          contact_number = VALUES(contact_number),
+          pin = VALUES(pin),
+          latitude = VALUES(latitude),
+          longitude = VALUES(longitude),
+          geotagged = VALUES(geotagged),
+          facebook_link = VALUES(facebook_link),
+          uploaded_files = VALUES(uploaded_files),
+          uploaded_by = VALUES(uploaded_by),
+          uploaded_at = VALUES(uploaded_at),
+          status = VALUES(status),
+          verified_at = VALUES(verified_at),
+          verified_by = VALUES(verified_by),
+          pending_at = VALUES(pending_at),
+          pending_by = VALUES(pending_by),
+          updated_status_at = VALUES(updated_status_at),
+          updated_status_by = VALUES(updated_status_by),
+          verified_credit_added = VALUES(verified_credit_added),
+          pending_credit_added = VALUES(pending_credit_added),
+          remarks = VALUES(remarks)`,
+        [
+          id, existAccountId, fullName, barangay, purok, contactNumber, pin, latitude, longitude, geotagged, facebookLink, uploadedFiles, uploadedBy, uploadedAt, status, verifiedAt, verifiedBy, pendingAt, pendingBy, updatedStatusAt, updatedStatusBy, verifiedCreditAdded, pendingCreditAdded, remarks
+        ]
+      );
+    }
     console.log(`[cPanel DB] Saved Submitted Exist. Acc. record "${fullName}" (${id}) to MySQL.`);
   } catch (err: any) {
     console.warn('[cPanel DB] Error saving Submitted Exist. Acc. record to MySQL:', err.message || err);
@@ -3779,6 +3843,8 @@ export async function fetchAllSubmittedExistAccFromCPanel(): Promise<any[]> {
         barangay: r.barangay || '',
         purok: r.purok || '',
         contactNumber: r.contact_number || '',
+        alternateContactNumber: r.alternate_contact_number || '',
+        alternate_contact_number: r.alternate_contact_number || '',
         pin: r.pin || '',
         latitude: r.latitude !== null && r.latitude !== undefined ? Number(r.latitude) : null,
         longitude: r.longitude !== null && r.longitude !== undefined ? Number(r.longitude) : null,
