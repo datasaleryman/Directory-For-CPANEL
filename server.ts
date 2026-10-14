@@ -95,6 +95,7 @@ import {
   getPcuSettlements,
   getMaintenanceRecords,
   addMaintenanceBulkRecords,
+  createMaintenancePatient,
   updateMaintenanceRecord,
   deleteMaintenanceRecord,
   clearAllMaintenanceRecords,
@@ -800,6 +801,7 @@ export async function getApp(httpServer?: http.Server) {
     try {
       const full_name = req.body.full_name || req.body.fullName || '';
       const contact_number = req.body.contact_number || req.body.contactNumber || '';
+      const alternate_contact_number = req.body.alternate_contact_number || req.body.alternateContactNumber || '';
       const barangay = req.body.barangay || req.body.address || '';
       const purok = req.body.purok || '';
       const latitude = req.body.latitude;
@@ -814,6 +816,7 @@ export async function getApp(httpServer?: http.Server) {
         barangay,
         purok,
         contact_number,
+        alternate_contact_number,
         latitude: latitude !== undefined && latitude !== null ? parseFloat(latitude) : undefined,
         longitude: longitude !== undefined && longitude !== null ? parseFloat(longitude) : undefined,
         geotagged: geotagged !== undefined ? Boolean(geotagged) : undefined,
@@ -832,7 +835,7 @@ export async function getApp(httpServer?: http.Server) {
       const idRaw = req.params.id;
       const idNum = parseInt(idRaw, 10);
       const id = !isNaN(idNum) && String(idNum) === idRaw ? idNum : idRaw;
-      const { full_name, barangay, purok, address, contact_number, latitude, longitude, geotagged, maintenance, maintenance_medicine } = req.body;
+      const { full_name, barangay, purok, address, contact_number, alternate_contact_number, alternateContactNumber, latitude, longitude, geotagged, maintenance, maintenance_medicine } = req.body;
       const username = req.user?.username || 'Admin';
 
       const contact = await editContact(id, {
@@ -840,6 +843,7 @@ export async function getApp(httpServer?: http.Server) {
         barangay: barangay || address || '',
         purok,
         contact_number,
+        alternate_contact_number: alternate_contact_number !== undefined ? alternate_contact_number : alternateContactNumber,
         latitude: latitude !== undefined ? (latitude === null ? null : parseFloat(latitude)) : undefined,
         longitude: longitude !== undefined ? (longitude === null ? null : parseFloat(longitude)) : undefined,
         geotagged: geotagged !== undefined ? !!geotagged : undefined,
@@ -2324,6 +2328,30 @@ export async function getApp(httpServer?: http.Server) {
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to save bulk maintenance entries.' });
+    }
+  });
+
+  app.post('/api/maintenance/patient', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Admin';
+      const { fullName, barangay, purok, contactNumber, maintenanceMedicine, disease } = req.body;
+      if (!fullName || !String(fullName).trim()) {
+        return res.status(400).json({ error: 'Full Name is required.' });
+      }
+      if (!barangay || !String(barangay).trim()) {
+        return res.status(400).json({ error: 'Barangay is required.' });
+      }
+      const record = await createMaintenancePatient({
+        fullName: String(fullName).trim(),
+        barangay: String(barangay).trim(),
+        purok: String(purok || '').trim(),
+        contactNumber: String(contactNumber || '').trim(),
+        maintenanceMedicine: String(maintenanceMedicine || '').trim(),
+        disease: String(disease || '').trim()
+      }, username);
+      res.status(201).json({ success: true, record });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to add patient to maintenance.' });
     }
   });
 

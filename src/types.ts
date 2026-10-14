@@ -4,6 +4,7 @@ export interface Contact {
   barangay: string;
   purok: string;
   contact_number: string;
+  alternate_contact_number?: string;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
@@ -114,6 +115,7 @@ export interface ExistingAccountItem {
   barangay: string;
   purok: string;
   contact_number: string;
+  alternate_contact_number?: string;
   created_at: string;
   latitude?: number;
   longitude?: number;

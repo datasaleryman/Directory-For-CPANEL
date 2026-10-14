@@ -352,7 +352,10 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       id VARCHAR(100) NOT NULL PRIMARY KEY,
       submitter VARCHAR(255) NOT NULL,
       total_submissions INT DEFAULT 0,
+      verified_count INT DEFAULT 0,
+      pending_count INT DEFAULT 0,
       base_rate DECIMAL(10,2) DEFAULT 0.00,
+      pending_base_rate DECIMAL(10,2) DEFAULT 0.00,
       total_salary DECIMAL(12,2) DEFAULT 0.00,
       amount_paid DECIMAL(12,2) DEFAULT 0.00,
       payment_status VARCHAR(50) DEFAULT 'SETTLED',
@@ -451,7 +454,8 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
         { name: 'deleted_at', type: 'VARCHAR(100) NULL' },
         { name: 'maintenance', type: "VARCHAR(50) DEFAULT 'None'" },
         { name: 'maintenance_medicine', type: 'TEXT NULL' },
-        { name: 'added_from_print_list', type: 'TINYINT(1) DEFAULT 1' }
+        { name: 'added_from_print_list', type: 'TINYINT(1) DEFAULT 1' },
+        { name: 'alternate_contact_number', type: "VARCHAR(100) DEFAULT ''" }
       ];
       for (const col of missingCols) {
         if (!existingCols.has(col.name.toLowerCase())) {
@@ -524,7 +528,8 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
         { name: 'submitted_by', type: "VARCHAR(255) DEFAULT ''" },
         { name: 'folder', type: "VARCHAR(255) DEFAULT 'GENERAL'" },
         { name: 'remarks', type: "TEXT NULL" },
-        { name: 'deleted_at', type: "VARCHAR(100) NULL" }
+        { name: 'deleted_at', type: "VARCHAR(100) NULL" },
+        { name: 'alternate_contact_number', type: "VARCHAR(100) DEFAULT ''" }
       ];
       for (const col of missingExistCols) {
         if (!existingExistCols.has(col.name.toLowerCase())) {
@@ -608,6 +613,29 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
             console.log(`[cPanel DB] Added missing column '${col.name}' to maintenance_records table.`);
           } catch (e: any) {
             console.warn(`[cPanel DB] Column migration notice for maintenance_records.${col.name}:`, e.message);
+          }
+        }
+      }
+    }
+
+    // Inspect and migrate missing columns in 'submitted_exist_acc_settlements'
+    const [seaSettleColRows]: any = await connectionPool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'submitted_exist_acc_settlements'`
+    ).catch(() => [[]]);
+    const existingSeaSettleCols = new Set((seaSettleColRows || []).map((r: any) => String(r.column_name || r.COLUMN_NAME).toLowerCase()));
+    if (existingSeaSettleCols.size > 0) {
+      const missingSeaSettleCols = [
+        { name: 'verified_count', type: 'INT DEFAULT 0' },
+        { name: 'pending_count', type: 'INT DEFAULT 0' },
+        { name: 'pending_base_rate', type: 'DECIMAL(10,2) DEFAULT 0.00' }
+      ];
+      for (const col of missingSeaSettleCols) {
+        if (!existingSeaSettleCols.has(col.name.toLowerCase())) {
+          try {
+            await connectionPool.query(`ALTER TABLE submitted_exist_acc_settlements ADD COLUMN \`${col.name}\` ${col.type}`);
+            console.log(`[cPanel DB] Added missing column '${col.name}' to submitted_exist_acc_settlements table.`);
+          } catch (e: any) {
+            console.warn(`[cPanel DB] Column migration notice for submitted_exist_acc_settlements.${col.name}:`, e.message);
           }
         }
       }
@@ -2015,20 +2043,23 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
       } catch {}
     }
 
+    const altContactVal = c.alternate_contact_number || c.alternateContactNumber || '';
+
     const executeSave = async () => {
       await pool!.query(
         `INSERT INTO contacts (
-          id, full_name, barangay, purok, contact_number, 
+          id, full_name, barangay, purok, contact_number, alternate_contact_number,
           created_at, updated_at, latitude, longitude, geotagged, 
           status, is_submitted, photo_url, pcu_file_url, pcu_uploaded_by, 
           pcu_uploaded_at, deleted_at, maintenance, maintenance_medicine,
           added_from_print_list
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
           full_name = VALUES(full_name),
           barangay = VALUES(barangay),
           purok = VALUES(purok),
           contact_number = VALUES(contact_number),
+          alternate_contact_number = VALUES(alternate_contact_number),
           updated_at = VALUES(updated_at),
           latitude = VALUES(latitude),
           longitude = VALUES(longitude),
@@ -2049,6 +2080,7 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
           c.barangay || '',
           c.purok || '',
           c.contact_number || '',
+          altContactVal,
           c.created_at || new Date().toISOString(),
           c.updated_at || new Date().toISOString(),
           c.latitude !== undefined && c.latitude !== null ? Number(c.latitude) : null,
@@ -2073,6 +2105,7 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
           await pool!.query(
             `UPDATE contacts SET 
               contact_number = ?, 
+              alternate_contact_number = ?,
               barangay = ?, 
               purok = ?, 
               maintenance = ?, 
@@ -2082,6 +2115,7 @@ export async function saveContactToCPanel(c: any): Promise<{ success: boolean; e
             WHERE LOWER(TRIM(full_name)) = LOWER(TRIM(?))`,
             [
               c.contact_number || '',
+              altContactVal,
               c.barangay || '',
               c.purok || '',
               maintenanceVal,
@@ -2720,18 +2754,21 @@ export async function saveExistingAccountToCPanel(account: any): Promise<void> {
     const isVerified = account.existingAccVerified !== false ? 1 : 0;
     const isVisited = account.existingAccVisited !== false ? 1 : 0;
 
+    const altContactVal = account.alternate_contact_number || account.alternateContactNumber || account.alternate_contact || '';
+
     await pool.query(
       `INSERT INTO existing_accounts (
-         id, full_name, barangay, purok, contact_number, pin, latitude, longitude, geotagged, 
+         id, full_name, barangay, purok, contact_number, alternate_contact_number, pin, latitude, longitude, geotagged, 
          facebook_link, uploaded_files, is_submitted, submitted_at, existing_acc_verified, 
          existing_acc_visited, created_at, status, submitted_by, folder, remarks, deleted_at
        )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE 
          full_name = VALUES(full_name),
          barangay = VALUES(barangay),
          purok = VALUES(purok),
          contact_number = VALUES(contact_number),
+         alternate_contact_number = VALUES(alternate_contact_number),
          pin = VALUES(pin),
          latitude = VALUES(latitude),
          longitude = VALUES(longitude),
@@ -2753,6 +2790,7 @@ export async function saveExistingAccountToCPanel(account: any): Promise<void> {
         account.barangay || '',
         account.purok || '',
         account.contact_number || account.contact || '',
+        altContactVal,
         account.pin || '',
         account.latitude !== undefined && account.latitude !== null ? Number(account.latitude) : null,
         account.longitude !== undefined && account.longitude !== null ? Number(account.longitude) : null,

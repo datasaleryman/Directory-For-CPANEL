@@ -9,6 +9,7 @@ interface ContactFormProps {
     barangay: string; 
     purok: string; 
     contact_number: string;
+    alternate_contact_number: string;
     latitude?: number | null;
     longitude?: number | null;
     geotagged?: boolean;
@@ -24,6 +25,7 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
   const [barangay, setBarangay] = useState('');
   const [purok, setPurok] = useState('');
   const [contactNumber, setContactNumber] = useState('');
+  const [alternateContactNumber, setAlternateContactNumber] = useState('');
   const [maintenance, setMaintenance] = useState<'None' | 'Yes'>('None');
   const [maintenanceMedicine, setMaintenanceMedicine] = useState('');
   const [saving, setSaving] = useState(false);
@@ -36,6 +38,7 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
       setBarangay(editTarget.barangay || '');
       setPurok(editTarget.purok || '');
       setContactNumber(editTarget.contact_number || '');
+      setAlternateContactNumber(editTarget.alternate_contact_number || '');
       const maint = (editTarget.maintenance === 'Yes' || (editTarget.maintenance_medicine && editTarget.maintenance !== 'None')) ? 'Yes' : 'None';
       setMaintenance(maint);
       setMaintenanceMedicine(editTarget.maintenance_medicine || '');
@@ -49,6 +52,7 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
     setBarangay('');
     setPurok('');
     setContactNumber('');
+    setAlternateContactNumber('');
     setMaintenance('None');
     setMaintenanceMedicine('');
   };
@@ -71,6 +75,7 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
     const trimmedBarangay = barangay.trim();
     const trimmedPurok = purok.trim();
     const trimmedNumber = contactNumber.trim();
+    const trimmedAltNumber = alternateContactNumber.trim();
     const trimmedMedicine = maintenanceMedicine.trim();
 
     // Validation checks
@@ -83,7 +88,11 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
       return;
     }
     if (!trimmedNumber) {
-      showToast('Contact Number is required.', 'warning');
+      showToast('Primary Contact # is required.', 'warning');
+      return;
+    }
+    if (!trimmedAltNumber) {
+      showToast('Alternate Contact # is required.', 'warning');
       return;
     }
     if (maintenance === 'Yes' && !trimmedMedicine) {
@@ -103,6 +112,7 @@ export const ContactForm: React.FC<ContactFormProps> = ({ editTarget, onSave, on
         barangay: formattedBarangay,
         purok: formattedPurok,
         contact_number: trimmedNumber,
+        alternate_contact_number: trimmedAltNumber,
         maintenance,
         maintenance_medicine: maintenance === 'Yes' ? trimmedMedicine : ''
       });

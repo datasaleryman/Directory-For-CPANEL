@@ -224,6 +224,7 @@ export interface Contact {
   barangay: string;
   purok: string;
   contact_number: string;
+  alternate_contact_number?: string;
   created_at: string;
   updated_at: string;
   deleted_at?: string | null;
@@ -324,6 +325,7 @@ export interface ExistingAccountItem {
   barangay: string;
   purok: string;
   contact_number: string;
+  alternate_contact_number?: string;
   created_at: string;
   latitude?: number;
   longitude?: number;
@@ -426,7 +428,10 @@ export interface SubmittedExistAccSettlement {
   id: string;
   submitter: string;
   totalSubmissions: number;
+  verifiedCount?: number;
+  pendingCount?: number;
   baseRate: number;
+  pendingBaseRate?: number;
   totalSalary: number;
   amountPaid: number;
   paymentStatus: 'SETTLED' | 'PENDING' | string;
@@ -5405,6 +5410,7 @@ export async function addContact(
     purok?: string; 
     address?: string; 
     contact_number: string;
+    alternate_contact_number?: string;
     latitude?: number | null;
     longitude?: number | null;
     geotagged?: boolean;
@@ -5417,6 +5423,7 @@ export async function addContact(
   const rawBarangay = (contact.barangay || (contact as any).address || '').trim();
   const rawPurok = (contact.purok || '').trim();
   const rawNumber = (contact.contact_number || (contact as any).contactNumber || '').trim();
+  const rawAltNumber = (contact.alternate_contact_number || (contact as any).alternateContactNumber || '').trim();
 
   if (!rawName || !rawBarangay || !rawNumber) {
     throw new Error('Full Name, Barangay, and Contact Number are required.');
@@ -5451,6 +5458,7 @@ export async function addContact(
       existing.barangay = formattedBarangay;
       if (formattedPurok) existing.purok = formattedPurok;
       if (rawNumber) existing.contact_number = rawNumber;
+      if (rawAltNumber) existing.alternate_contact_number = rawAltNumber;
       if (updateLat !== undefined) existing.latitude = updateLat;
       if (updateLng !== undefined) existing.longitude = updateLng;
       if (updateGeotag !== undefined) existing.geotagged = updateGeotag;
@@ -5474,6 +5482,7 @@ export async function addContact(
     barangay: formattedBarangay,
     purok: formattedPurok,
     contact_number: rawNumber,
+    alternate_contact_number: rawAltNumber,
     latitude: updateLat,
     longitude: updateLng,
     geotagged: updateGeotag || false,
@@ -5513,6 +5522,7 @@ export async function editContact(
     purok?: string; 
     address?: string; 
     contact_number: string;
+    alternate_contact_number?: string;
     latitude?: number | null;
     longitude?: number | null;
     geotagged?: boolean;
@@ -5529,6 +5539,9 @@ export async function editContact(
   const rawBarangay = (contact.barangay || contact.address || '').trim();
   const rawPurok = (contact.purok || '').trim();
   const rawNumber = contact.contact_number.trim();
+  const rawAltNumber = contact.alternate_contact_number !== undefined
+    ? String(contact.alternate_contact_number).trim()
+    : undefined;
 
   if (!rawName || !rawBarangay || !rawNumber) {
     throw new Error('Full Name, Barangay, and Contact Number are required.');
@@ -5579,6 +5592,7 @@ export async function editContact(
   const updateMedicine = updateMaintenance === 'Yes' 
     ? (contact.maintenance_medicine !== undefined ? contact.maintenance_medicine.trim() : (original.maintenance_medicine || '')) 
     : '';
+  const updateAltNumber = rawAltNumber !== undefined ? rawAltNumber : (original.alternate_contact_number || '');
 
   const nowIso = new Date().toISOString();
   for (const idx of matchedIndices) {
@@ -5588,6 +5602,7 @@ export async function editContact(
       barangay: formattedBarangay,
       purok: formattedPurok,
       contact_number: rawNumber,
+      alternate_contact_number: updateAltNumber,
       geotagged: updateGeotag,
       latitude: updateLat,
       longitude: updateLng,
@@ -11333,6 +11348,7 @@ export async function addLocalExistingAccount(data: any, username: string): Prom
     barangay: (data.barangay || '').toUpperCase().trim(),
     purok: (data.purok || '').trim(),
     contact_number: (data.contact_number || '').trim(),
+    alternate_contact_number: (data.alternate_contact_number || data.alternateContactNumber || '').trim(),
     created_at: new Date().toISOString(),
     latitude: data.latitude,
     longitude: data.longitude,
@@ -13749,6 +13765,67 @@ export async function addMaintenanceBulkRecords(
   }
 
   return added;
+}
+
+export async function createMaintenancePatient(
+  patientData: {
+    fullName: string;
+    barangay: string;
+    purok: string;
+    contactNumber: string;
+    maintenanceMedicine: string;
+    disease: string;
+  },
+  createdBy: string = 'Admin'
+): Promise<MaintenanceRecord> {
+  ensureMaintenanceLoadedSync();
+  const nowIso = new Date().toISOString();
+  const rawName = String(patientData.fullName || '').trim();
+  const rawBarangay = String(patientData.barangay || '').trim();
+  const rawPurok = String(patientData.purok || '').trim();
+  const rawContact = String(patientData.contactNumber || '').trim();
+  const rawMed = String(patientData.maintenanceMedicine || '').trim();
+  const rawDisease = String(patientData.disease || '').trim();
+
+  if (!rawName) throw new Error('Patient Full Name is required.');
+  if (!rawBarangay) throw new Error('Barangay is required.');
+
+  const cols = [
+    rawName,
+    rawBarangay,
+    rawPurok,
+    rawContact,
+    rawMed,
+    rawDisease
+  ];
+
+  const newRec: MaintenanceRecord = {
+    id: `maint_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    primaryText: rawName,
+    fullName: rawName,
+    barangay: rawBarangay,
+    purok: rawPurok,
+    contactNumber: rawContact,
+    maintenanceMedicine: rawMed,
+    disease: rawDisease,
+    isConsulted: true, // "once this data is saved this will stored on Consulted tab section"
+    consultedAt: nowIso,
+    consultedBy: createdBy,
+    columns: cols,
+    columnHeaders: ['Full Name', 'Barangay', 'Purok', 'Contact #', 'Maintenance Medicine', 'Disease'],
+    rawText: `${rawName} | ${rawBarangay} | ${rawPurok} | ${rawContact} | ${rawMed} | ${rawDisease}`,
+    pdfFileName: 'Direct Patient Entry',
+    pdfPageNumber: 1,
+    uploadedBy: createdBy,
+    uploadedAt: nowIso,
+    createdAt: nowIso
+  };
+
+  maintenanceRecordsCache.unshift(newRec);
+  await safeWriteFile(MAINTENANCE_RECORDS_FILE, JSON.stringify(maintenanceRecordsCache, null, 2), 'utf-8');
+  await saveMaintenanceRecordsBulkToCPanel([newRec]);
+  await addActivity(createdBy, `Added new patient "${rawName}" (${rawBarangay}) with Maintenance to Consulted tab`);
+  return newRec;
 }
 
 export async function updateMaintenanceRecord(

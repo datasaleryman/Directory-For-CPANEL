@@ -1606,14 +1606,36 @@ export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
 
           {/* Submitter Summary Table */}
           <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-            <div className="p-5 border-b border-slate-100 flex items-center justify-between">
+            <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <h4 className="font-bold text-slate-800 font-display text-sm">Submitter Compensation Tally</h4>
                 <p className="text-xs text-slate-500">Summary breakdown of submitted existing accounts by submitter</p>
               </div>
-              <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700">
-                {submitterSalaries.length} Encoders / Submitters
-              </span>
+              <div className="flex items-center gap-2.5 self-start sm:self-auto flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomPrintModal(true)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-xs transition-all cursor-pointer shadow-md shadow-emerald-600/20 min-h-[38px]"
+                  title="Custom Print Blank Payroll Form with custom row count"
+                >
+                  <Printer className="w-3.5 h-3.5 text-white" />
+                  <span>Custom Print</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowPrintLedgerModal(true)}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-emerald-950 font-bold text-xs transition-all cursor-pointer shadow-xs min-h-[38px]"
+                  title="Print Submitted Exist. Acc. Files Ledger report"
+                >
+                  <Printer className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Print Ledger</span>
+                </button>
+
+                <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700">
+                  {submitterSalaries.length} Encoders / Submitters
+                </span>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
@@ -1786,6 +1808,265 @@ export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
             </div>
           </div>
         </div>
+      ) : activeTab === 'settlement-logs' ? (
+        /* ================= SETTLEMENT LOGS TAB ================= */
+        <motion.div
+          key="settlement-logs"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          transition={{ duration: 0.2 }}
+          className="space-y-6"
+        >
+          {/* Header & Action Bar */}
+          <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-emerald-100 text-emerald-800">
+                  <Receipt className="w-5 h-5 text-emerald-700" />
+                </div>
+                <h3 className="text-base sm:text-lg font-black text-slate-900 font-display">
+                  Settlement Logs & Disbursements
+                </h3>
+              </div>
+              <p className="text-xs text-slate-500 font-medium pl-8">
+                Complete audit trail of processed compensation disbursements, payment vouchers, and settlements
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 self-start sm:self-auto flex-wrap">
+              <button
+                type="button"
+                onClick={exportSettlementsToCsv}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-all cursor-pointer shadow-xs min-h-[38px]"
+                title="Export Settlement Logs to CSV spreadsheet"
+              >
+                <Download className="w-3.5 h-3.5 text-slate-600" />
+                <span>Export CSV</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('ledger')}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition-all cursor-pointer shadow-md shadow-emerald-600/20 min-h-[38px]"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>Go to Payroll Ledger</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => fetchSettlements()}
+                disabled={loadingSettlements}
+                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer min-h-[38px] min-w-[38px] flex items-center justify-center shrink-0"
+                title="Refresh settlements"
+              >
+                <RefreshCw className={`w-4 h-4 ${loadingSettlements ? 'animate-spin text-emerald-600' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* Settlement Summary Stats */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {/* 1. Total Settlements */}
+            <div className="bg-white rounded-2xl p-4 sm:p-5 flex items-center justify-between border border-slate-200/80 shadow-xs">
+              <div className="space-y-1">
+                <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-slate-500">
+                  Settlements Logged
+                </span>
+                <div className="text-2xl sm:text-3xl font-black text-slate-900 font-display">
+                  {settlements.length}
+                </div>
+                <span className="text-[11px] text-slate-400 font-medium block">
+                  Disbursement records
+                </span>
+              </div>
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <Receipt className="w-6 h-6" />
+              </div>
+            </div>
+
+            {/* 2. Total Disbursed */}
+            <div className="rounded-2xl p-4 sm:p-5 flex items-center justify-between bg-gradient-to-br from-emerald-500/10 via-teal-500/10 to-emerald-600/15 border-2 border-emerald-500/30 shadow-xs">
+              <div className="space-y-1">
+                <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider text-emerald-900">
+                  Total Disbursed
+                </span>
+                <div className="text-2xl sm:text-3xl font-black text-emerald-950 font-display">
+                  ₱{totalSettledAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </div>
+                <span className="text-[11px] text-emerald-700 font-medium block">
+                  Total payout released
+                </span>
+              </div>
+              <div className="w-12 h-12 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+                <Banknote className="w-6 h-6" />
+              </div>
+            </div>
+
+            {/* 3. Total Submissions Settled */}
+            <div className="bg-white rounded-2xl p-4 sm:p-5 flex items-center justify-between border border-slate-200/80 shadow-xs">
+              <div className="space-y-1">
+                <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-slate-500">
+                  Accounts Cleared
+                </span>
+                <div className="text-2xl sm:text-3xl font-black text-slate-900 font-display">
+                  {totalSettledSubmissions}
+                </div>
+                <span className="text-[11px] text-slate-400 font-medium block">
+                  Credits compensated
+                </span>
+              </div>
+              <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-700 flex items-center justify-center shrink-0">
+                <FolderCheck className="w-6 h-6" />
+              </div>
+            </div>
+          </div>
+
+          {/* Settlement Records Container */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+            {/* Search Bar & Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={settlementSearch}
+                  onChange={(e) => setSettlementSearch(e.target.value)}
+                  placeholder="Filter submitter, method, settled by, or notes..."
+                  className="w-full pl-10 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm font-medium text-slate-900 focus:outline-none focus:border-emerald-500 focus:bg-white placeholder:text-slate-400 transition-all"
+                />
+                {settlementSearch && (
+                  <button
+                    type="button"
+                    onClick={() => setSettlementSearch('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="text-xs font-bold text-slate-500">
+                  Showing {filteredSettlements.length} of {settlements.length} Settlements
+                </div>
+              </div>
+            </div>
+
+            {/* Table or Empty State */}
+            {settlements.length === 0 ? (
+              <div className="py-16 text-center space-y-3 px-4">
+                <div className="w-14 h-14 rounded-3xl bg-blue-50 text-blue-600 flex items-center justify-center mx-auto">
+                  <Receipt className="w-7 h-7" />
+                </div>
+                <div className="space-y-1">
+                  <h4 className="text-base font-bold text-slate-800">No settlement records found</h4>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    When submitter salaries are settled from the Payroll Ledger, official disbursement records and printable vouchers will appear here.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('ledger')}
+                  className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all cursor-pointer mt-2"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>Go to Payroll Ledger</span>
+                </button>
+              </div>
+            ) : filteredSettlements.length === 0 ? (
+              <div className="py-12 text-center space-y-2 px-4">
+                <p className="text-sm font-medium text-slate-600">No settlements match "{settlementSearch}"</p>
+                <button
+                  type="button"
+                  onClick={() => setSettlementSearch('')}
+                  className="text-xs font-bold text-emerald-600 hover:text-emerald-800 cursor-pointer"
+                >
+                  Clear search filter
+                </button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase tracking-wider text-[11px]">
+                    <tr>
+                      <th className="py-3.5 px-4">Date / Time</th>
+                      <th className="py-3.5 px-4">Submitter</th>
+                      <th className="py-3.5 px-4 text-center">Accounts</th>
+                      <th className="py-3.5 px-4 text-right">Settled Salary</th>
+                      <th className="py-3.5 px-4 text-right">Amount Paid</th>
+                      <th className="py-3.5 px-4">Payment Method</th>
+                      <th className="py-3.5 px-4">Settled By</th>
+                      <th className="py-3.5 px-4 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredSettlements.map((st) => (
+                      <tr key={st.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-3.5 px-4 font-medium text-slate-600 whitespace-nowrap">
+                          {formatTimestamp(st.settledAt || st.createdAt || '')}
+                        </td>
+                        <td className="py-3.5 px-4 font-bold text-slate-900 whitespace-nowrap">
+                          {st.submitter}
+                        </td>
+                        <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                          <span className="font-semibold text-slate-700">
+                            {st.verifiedCount !== undefined ? `${st.verifiedCount} v. / ${st.pendingCount || 0} p.` : `${st.totalSubmissions} total`}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-800 whitespace-nowrap">
+                          ₱{(Number(st.totalSalary) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3.5 px-4 text-right font-mono font-black text-emerald-700 whitespace-nowrap">
+                          ₱{(Number(st.amountPaid ?? st.totalSalary) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </td>
+                        <td className="py-3.5 px-4 whitespace-nowrap">
+                          <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                            {st.paymentMethod || 'CASH'}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-500 font-medium whitespace-nowrap">
+                          {st.settledBy || 'Master Admin'}
+                        </td>
+                        <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                          <div className="inline-flex items-center gap-1.5 justify-center">
+                            <button
+                              type="button"
+                              onClick={() => handlePrintVoucher(
+                                st.submitter,
+                                st.totalSubmissions,
+                                Number(st.totalSalary) || 0,
+                                Number(st.amountPaid ?? st.totalSalary) || 0,
+                                st.paymentMethod || 'CASH',
+                                st.referenceNotes || '',
+                                st.settledAt
+                              )}
+                              className="p-1.5 rounded-lg text-emerald-700 hover:bg-emerald-50 transition-colors cursor-pointer"
+                              title="Print Official Disbursement Voucher"
+                            >
+                              <Printer className="w-4 h-4" />
+                            </button>
+                            {isMasterAdmin && (
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteSettlement(st.id)}
+                                className="p-1.5 rounded-lg text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Delete settlement record"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </motion.div>
       ) : (
         /* ================= FOLDERS / FILES TABS ================= */
         <div className="space-y-6">
@@ -2727,6 +3008,395 @@ export const SubmittedExistAcc: React.FC<SubmittedExistAccProps> = ({
                   className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl cursor-pointer"
                 >
                   Close
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* PRINT SUBMITTED EXIST ACC FILES LEDGER MODAL                               */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {showPrintLedgerModal && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-hidden">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 16 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden border border-slate-200"
+            >
+              {/* Modal Header Toolbar */}
+              <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50/90 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-800 flex items-center justify-center shadow-xs">
+                    <Printer className="w-5 h-5 text-emerald-700" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-slate-900 text-base sm:text-lg font-display">
+                      Print Exist. Acc. Files Ledger
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Official formatted PDF & Print preview
+                    </p>
+                  </div>
+                </div>
+
+                {/* Report Type Selector Pills */}
+                <div className="flex items-center gap-1.5 bg-slate-200/70 p-1 rounded-xl self-start sm:self-auto text-xs font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setPrintReportType('pending')}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      printReportType === 'pending'
+                        ? 'bg-white text-emerald-950 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Pending Payout
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrintReportType('verified')}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      printReportType === 'verified'
+                        ? 'bg-white text-emerald-950 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Verified Payout
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrintReportType('all')}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      printReportType === 'all'
+                        ? 'bg-white text-emerald-950 shadow-xs font-black'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Combined
+                  </button>
+                </div>
+
+                {/* Action Buttons */}
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={handleExecutePrintLedger}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider transition-all cursor-pointer shadow-md shadow-emerald-600/20"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span>Print Document</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowPrintLedgerModal(false)}
+                    className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                    title="Close Print Preview"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Scrollable Printable Document Preview */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-8 bg-slate-100">
+                <div className="bg-white rounded-xl shadow-lg border border-slate-200/80 p-6 sm:p-10 md:p-14 max-w-2xl mx-auto space-y-6 text-slate-800">
+                  {/* Header Subtitle / Clinic Branding */}
+                  <div className="text-center font-semibold text-[11px] sm:text-xs tracking-[0.3em] text-slate-500 uppercase">
+                    S A I N T &nbsp; F R A N C I S &nbsp; C L I N I C &nbsp; ( S F C )
+                  </div>
+
+                  {/* Document Title */}
+                  <div className="text-center space-y-1">
+                    <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight font-display">
+                      Submitted Exist. Acc. Files Ledger
+                    </h2>
+                    <p className="text-xs sm:text-sm font-medium text-slate-500">
+                      {printLedgerData.reportSubtitle}
+                    </p>
+                  </div>
+
+                  {/* Metadata Bar */}
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-600 border-b border-slate-200 pb-3 pt-2">
+                    <span>{printLedgerData.rateLabel}</span>
+                    <span>Generated: {formatPrintDate(new Date())}</span>
+                  </div>
+
+                  {/* Section Title */}
+                  <div className="text-xs sm:text-sm font-black uppercase tracking-wider text-slate-900 pt-1">
+                    {printLedgerData.sectionTitle}
+                  </div>
+
+                  {/* Two KPI Summary Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="border border-slate-200 rounded-xl p-4 bg-white">
+                      <div className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                        {printLedgerData.householdLabel}
+                      </div>
+                      <div className="text-2xl sm:text-3xl font-black text-slate-900">
+                        {printLedgerData.totalHouseholds}
+                      </div>
+                    </div>
+                    <div className="border border-slate-200 rounded-xl p-4 bg-white">
+                      <div className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                        {printLedgerData.payoutLabel}
+                      </div>
+                      <div className="text-2xl sm:text-3xl font-black text-emerald-600">
+                        PHP {printLedgerData.totalPayout.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Ledger Table */}
+                  <div className="pt-2">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-200 text-slate-500 uppercase tracking-wider text-[10.5px] font-bold">
+                          <th className="py-3 text-left w-1/2">SUBMITTED BY</th>
+                          <th className="py-3 text-left w-1/4 pl-2">ACCOUNTS SUBMITTED</th>
+                          <th className="py-3 text-right w-1/4">TOTAL PAYOUT</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {printLedgerData.list.length === 0 ? (
+                          <tr>
+                            <td colSpan={3} className="py-8 text-center text-slate-400 font-medium">
+                              No submissions found for this report.
+                            </td>
+                          </tr>
+                        ) : (
+                          printLedgerData.list.map((item, idx) => (
+                            <tr key={`${item.name}-${idx}`} className="hover:bg-slate-50/50 transition-colors">
+                              <td className="py-3 text-slate-900 font-semibold text-xs sm:text-[13px]">
+                                {item.name}
+                              </td>
+                              <td className="py-3 text-slate-600 font-medium pl-2 text-xs sm:text-[13px]">
+                                {item.households}
+                              </td>
+                              <td className="py-3 text-right font-bold text-emerald-600 text-xs sm:text-[13px]">
+                                PHP {item.payout.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Centered Document Footer */}
+                  <div className="text-[11px] text-slate-400 text-center pt-6 border-t border-slate-100">
+                    Saint Francis Clinic — Exist. Acc. Files Ledger &middot; Generated {formatPrintDate(new Date())}
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* ========================================================================= */}
+      {/* CUSTOM PRINT BLANK PAYROLL FORM MODAL                                      */}
+      {/* ========================================================================= */}
+      <AnimatePresence>
+        {showCustomPrintModal && (
+          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-2 sm:p-4 md:p-6 overflow-hidden">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 16 }}
+              transition={{ duration: 0.2 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden border border-slate-200"
+            >
+              {/* Modal Header */}
+              <div className="p-4 sm:p-5 border-b border-slate-200 bg-slate-50/90 flex items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-700 text-white flex items-center justify-center shadow-xs">
+                    <Printer className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-slate-900 text-base sm:text-lg font-display">
+                      Custom Print Blank Payroll
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Configure custom rows and print official blank clinic payroll forms
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowCustomPrintModal(false)}
+                  className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200 transition-colors cursor-pointer"
+                  title="Close modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body / Settings Form */}
+              <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
+                {/* 1. Row Count Selector */}
+                <div className="p-4 rounded-2xl bg-emerald-50/60 border border-emerald-200 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <label className="text-xs font-black uppercase tracking-wider text-emerald-950 block">
+                        Number of Blank Rows to Print
+                      </label>
+                      <span className="text-[11px] text-emerald-800">
+                        Admin can print custom different number of rows (1 to 100 rows per batch)
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="1"
+                        max="100"
+                        value={blankRowCount}
+                        onChange={(e) => setBlankRowCount(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))}
+                        className="w-24 px-3 py-2 text-center rounded-xl bg-white border border-emerald-300 font-black text-emerald-950 text-base shadow-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                      <span className="text-xs font-bold text-emerald-900">rows</span>
+                    </div>
+                  </div>
+
+                  {/* Quick Preset Buttons */}
+                  <div className="flex items-center gap-1.5 flex-wrap pt-1">
+                    <span className="text-[11px] font-bold text-emerald-800">Presets:</span>
+                    {[5, 10, 15, 20, 25, 30, 40, 50].map((num) => (
+                      <button
+                        key={num}
+                        type="button"
+                        onClick={() => setBlankRowCount(num)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          blankRowCount === num
+                            ? 'bg-emerald-700 text-white shadow-xs'
+                            : 'bg-white text-emerald-900 hover:bg-emerald-100 border border-emerald-200'
+                        }`}
+                      >
+                        {num} rows
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2. Form Customization Inputs */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {/* Title */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Payroll Form Title
+                    </label>
+                    <input
+                      type="text"
+                      value={blankPayrollTitle}
+                      onChange={(e) => setBlankPayrollTitle(e.target.value)}
+                      placeholder="e.g. EXIST. ACC. SUBMITTERS PAYROLL REGISTER"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
+                    />
+                  </div>
+
+                  {/* Coverage Area / Barangay */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Barangay / Coverage Area
+                    </label>
+                    <input
+                      type="text"
+                      value={blankBarangay}
+                      onChange={(e) => setBlankBarangay(e.target.value)}
+                      placeholder="e.g. All SFC Coverage Areas or Barangay Name"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
+                    />
+                  </div>
+
+                  {/* Period */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Payroll Period
+                    </label>
+                    <input
+                      type="text"
+                      value={blankPeriod}
+                      onChange={(e) => setBlankPeriod(e.target.value)}
+                      placeholder="e.g. October 2026 or 1st Half October 2026"
+                      className="w-full px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800 focus:outline-none focus:border-emerald-500 focus:bg-white"
+                    />
+                  </div>
+
+                  {/* Paper Orientation */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      Print Orientation
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBlankOrientation('landscape')}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          blankOrientation === 'landscape'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        Landscape (Best)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBlankOrientation('portrait')}
+                        className={`px-3 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                          blankOrientation === 'portrait'
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        Portrait
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Form Preview Summary */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2 text-xs">
+                  <div className="font-bold text-slate-800 flex items-center justify-between">
+                    <span>Print Specification Preview</span>
+                    <span className="text-[11px] font-normal text-slate-500">Same format as Saint Francis Clinic official payroll</span>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-slate-600 pt-1">
+                    <div>Rows: <strong className="text-emerald-700">{blankRowCount} lines</strong></div>
+                    <div>Coverage: <strong>{blankBarangay || 'All SFC'}</strong></div>
+                    <div>Period: <strong>{blankPeriod}</strong></div>
+                    <div>Layout: <strong className="capitalize">{blankOrientation}</strong></div>
+                  </div>
+                  <div className="text-[11px] text-slate-400 pt-1 border-t border-slate-200/70">
+                    Includes columns: #, Name of Submitter / Worker, Barangay / Purok, Verified (Qty), Pending (Qty), Total Salary (₱), Signature of Recipient, Remarks, plus Batch Totals and official sign-offs.
+                  </div>
+                </div>
+              </div>
+
+              {/* Modal Footer Toolbar */}
+              <div className="p-4 sm:p-5 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomPrintModal(false)}
+                  className="px-4 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-700 font-bold text-xs hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleExecutePrintBlankPayroll();
+                    setShowCustomPrintModal(false);
+                  }}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-700 hover:to-teal-800 text-white font-bold text-xs shadow-md shadow-emerald-600/20 transition-all cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print Blank Payroll ({blankRowCount} Rows)</span>
                 </button>
               </div>
             </motion.div>

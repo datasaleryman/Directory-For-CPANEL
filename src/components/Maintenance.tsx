@@ -28,7 +28,9 @@ import {
   Printer,
   Pill,
   Stethoscope,
-  ClipboardCheck
+  ClipboardCheck,
+  UserPlus,
+  Heart
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import * as pdfjsLib from 'pdfjs-dist';
@@ -126,6 +128,17 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
   const [diseaseInput, setDiseaseInput] = useState<string>('');
   const [savingMaintenanceForm, setSavingMaintenanceForm] = useState<boolean>(false);
 
+  // "Add Patient" Modal States (Stored on Consulted tab section)
+  const [isAddPatientModalOpen, setIsAddPatientModalOpen] = useState<boolean>(false);
+  const [newPatientFullName, setNewPatientFullName] = useState<string>('');
+  const [newPatientBarangay, setNewPatientBarangay] = useState<string>('');
+  const [newPatientPurok, setNewPatientPurok] = useState<string>('');
+  const [newPatientContactNumber, setNewPatientContactNumber] = useState<string>('');
+  const [newPatientMedicine, setNewPatientMedicine] = useState<string>('');
+  const [newPatientDisease, setNewPatientDisease] = useState<string>('');
+  const [isSavingPatient, setIsSavingPatient] = useState<boolean>(false);
+  const [availableBarangays, setAvailableBarangays] = useState<string[]>([]);
+
   // Delete Confirmation States
   const [recordToDelete, setRecordToDelete] = useState<MaintenanceRecord | null>(null);
   const [deletingRecord, setDeletingRecord] = useState<boolean>(false);
@@ -160,6 +173,16 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
     fetchMaintenanceRecords();
     const handleRestore = () => fetchMaintenanceRecords();
     window.addEventListener('clinic-data-restored', handleRestore);
+
+    fetch(`/api/public/barangays?_t=${Date.now()}`)
+      .then(res => res.json())
+      .then(data => {
+        if (data && Array.isArray(data.barangays)) {
+          setAvailableBarangays(data.barangays);
+        }
+      })
+      .catch(() => {});
+
     return () => window.removeEventListener('clinic-data-restored', handleRestore);
   }, [authToken]);
 
@@ -809,6 +832,76 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
     }
   };
 
+  // Handle Save "Add Patient" Modal Form -> Directly stored in Consulted tab section
+  const handleSaveNewPatient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPatientFullName.trim()) {
+      showToast('Patient Full Name is required.', 'error');
+      return;
+    }
+    if (!newPatientBarangay.trim()) {
+      showToast('Barangay is required.', 'error');
+      return;
+    }
+    if (!newPatientPurok.trim()) {
+      showToast('Purok is required.', 'error');
+      return;
+    }
+    if (!newPatientContactNumber.trim()) {
+      showToast('Contact # is required.', 'error');
+      return;
+    }
+    if (!newPatientMedicine.trim()) {
+      showToast('Maintenance Medicine is required.', 'error');
+      return;
+    }
+    if (!newPatientDisease.trim()) {
+      showToast('Disease is required.', 'error');
+      return;
+    }
+
+    setIsSavingPatient(true);
+    try {
+      const res = await fetch('/api/maintenance/patient', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          fullName: newPatientFullName.trim(),
+          barangay: newPatientBarangay.trim(),
+          purok: newPatientPurok.trim(),
+          contactNumber: newPatientContactNumber.trim(),
+          maintenanceMedicine: newPatientMedicine.trim(),
+          disease: newPatientDisease.trim()
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to save patient record.');
+      }
+      if (data.record) {
+        setRecords(prev => [data.record, ...prev]);
+      } else {
+        await fetchMaintenanceRecords();
+      }
+      setIsAddPatientModalOpen(false);
+      setNewPatientFullName('');
+      setNewPatientBarangay('');
+      setNewPatientPurok('');
+      setNewPatientContactNumber('');
+      setNewPatientMedicine('');
+      setNewPatientDisease('');
+      setActiveSectionTab('consulted');
+      showToast(`Patient "${newPatientFullName.trim()}" successfully registered and stored in Consulted tab!`, 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Error saving patient', 'error');
+    } finally {
+      setIsSavingPatient(false);
+    }
+  };
+
   // Counts for Maintenance (Unconsulted) vs Consulted tabs
   const unconsultedRecords = useMemo(
     () => records.filter(r => !isRecordConsulted(r)),
@@ -1007,6 +1100,16 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              onClick={() => {
+                setIsAddPatientModalOpen(true);
+              }}
+              className="inline-flex items-center gap-2 px-5 py-3 bg-gradient-to-r from-teal-700 to-emerald-600 hover:from-teal-800 hover:to-emerald-700 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md hover:shadow-lg transition-all cursor-pointer"
+            >
+              <UserPlus className="w-4 h-4 stroke-[2.5]" />
+              <span>Add Patient</span>
+            </button>
+
             <button
               onClick={() => {
                 setIsBulkModalOpen(true);
@@ -2500,6 +2603,163 @@ export const Maintenance: React.FC<MaintenanceProps> = ({
                   <span>Confirm Clear</span>
                 </button>
               </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* =====================================================================
+          MODAL 5: ADD PATIENT MODAL (Stored directly on Consulted tab section)
+      ===================================================================== */}
+      <AnimatePresence>
+        {isAddPatientModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 12 }}
+              className="w-full max-w-lg bg-white rounded-3xl border border-slate-200/90 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Header */}
+              <div className="bg-gradient-to-r from-[#064e3b] to-[#047857] px-6 py-4.5 flex items-center justify-between text-white shrink-0 shadow-md">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center border border-white/20">
+                    <UserPlus className="w-5 h-5 text-emerald-200" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold tracking-tight">Add Patient</h3>
+                    <p className="text-xs text-emerald-100/90 font-medium">Record patient with maintenance medicine into Consulted tab</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsAddPatientModalOpen(false)}
+                  className="p-1.5 rounded-lg text-emerald-100 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                  title="Close modal"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Form Body */}
+              <form onSubmit={handleSaveNewPatient} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4 text-xs">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Full Name <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newPatientFullName}
+                    onChange={e => setNewPatientFullName(e.target.value)}
+                    placeholder="e.g. JUAN DELA CRUZ"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-600 focus:bg-white rounded-xl text-xs sm:text-sm font-semibold text-slate-900 outline-none uppercase transition-all"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Barangay <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      list="patient-barangays-list"
+                      value={newPatientBarangay}
+                      onChange={e => setNewPatientBarangay(e.target.value)}
+                      placeholder="e.g. DAMPALAN"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-600 focus:bg-white rounded-xl text-xs sm:text-sm font-semibold text-slate-900 outline-none uppercase transition-all"
+                    />
+                    <datalist id="patient-barangays-list">
+                      {availableBarangays.map(b => (
+                        <option key={b} value={b} />
+                      ))}
+                    </datalist>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                      Purok <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={newPatientPurok}
+                      onChange={e => setNewPatientPurok(e.target.value)}
+                      placeholder="e.g. Purok 1"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-600 focus:bg-white rounded-xl text-xs sm:text-sm font-semibold text-slate-900 outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Contact # <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newPatientContactNumber}
+                    onChange={e => setNewPatientContactNumber(e.target.value)}
+                    placeholder="e.g. 09171234567"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-600 focus:bg-white rounded-xl text-xs sm:text-sm font-mono font-semibold text-slate-900 outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Maintenance Medicine <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newPatientMedicine}
+                    onChange={e => setNewPatientMedicine(e.target.value)}
+                    placeholder="e.g. Amlodipine 10mg / Losartan 50mg"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-600 focus:bg-white rounded-xl text-xs sm:text-sm font-semibold text-slate-900 outline-none transition-all"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Disease <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newPatientDisease}
+                    onChange={e => setNewPatientDisease(e.target.value)}
+                    placeholder="e.g. Hypertension / Diabetes Type 2"
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-emerald-600 focus:bg-white rounded-xl text-xs sm:text-sm font-semibold text-slate-900 outline-none transition-all"
+                  />
+                </div>
+
+                <div className="p-3 bg-emerald-50/80 border border-emerald-200/80 rounded-2xl flex items-center gap-2.5 text-emerald-900 text-xs">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+                  <p>Once saved, this patient record will automatically be stored on the <strong>Consulted</strong> tab section.</p>
+                </div>
+
+                {/* Footer Buttons */}
+                <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddPatientModalOpen(false)}
+                    disabled={isSavingPatient}
+                    className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl cursor-pointer transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isSavingPatient}
+                    className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-[#064e3b] to-[#047857] hover:from-[#047857] hover:to-[#059669] text-white font-extrabold rounded-xl shadow-md cursor-pointer disabled:opacity-50 transition-all"
+                  >
+                    {isSavingPatient ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                    <span>{isSavingPatient ? 'Saving...' : 'Save Patient'}</span>
+                  </button>
+                </div>
+              </form>
             </motion.div>
           </div>
         )}
