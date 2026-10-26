@@ -231,6 +231,8 @@ export interface ReturnedPcuRecord {
     uploadedBy?: string;
     size?: number;
   }[];
+  source?: 'portal_attachment' | 'pcu';
+  isPortalAttachment?: boolean;
 }
 
 export interface SubmittedExistAccHistoryItem {
@@ -288,5 +290,44 @@ export interface MaintenanceRecord {
   uploadedAt: string;
   createdAt: string;
 }
+
+export interface PortalAttachmentFile {
+  name: string;
+  url: string;
+  size?: number;
+  type?: string;
+  uploadedAt?: string;
+}
+
+export interface PortalAttachmentItem {
+  id: string;
+  full_name: string;
+  barangay: string;
+  purok?: string;
+  attachments: PortalAttachmentFile[];
+  uploaded_by?: string;
+  uploaded_at?: string;
+  status?: 'SUBMITTED' | 'VERIFIED' | 'PENDING' | 'ARCHIVED' | 'VERIFICATION' | 'APPROVED' | 'RETURNED';
+  return_reason?: string;
+  returned_at?: string;
+  returned_by?: string;
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface DraftItem {
+  id: string;
+  full_name: string;
+  barangay: string;
+  purok?: string;
+  attachments: PortalAttachmentFile[];
+  notes?: string;
+  saved_by?: string;
+  saved_at: string;
+  created_at: string;
+  updated_at?: string;
+}
+
 
 

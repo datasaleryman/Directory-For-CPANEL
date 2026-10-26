@@ -53,7 +53,7 @@ export const BarangaySummaryAnalytics: React.FC<BarangaySummaryAnalyticsProps> =
   activePurokFolder
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
-  const [filterMode, setFilterMode] = useState<'all' | 'members' | 'puroks'>('all');
+  const [filterMode, setFilterMode] = useState<'all' | 'patients' | 'puroks'>('all');
 
   // Compute detailed analytics metrics per barangay
   const barangayAnalytics = useMemo(() => {
@@ -100,13 +100,14 @@ export const BarangaySummaryAnalytics: React.FC<BarangaySummaryAnalyticsProps> =
     };
   }, [barangayAnalytics, totalBarangaysInSystem]);
 
-  // Sort based on active filter
+  // Sort strictly from highest to lowest data population
   const sortedBarangays = useMemo(() => {
     const list = [...barangayAnalytics];
     if (filterMode === 'puroks') {
-      list.sort((a, b) => b.purokCount - a.purokCount || b.totalMembers - a.totalMembers);
+      list.sort((a, b) => (b.purokCount - a.purokCount) || (b.totalMembers - a.totalMembers) || a.displayName.localeCompare(b.displayName));
     } else {
-      list.sort((a, b) => b.totalMembers - a.totalMembers || b.purokCount - a.purokCount);
+      // Default & 'patients': Highest to Lowest Data population
+      list.sort((a, b) => (b.totalMembers - a.totalMembers) || (b.purokCount - a.purokCount) || a.displayName.localeCompare(b.displayName));
     }
     return list;
   }, [barangayAnalytics, filterMode]);
@@ -129,7 +130,7 @@ export const BarangaySummaryAnalytics: React.FC<BarangaySummaryAnalyticsProps> =
               Barangay Summary Analytics
             </h2>
             <p className="text-xs text-slate-400 font-medium">
-              Overview of members and puroks across all folders
+              Overview of patients and puroks across all folders (Highest to Lowest Data)
             </p>
           </div>
         </div>
@@ -150,14 +151,14 @@ export const BarangaySummaryAnalytics: React.FC<BarangaySummaryAnalyticsProps> =
             </button>
             <button
               type="button"
-              onClick={() => setFilterMode('members')}
+              onClick={() => setFilterMode('patients')}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                filterMode === 'members'
+                filterMode === 'patients'
                   ? 'bg-white text-emerald-800 shadow-xs font-black'
                   : 'text-slate-500 hover:text-slate-800'
               }`}
             >
-              Members
+              Patients
             </button>
             <button
               type="button"
@@ -212,10 +213,10 @@ export const BarangaySummaryAnalytics: React.FC<BarangaySummaryAnalyticsProps> =
                 </p>
               </div>
 
-              {/* TOTAL MEMBERS */}
+              {/* TOTAL PATIENTS */}
               <div className="bg-slate-50/70 border border-slate-100/90 rounded-2xl p-5">
                 <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                  TOTAL MEMBERS
+                  TOTAL PATIENTS
                 </p>
                 <div className="mt-1.5">
                   <span className="text-3xl font-black text-slate-900 tracking-tight font-display">
@@ -223,7 +224,7 @@ export const BarangaySummaryAnalytics: React.FC<BarangaySummaryAnalyticsProps> =
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 font-medium mt-1">
-                  Across all folders
+                  Across all folders (Highest to Lowest)
                 </p>
               </div>
             </div>
@@ -232,25 +233,30 @@ export const BarangaySummaryAnalytics: React.FC<BarangaySummaryAnalyticsProps> =
             <div className="border border-slate-100/90 rounded-2xl p-4 bg-white">
               <div className="max-h-[380px] overflow-y-auto pr-1">
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-2.5">
-                  {sortedBarangays.map(item => (
+                  {sortedBarangays.map((item, idx) => (
                     <div
                       key={item.rawName}
                       onClick={() => onSelectBarangay(item.rawName)}
-                      className="bg-white border border-slate-200/90 hover:border-emerald-400 hover:shadow-xs rounded-xl p-3 flex flex-col justify-between transition-all cursor-pointer group select-none min-h-[72px]"
-                      title={`Open Barangay ${item.displayName} (${item.totalMembers} Members, ${item.purokCount} Puroks)`}
+                      className="bg-white border border-slate-200/90 hover:border-emerald-400 hover:shadow-xs rounded-xl p-3 flex flex-col justify-between transition-all cursor-pointer group select-none min-h-[76px]"
+                      title={`#${idx + 1} Open Barangay ${item.displayName} (${item.totalMembers} Patients, ${item.purokCount} Puroks)`}
                     >
-                      <div className="font-bold text-slate-800 text-xs sm:text-sm truncate group-hover:text-emerald-700 transition-colors">
-                        {item.displayName}
+                      <div className="flex items-start justify-between gap-1">
+                        <div className="font-bold text-slate-800 text-xs sm:text-sm truncate group-hover:text-emerald-700 transition-colors">
+                          {item.displayName}
+                        </div>
+                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0">
+                          #{idx + 1}
+                        </span>
                       </div>
 
                       <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                        {(filterMode === 'all' || filterMode === 'members') && (
-                          <span className="bg-emerald-50 text-emerald-600 border border-emerald-200/80 font-bold px-1.5 py-0.5 rounded text-[11px] leading-none whitespace-nowrap">
-                            {item.totalMembers} M
+                        {(filterMode === 'all' || filterMode === 'patients') && (
+                          <span className="bg-emerald-50 text-emerald-700 border border-emerald-200/80 font-black px-1.5 py-0.5 rounded text-[11px] leading-none whitespace-nowrap">
+                            {item.totalMembers} Patients
                           </span>
                         )}
                         {(filterMode === 'all' || filterMode === 'puroks') && (
-                          <span className="bg-amber-50 text-amber-600 border border-amber-200/80 font-bold px-1.5 py-0.5 rounded text-[11px] leading-none whitespace-nowrap">
+                          <span className="bg-amber-50 text-amber-700 border border-amber-200/80 font-bold px-1.5 py-0.5 rounded text-[11px] leading-none whitespace-nowrap">
                             {item.purokCount} P
                           </span>
                         )}

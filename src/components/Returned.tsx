@@ -24,7 +24,8 @@ import {
   FolderOpen,
   Loader2,
   CheckCircle2,
-  Trash2
+  Trash2,
+  Paperclip
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ReturnedPcuRecord } from '../types.js';
@@ -117,6 +118,7 @@ export const Returned: React.FC<ReturnedProps> = ({
 
     setIsResubmitting(true);
     try {
+      const isPortalAtt = Boolean(resubmitTarget.isPortalAttachment || resubmitTarget.source === 'portal_attachment');
       const payload = {
         id: resubmitTarget.id,
         contactId: resubmitTarget.contactId,
@@ -124,7 +126,8 @@ export const Returned: React.FC<ReturnedProps> = ({
         barangay: resubmitBarangay.trim(),
         purok: resubmitPurok.trim(),
         contact_number: resubmitContactNumber.trim(),
-        files: resubmitFiles
+        files: resubmitFiles,
+        isPortalAttachment: isPortalAtt
       };
 
       const res = await fetch('/api/pcu/resubmit', {
@@ -138,10 +141,15 @@ export const Returned: React.FC<ReturnedProps> = ({
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || 'Failed to resubmit PCU submission.');
+        throw new Error(data.error || 'Failed to resubmit submission.');
       }
 
-      showToast(`Record "${resubmitFullName}" has been resubmitted successfully to Submit PCU!`, 'success');
+      showToast(
+        isPortalAtt
+          ? `Record "${resubmitFullName}" has been resubmitted successfully to Portal Attachment VERIFICATION!`
+          : `Record "${resubmitFullName}" has been resubmitted successfully to Submit PCU!`,
+        'success'
+      );
       // Immediately remove from returned records list
       setRecords(prev => prev.filter(r => r.id !== resubmitTarget.id));
       if (selectedRecord && selectedRecord.id === resubmitTarget.id) {
@@ -405,9 +413,17 @@ export const Returned: React.FC<ReturnedProps> = ({
                       </div>
                     </div>
 
-                    <span className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-200 shrink-0">
-                      Returned
-                    </span>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <span className="px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-200">
+                        Returned
+                      </span>
+                      {(record.isPortalAttachment || record.source === 'portal_attachment') && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 shadow-2xs">
+                          <Paperclip className="w-2.5 h-2.5 text-emerald-700" />
+                          <span>Portal Attachment</span>
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Return Reason Box */}
@@ -706,9 +722,18 @@ export const Returned: React.FC<ReturnedProps> = ({
                     <UploadCloud className="w-5 h-5 text-white" />
                   </div>
                   <div>
-                    <h3 className="text-base font-extrabold font-display">Resubmit PCU Documentation</h3>
+                    <h3 className="text-base font-extrabold font-display flex items-center gap-2">
+                      <span>{resubmitTarget.isPortalAttachment ? 'Resubmit Portal Attachment' : 'Resubmit PCU Documentation'}</span>
+                      {resubmitTarget.isPortalAttachment && (
+                        <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-emerald-900/60 text-emerald-200 border border-emerald-400/40">
+                          Portal Attachment
+                        </span>
+                      )}
+                    </h3>
                     <p className="text-xs text-emerald-100 font-medium">
-                      Correct information & upload updated files for verification
+                      {resubmitTarget.isPortalAttachment
+                        ? 'Update details & attach files to return to Portal Attachment VERIFICATION'
+                        : 'Correct information & upload updated files for verification'}
                     </p>
                   </div>
                 </div>
@@ -873,7 +898,9 @@ export const Returned: React.FC<ReturnedProps> = ({
                   ) : (
                     <UploadCloud className="w-4 h-4" />
                   )}
-                  <span>Resubmit to Submit PCU</span>
+                  <span>
+                    {resubmitTarget.isPortalAttachment ? 'Resubmit to Portal Attachment' : 'Resubmit to Submit PCU'}
+                  </span>
                 </button>
               </div>
             </motion.div>

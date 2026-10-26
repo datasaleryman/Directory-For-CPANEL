@@ -114,7 +114,16 @@ import {
   getSubmittedExistAccHistory,
   getSubmittedExistAccSettlements,
   recordSubmittedExistAccSettlement,
-  deleteSubmittedExistAccSettlement
+  deleteSubmittedExistAccSettlement,
+  getPortalAttachments,
+  savePortalAttachment,
+  updatePortalAttachment,
+  deletePortalAttachment,
+  getPortalAttachmentSqlCode,
+  getMyDrafts,
+  saveDraft,
+  deleteDraft,
+  submitDraftForVerification
 } from './server/db.js';
 import {
   loadCPanelDbConfig,
@@ -393,11 +402,14 @@ export async function getApp(httpServer?: http.Server) {
       const userObj = req.user ? findUser(req.user.username) : null;
       const userRole = (userObj?.role || req.user?.role || '').toUpperCase();
       const userBarangay = userObj?.barangay || '';
-      const isAdminRole = userRole === 'ADMINISTRATOR' || userRole === 'ADMIN' || userRole === 'MASTER ADMIN' || req.user?.username.toLowerCase() === 'admin' || userRole === 'IT';
+      const canViewAllBarangays =
+        ['MASTER ADMIN', 'ADMINISTRATOR', 'ADMIN', 'IT', 'LEADER', 'CO-LEADER'].includes(userRole) ||
+        userRole.includes('LEADER') ||
+        req.user?.username.toLowerCase() === 'admin';
 
       let address = req.query.address as string | undefined;
-      // For non-admin accounts assigned to a barangay, restrict/default address filter to their designated barangay
-      if (!isAdminRole && userBarangay) {
+      // For accounts without all-barangay viewing rights assigned to a specific barangay, default/restrict address filter to their designated barangay
+      if (!canViewAllBarangays && userBarangay) {
         if (!address || address === 'All Barangays' || address === 'All Addresses') {
           address = userBarangay;
         }
@@ -422,8 +434,8 @@ export async function getApp(httpServer?: http.Server) {
         forceSync
       });
 
-      // If non-admin user with assigned barangay, filter returned folders so their designated barangay folder is available
-      if (!isAdminRole && userBarangay && Array.isArray(results.barangayFolders)) {
+      // If user without all-barangay viewing rights has an assigned barangay, filter returned folders so their designated barangay folder is available
+      if (!canViewAllBarangays && userBarangay && Array.isArray(results.barangayFolders)) {
         const assignedLower = userBarangay.trim().toLowerCase();
         const filtered = results.barangayFolders.filter(
           (f) => f.barangay.trim().toLowerCase() === assignedLower
@@ -464,10 +476,13 @@ export async function getApp(httpServer?: http.Server) {
       const userObj = req.user ? findUser(req.user.username) : null;
       const userRole = (userObj?.role || req.user?.role || '').toUpperCase();
       const userBarangay = userObj?.barangay || '';
-      const isLeaderRole = userRole === 'LEADER' || userRole === 'CO-LEADER' || userRole.includes('LEADER');
+      const canViewAllBarangays =
+        ['MASTER ADMIN', 'ADMINISTRATOR', 'ADMIN', 'IT', 'LEADER', 'CO-LEADER'].includes(userRole) ||
+        userRole.includes('LEADER') ||
+        req.user?.username.toLowerCase() === 'admin';
 
       let address = req.query.address as string | undefined;
-      if (isLeaderRole && userBarangay) {
+      if (!canViewAllBarangays && userBarangay) {
         address = userBarangay;
       }
 
@@ -525,10 +540,13 @@ export async function getApp(httpServer?: http.Server) {
       const userObj = req.user ? findUser(req.user.username) : null;
       const userRole = (userObj?.role || req.user?.role || 'Staff').toUpperCase();
       const userBarangay = userObj?.barangay || '';
-      const isAdminRole = ['MASTER ADMIN', 'IT', 'ADMIN', 'ADMINISTRATOR'].includes(userRole) || req.user?.username.toLowerCase() === 'admin';
+      const canViewAllBarangays =
+        ['MASTER ADMIN', 'IT', 'ADMIN', 'ADMINISTRATOR', 'LEADER', 'CO-LEADER'].includes(userRole) ||
+        userRole.includes('LEADER') ||
+        req.user?.username.toLowerCase() === 'admin';
       
       let filtered = [...existing];
-      if (!isAdminRole && userBarangay) {
+      if (!canViewAllBarangays && userBarangay) {
         filtered = filtered.filter(item => {
           return isBarangayMatch(item.barangay, userBarangay);
         });
@@ -645,9 +663,9 @@ export async function getApp(httpServer?: http.Server) {
       const username = req.user?.username || 'Admin';
       const id = req.params.id;
 
-      // Access control: only superusers or the original submitter can update
+      // Access control: superusers, leaders, or the original submitter can update
       const userRole = (req.user?.role || 'Staff').toUpperCase();
-      const isSuperUser = ['MASTER ADMIN', 'IT', 'ADMIN', 'ADMINISTRATOR'].includes(userRole) || req.user?.username.toLowerCase() === 'admin';
+      const isSuperUser = ['MASTER ADMIN', 'IT', 'ADMIN', 'ADMINISTRATOR', 'LEADER', 'CO-LEADER'].includes(userRole) || userRole.includes('LEADER') || req.user?.username.toLowerCase() === 'admin';
       
       if (!isSuperUser && req.user?.username) {
         const existing = getLocalExistingAccounts();
@@ -664,21 +682,21 @@ export async function getApp(httpServer?: http.Server) {
     }
   });
 
-  // Delete a single existing account (requires admin/IT role or permission check)
+  // Delete a single existing account (requires admin/IT/leader role or permission check)
   app.delete('/api/existing-accounts/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const username = req.user?.username || 'Admin';
       const role = (req.user?.role || '').toUpperCase().trim();
       
-      const allowedRoles = ['MASTER ADMIN', 'ADMINISTRATOR', 'ADMIN', 'IT', 'LEADER', 'ENCODER', 'USER', 'STAFF', 'CLERK', 'MEMBER'];
+      const allowedRoles = ['MASTER ADMIN', 'ADMINISTRATOR', 'ADMIN', 'IT', 'LEADER', 'CO-LEADER', 'ENCODER', 'USER', 'STAFF', 'CLERK', 'MEMBER'];
       if (!allowedRoles.includes(role)) {
         return res.status(403).json({ error: 'Permission denied: Only administrators can delete records.' });
       }
 
       const id = req.params.id;
 
-      // Access control: only superusers or original submitter can delete
-      const isSuperUser = ['MASTER ADMIN', 'IT', 'ADMIN', 'ADMINISTRATOR'].includes(role) || req.user?.username.toLowerCase() === 'admin';
+      // Access control: superusers, leaders, or original submitter can delete
+      const isSuperUser = ['MASTER ADMIN', 'IT', 'ADMIN', 'ADMINISTRATOR', 'LEADER', 'CO-LEADER'].includes(role) || role.includes('LEADER') || req.user?.username.toLowerCase() === 'admin';
       if (!isSuperUser && req.user?.username) {
         const existing = getLocalExistingAccounts();
         const record = existing.find(item => item.id === id);
@@ -700,7 +718,7 @@ export async function getApp(httpServer?: http.Server) {
       const username = req.user?.username || 'Admin';
       const role = (req.user?.role || '').toUpperCase().trim();
       
-      const allowedRoles = ['MASTER ADMIN', 'ADMINISTRATOR', 'ADMIN', 'IT', 'LEADER', 'ENCODER', 'USER', 'STAFF', 'CLERK', 'MEMBER'];
+      const allowedRoles = ['MASTER ADMIN', 'ADMINISTRATOR', 'ADMIN', 'IT', 'LEADER', 'CO-LEADER', 'ENCODER', 'USER', 'STAFF', 'CLERK', 'MEMBER'];
       if (!allowedRoles.includes(role)) {
         return res.status(403).json({ error: 'Permission denied: Only administrators can delete Barangay folders.' });
       }
@@ -1716,6 +1734,231 @@ export async function getApp(httpServer?: http.Server) {
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="cpanel_database.sql"');
     res.send(sql);
+  });
+
+  // -------------------------------------------------------------------------
+  // PORTAL ATTACHMENTS API (Portal Attachment Page - Multi-file Uploads & Grid)
+  // -------------------------------------------------------------------------
+
+  // Get all portal attachment records
+  app.get('/api/portal-attachments', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const records = getPortalAttachments();
+      res.json(records);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch portal attachments.' });
+    }
+  });
+
+  // Create a new portal attachment record (with multi-file upload support)
+  app.post('/api/portal-attachments', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Staff';
+      const { full_name, fullName, barangay, purok, attachments, notes, status } = req.body;
+
+      const name = (full_name || fullName || '').trim();
+      if (!name) {
+        return res.status(400).json({ error: 'Full Name is required.' });
+      }
+
+      const bName = (barangay || '').trim();
+      if (!bName) {
+        return res.status(400).json({ error: 'Barangay is required.' });
+      }
+
+      const fileList = Array.isArray(attachments) ? attachments : [];
+
+      const saved = await savePortalAttachment({
+        full_name: name,
+        barangay: bName,
+        purok: (purok || '').trim(),
+        attachments: fileList,
+        notes: (notes || '').trim(),
+        status: status || 'SUBMITTED',
+        uploaded_by: username
+      }, username);
+
+      res.json({
+        success: true,
+        message: 'Portal Attachment record saved successfully.',
+        data: saved
+      });
+    } catch (err: any) {
+      console.error('[Portal Attachment Error]:', err);
+      res.status(400).json({ error: err.message || 'Failed to save portal attachment.' });
+    }
+  });
+
+  // Update a portal attachment record
+  app.put('/api/portal-attachments/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Staff';
+      const { id } = req.params;
+      const updated = await updatePortalAttachment(id, req.body, username);
+      if (!updated) {
+        return res.status(404).json({ error: 'Portal Attachment record not found.' });
+      }
+      res.json({ success: true, message: 'Portal Attachment updated.', data: updated });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to update portal attachment.' });
+    }
+  });
+
+  // Delete a portal attachment record
+  app.delete('/api/portal-attachments/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Staff';
+      const { id } = req.params;
+      const success = await deletePortalAttachment(id, username);
+      if (!success) {
+        return res.status(404).json({ error: 'Record not found or already deleted.' });
+      }
+      res.json({ success: true, message: 'Portal Attachment record deleted successfully.' });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to delete portal attachment.' });
+    }
+  });
+
+  // Update portal attachment status (VERIFICATION, PENDING, APPROVED, RETURNED, RTV)
+  app.put('/api/portal-attachments/:id/status', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Staff';
+      const { id } = req.params;
+      const { status, return_reason } = req.body;
+      const now = new Date().toISOString();
+
+      const updates: any = {
+        status: status || 'VERIFICATION',
+        updated_at: now
+      };
+
+      if (status === 'RETURNED') {
+        updates.return_reason = return_reason || 'Returned for corrections';
+        updates.returned_at = now;
+        updates.returned_by = username;
+      } else if (status === 'VERIFICATION') {
+        // RTV / Return to verification - clear return fields
+        updates.return_reason = '';
+        updates.returned_at = null;
+        updates.returned_by = null;
+      }
+
+      const updated = await updatePortalAttachment(id, updates, username);
+      if (!updated) {
+        return res.status(404).json({ error: 'Portal Attachment record not found.' });
+      }
+      res.json({ success: true, message: `Status updated to ${status}`, data: updated });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to update status.' });
+    }
+  });
+
+  // Get raw SQL update script for cPanel MySQL
+  app.get('/api/portal-attachments/sql', requireAuth, (req: Request, res: Response) => {
+    const sql = getPortalAttachmentSqlCode();
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.send(sql);
+  });
+
+  // -------------------------------------------------------------------------
+  // MY DRAFTS API (My Drafts Page - Staging & Submission)
+  // -------------------------------------------------------------------------
+
+  // Get all drafts for logged in user (or all drafts for admin)
+  app.get('/api/my-drafts', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Staff';
+      const roleUpper = (req.user?.role || '').toUpperCase();
+      const isSuperUser = roleUpper.includes('ADMIN') || roleUpper.includes('LEADER') || username.toLowerCase() === 'admin';
+      const drafts = getMyDrafts(username, isSuperUser);
+      res.json(drafts);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || 'Failed to fetch drafts.' });
+    }
+  });
+
+  // Save a new draft
+  app.post('/api/my-drafts', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Staff';
+      const { full_name, fullName, barangay, purok, attachments, notes } = req.body;
+
+      const name = (full_name || fullName || '').trim();
+      if (!name) {
+        return res.status(400).json({ error: 'Full Name is required.' });
+      }
+      const bName = (barangay || '').trim();
+      if (!bName) {
+        return res.status(400).json({ error: 'Barangay is required.' });
+      }
+
+      const saved = await saveDraft({
+        full_name: name,
+        barangay: bName,
+        purok: (purok || '').trim(),
+        attachments: Array.isArray(attachments) ? attachments : [],
+        notes: (notes || '').trim(),
+        saved_by: username
+      }, username);
+
+      res.json({ success: true, message: 'Draft saved successfully.', data: saved });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to save draft.' });
+    }
+  });
+
+  // Update existing draft
+  app.put('/api/my-drafts/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Staff';
+      const { id } = req.params;
+      const { full_name, fullName, barangay, purok, attachments, notes } = req.body;
+
+      const saved = await saveDraft({
+        id,
+        full_name: (full_name || fullName || '').trim(),
+        barangay: (barangay || '').trim(),
+        purok: (purok || '').trim(),
+        attachments: Array.isArray(attachments) ? attachments : [],
+        notes: (notes || '').trim(),
+        saved_by: username
+      }, username);
+
+      res.json({ success: true, message: 'Draft updated successfully.', data: saved });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to update draft.' });
+    }
+  });
+
+  // Delete a draft
+  app.delete('/api/my-drafts/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Staff';
+      const { id } = req.params;
+      const success = await deleteDraft(id, username);
+      if (!success) {
+        return res.status(404).json({ error: 'Draft not found.' });
+      }
+      res.json({ success: true, message: 'Draft deleted successfully.' });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to delete draft.' });
+    }
+  });
+
+  // Submit draft for verification: transfers to Portal Attachment (VERIFICATION section) and removes from drafts
+  app.post('/api/my-drafts/:id/submit', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const username = req.user?.username || 'Staff';
+      const { id } = req.params;
+      const portalItem = await submitDraftForVerification(id, username);
+      res.json({
+        success: true,
+        message: `Draft "${portalItem.full_name}" submitted for verification and transferred to Portal Attachment!`,
+        data: portalItem
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || 'Failed to submit draft.' });
+    }
   });
 
   // --- Database Backup Endpoints (Admin Only) ---

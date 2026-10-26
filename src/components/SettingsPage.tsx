@@ -60,6 +60,7 @@ interface SettingsPageProps {
     navExistAccFiles?: string;
     navSubmittedExistAcc?: string;
     navVerificationEntry?: string;
+    navPortalAttachment?: string;
     rolePermissions?: Record<string, string[]>;
   };
   onSettingsSaved: (updated: any) => void;
@@ -165,9 +166,10 @@ const APP_PAGES = [
   { id: 'maintenance', name: 'Maintenance', desc: 'Maintenance PDF bulk entry & alphabetically sorted directory' },
   { id: 'exist-directory', name: 'Exist. Directory', desc: 'Directory of existing accounts & records' },
   { id: 'submit-exist', name: 'Submit Exist.', desc: 'Submitted existing account records, files & verification' },
+  { id: 'portal-attachment', name: 'Portal Attachment', desc: 'Grid gallery of submitted portal records & multi-file attachments' },
   { id: 'member-verification', name: 'Member verification', desc: 'Search and verify clinical or community membership accounts' },
   { id: 'verification-entry', name: 'Verification Entry', desc: 'Sleek interface to search patients and submit a verification entry record' },
-  { id: 'accounts', name: 'Account Management', desc: 'User accounts & roles' },
+  { id: 'accounts', name: 'Patients', desc: 'User accounts & patient records' },
   { id: 'bulk', name: 'Bulk Entry', desc: 'CSV & batch patient imports' },
   { id: 'print', name: 'Print List', desc: 'Formatted printable directory' },
   { id: 'admins', name: 'Admin Credentials', desc: 'Administrator username and credentials management' },
@@ -215,7 +217,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [navMap, setNavMap] = useState(siteSettings.navMap || 'Clinic Map');
   const [navDirectory, setNavDirectory] = useState(siteSettings.navDirectory || 'Clinic Directory');
   const [navSubmitPcu, setNavSubmitPcu] = useState(siteSettings.navSubmitPcu || 'Submit PCU');
-  const [navAccounts, setNavAccounts] = useState(siteSettings.navAccounts || 'Account Management');
+  const [navAccounts, setNavAccounts] = useState(siteSettings.navAccounts || 'Patients');
   const [navBulk, setNavBulk] = useState(siteSettings.navBulk || 'Bulk Entry');
   const [navPrint, setNavPrint] = useState(siteSettings.navPrint || 'Print List');
   const [navAdmins, setNavAdmins] = useState(siteSettings.navAdmins || 'Admin Credentials');
@@ -223,6 +225,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [navVerificationEntry, setNavVerificationEntry] = useState(siteSettings.navVerificationEntry || 'Verification Entry');
   const [navExistDirectory, setNavExistDirectory] = useState(siteSettings.navExistDirectory || 'Exist. Directory');
   const [navSubmitExist, setNavSubmitExist] = useState(siteSettings.navSubmitExist || 'Submit Exist.');
+  const [navPortalAttachment, setNavPortalAttachment] = useState(siteSettings.navPortalAttachment || 'Portal Attachment');
 
   // Roles & Permissions States
   const [rolePermissions, setRolePermissions] = useState<Record<string, string[]>>(() => {
@@ -239,14 +242,14 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       return siteSettings.rolePermissions;
     }
     return {
-      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-      'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-      'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-      'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-      'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
-      'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
-      'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry'],
-      'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry']
+      'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+      'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+      'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+      'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+      'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'bulk', 'print'],
+      'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'bulk', 'print'],
+      'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry'],
+      'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry']
     };
   });
   const [rolesList, setRolesList] = useState<string[]>(() => {
@@ -628,7 +631,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setNavMap(siteSettings.navMap || 'Clinic Map');
     setNavDirectory(siteSettings.navDirectory || 'Clinic Directory');
     setNavSubmitPcu(siteSettings.navSubmitPcu || 'Submit PCU');
-    setNavAccounts(siteSettings.navAccounts || 'Account Management');
+    setNavAccounts(siteSettings.navAccounts || 'Patients');
     setNavBulk(siteSettings.navBulk || 'Bulk Entry');
     setNavPrint(siteSettings.navPrint || 'Print List');
     setNavAdmins(siteSettings.navAdmins || 'Admin Credentials');
@@ -636,6 +639,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     setNavVerificationEntry(siteSettings.navVerificationEntry || 'Verification Entry');
     setNavExistDirectory(siteSettings.navExistDirectory || 'Exist. Directory');
     setNavSubmitExist(siteSettings.navSubmitExist || 'Submit Exist.');
+    setNavPortalAttachment(siteSettings.navPortalAttachment || 'Portal Attachment');
     if (!hasUnsavedRoleChangesRef.current && siteSettings.rolePermissions && Object.keys(siteSettings.rolePermissions).length > 0) {
       setRolePermissions(siteSettings.rolePermissions);
       setRolesList(getOrderedRolesList(siteSettings.rolePermissions));
@@ -792,7 +796,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           navMap: navMap.trim() || 'Clinic Map',
           navDirectory: navDirectory.trim() || 'Clinic Directory',
           navSubmitPcu: navSubmitPcu.trim() || 'Submit PCU',
-          navAccounts: navAccounts.trim() || 'Account Management',
+          navAccounts: navAccounts.trim() || 'Patients',
           navBulk: navBulk.trim() || 'Bulk Entry',
           navPrint: navPrint.trim() || 'Print List',
           navAdmins: navAdmins.trim() || 'Admin Credentials',
@@ -800,6 +804,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           navVerificationEntry: navVerificationEntry.trim() || 'Verification Entry',
           navExistDirectory: navExistDirectory.trim() || 'Exist. Directory',
           navSubmitExist: navSubmitExist.trim() || 'Submit Exist.',
+          navPortalAttachment: navPortalAttachment.trim() || 'Portal Attachment',
           rolePermissions
         })
       });
@@ -828,7 +833,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setNavDashboard('Dashboard');
       setNavMap('Clinic Map');
       setNavDirectory('Clinic Directory');
-      setNavAccounts('Account Management');
+      setNavAccounts('Patients');
       setNavBulk('Bulk Entry');
       setNavPrint('Print List');
       setNavAdmins('Admin Credentials');
@@ -836,6 +841,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setNavVerificationEntry('Verification Entry');
       setNavExistDirectory('Exist. Directory');
       setNavSubmitExist('Submit Exist.');
+      setNavPortalAttachment('Portal Attachment');
       showToast('Form reset to default presets. Make sure to click Save to persist!', 'info');
     }
   };
@@ -1277,13 +1283,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
               <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
                 <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Account Management Link Title
+                  Patients Link Title
                 </label>
                 <input
                   type="text"
                   value={navAccounts}
                   onChange={(e) => setNavAccounts(e.target.value)}
-                  placeholder="e.g. Account Management"
+                  placeholder="e.g. Patients"
                   className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
                 />
               </div>
@@ -1362,6 +1368,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                   value={navSubmitExist}
                   onChange={(e) => setNavSubmitExist(e.target.value)}
                   placeholder="e.g. Submit Exist."
+                  className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
+                />
+              </div>
+
+              <div className="bg-slate-50/80 p-4 rounded-xl border border-slate-200/80 space-y-1.5">
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Portal Attachment Link Title
+                </label>
+                <input
+                  type="text"
+                  value={navPortalAttachment}
+                  onChange={(e) => setNavPortalAttachment(e.target.value)}
+                  placeholder="e.g. Portal Attachment"
                   className="w-full px-3.5 py-2.5 bg-white border border-slate-200 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 rounded-xl transition-all text-xs outline-none text-slate-800 font-semibold"
                 />
               </div>

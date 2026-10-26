@@ -424,6 +424,28 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       INDEX idx_maint_pdf_file (pdf_file_name(191)),
       INDEX idx_maint_barangay (barangay),
       INDEX idx_maint_consulted (is_consulted)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+
+    // 18. Portal Attachments Table (Portal Attachment Page - Multi-file Uploads)
+    `CREATE TABLE IF NOT EXISTS portal_attachments (
+      id VARCHAR(100) NOT NULL PRIMARY KEY,
+      full_name VARCHAR(255) NOT NULL,
+      barangay VARCHAR(255) NOT NULL DEFAULT '',
+      purok VARCHAR(255) DEFAULT '',
+      attachments LONGTEXT NULL,
+      uploaded_by VARCHAR(255) DEFAULT 'Staff',
+      uploaded_at VARCHAR(100) DEFAULT '',
+      status VARCHAR(50) DEFAULT 'VERIFICATION',
+      return_reason TEXT NULL,
+      returned_at VARCHAR(100) NULL,
+      returned_by VARCHAR(255) NULL,
+      notes TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_pa_barangay (barangay),
+      INDEX idx_pa_full_name (full_name),
+      INDEX idx_pa_status (status),
+      INDEX idx_pa_uploaded_at (uploaded_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
   ];
 
@@ -1222,6 +1244,27 @@ SET @sql = (SELECT IF(
 PREPARE stmt FROM @sql; EXECUTE stmt; DEALLOCATE PREPARE stmt;
 
 -- -------------------------------------------------------------------------
+-- 18. Table: portal_attachments (Portal Attachment Page - Multi-file Uploads)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS \`portal_attachments\` (
+  \`id\` VARCHAR(100) NOT NULL PRIMARY KEY,
+  \`full_name\` VARCHAR(255) NOT NULL,
+  \`barangay\` VARCHAR(255) NOT NULL DEFAULT '',
+  \`purok\` VARCHAR(255) DEFAULT '',
+  \`attachments\` LONGTEXT NULL,
+  \`uploaded_by\` VARCHAR(255) DEFAULT 'Staff',
+  \`uploaded_at\` VARCHAR(100) DEFAULT '',
+  \`status\` VARCHAR(50) DEFAULT 'SUBMITTED',
+  \`notes\` TEXT NULL,
+  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX \`idx_pa_barangay\` (\`barangay\`),
+  INDEX \`idx_pa_full_name\` (\`full_name\`),
+  INDEX \`idx_pa_status\` (\`status\`),
+  INDEX \`idx_pa_uploaded_at\` (\`uploaded_at\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
 -- FIX FOR cPanel phpMyAdmin WARNING:
 -- "Current selection does not contain a unique column. Grid edit, checkbox, Edit, Copy and Delete features are not available."
 -- Run these lines if pcu_submissions already exists without a PRIMARY KEY:
@@ -1523,6 +1566,7 @@ export function mapFlexibleRowToContact(r: any, defaultIndex: number = 1): any {
 
   // 5. Contact Number
   const contactNumber = (getVal('contactnumber', 'contactno', 'phonenumber', 'phone', 'mobile', 'mobilenumber', 'cellphone', 'contact', 'tel', 'cellno') || '').toString().trim();
+  const alternateContactNumber = (getVal('alternatecontactnumber', 'alternatecontactno', 'alternatecontact', 'altcontactnumber', 'altcontactno', 'altcontact', 'alternatephone', 'altphone') || '').toString().trim();
 
   // 6. Coordinates
   const rawLat = getVal('latitude', 'lat');
@@ -1577,6 +1621,7 @@ export function mapFlexibleRowToContact(r: any, defaultIndex: number = 1): any {
     barangay,
     purok,
     contact_number: contactNumber,
+    alternate_contact_number: alternateContactNumber || undefined,
     created_at: createdAt,
     updated_at: updatedAt,
     latitude,
@@ -1930,6 +1975,7 @@ export async function fetchAllFromCPanelDb(): Promise<{
         barangay: r.barangay || '',
         purok: r.purok || '',
         contact_number: r.contact_number || r.phone || '',
+        alternate_contact_number: r.alternate_contact_number || '',
         pin: r.pin || '',
         latitude: r.latitude !== null && r.latitude !== undefined ? Number(r.latitude) : undefined,
         longitude: r.longitude !== null && r.longitude !== undefined ? Number(r.longitude) : undefined,
@@ -2258,7 +2304,8 @@ export async function saveContactsBulkToCPanel(
         { name: 'pcu_uploaded_at', type: "VARCHAR(100) DEFAULT ''" },
         { name: 'deleted_at', type: 'VARCHAR(100) NULL' },
         { name: 'maintenance', type: "VARCHAR(50) DEFAULT 'None'" },
-        { name: 'maintenance_medicine', type: 'TEXT NULL' }
+        { name: 'maintenance_medicine', type: 'TEXT NULL' },
+        { name: 'alternate_contact_number', type: "VARCHAR(100) DEFAULT ''" }
       ];
 
       for (const def of definitions) {
@@ -2281,12 +2328,13 @@ export async function saveContactsBulkToCPanel(
       const placeholders: string[] = [];
 
       for (const c of chunk) {
-        placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         const idVal = c.id !== undefined && c.id !== null && !isNaN(Number(c.id)) ? Number(c.id) : null;
         const isSub = Boolean(c.isSubmitted || c.is_submitted);
         const maintenanceVal = c.maintenance === 'Yes' ? 'Yes' : 'None';
         const medicineVal = maintenanceVal === 'Yes' ? (c.maintenance_medicine || '') : null;
         const addedFromPrintListVal = c.added_from_print_list !== false && c.added_from_print_list !== 0 ? 1 : 0;
+        const altContactVal = c.alternate_contact_number || c.alternateContactNumber || '';
 
         values.push(
           idVal,
@@ -2294,6 +2342,7 @@ export async function saveContactsBulkToCPanel(
           c.barangay || '',
           c.purok || '',
           c.contact_number || '',
+          altContactVal,
           c.created_at || new Date().toISOString(),
           c.updated_at || new Date().toISOString(),
           c.latitude !== undefined && c.latitude !== null ? Number(c.latitude) : null,
@@ -2314,7 +2363,7 @@ export async function saveContactsBulkToCPanel(
 
       const sql = `
         INSERT INTO contacts (
-          id, full_name, barangay, purok, contact_number, 
+          id, full_name, barangay, purok, contact_number, alternate_contact_number,
           created_at, updated_at, latitude, longitude, 
           geotagged, status, is_submitted, photo_url, 
           pcu_file_url, pcu_uploaded_by, pcu_uploaded_at, deleted_at,
@@ -2325,6 +2374,7 @@ export async function saveContactsBulkToCPanel(
           barangay = VALUES(barangay),
           purok = VALUES(purok),
           contact_number = VALUES(contact_number),
+          alternate_contact_number = VALUES(alternate_contact_number),
           updated_at = VALUES(updated_at),
           latitude = VALUES(latitude),
           longitude = VALUES(longitude),
@@ -2909,12 +2959,13 @@ export async function saveExistingAccountsBulkToCPanel(
     const placeholders: string[] = [];
 
     for (const acc of chunk) {
-      placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+      placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
       const filesJson = acc.uploadedFiles ? JSON.stringify(acc.uploadedFiles) : (acc.uploaded_files || '[]');
       const isGeotagged = acc.geotagged ? 1 : 0;
       const isSubmitted = acc.isSubmitted ? 1 : 0;
       const isVerified = acc.existingAccVerified !== false ? 1 : 0;
       const isVisited = acc.existingAccVisited !== false ? 1 : 0;
+      const altContactVal = acc.alternate_contact_number || acc.alternateContactNumber || acc.alternate_contact || '';
 
       values.push(
         String(acc.id),
@@ -2922,6 +2973,7 @@ export async function saveExistingAccountsBulkToCPanel(
         acc.barangay || '',
         acc.purok || '',
         acc.contact_number || acc.contact || '',
+        altContactVal,
         acc.pin || '',
         acc.latitude !== undefined && acc.latitude !== null && !isNaN(Number(acc.latitude)) ? Number(acc.latitude) : null,
         acc.longitude !== undefined && acc.longitude !== null && !isNaN(Number(acc.longitude)) ? Number(acc.longitude) : null,
@@ -2943,7 +2995,7 @@ export async function saveExistingAccountsBulkToCPanel(
 
     try {
       const sql = `INSERT INTO existing_accounts (
-        id, full_name, barangay, purok, contact_number, pin, latitude, longitude, geotagged,
+        id, full_name, barangay, purok, contact_number, alternate_contact_number, pin, latitude, longitude, geotagged,
         facebook_link, uploaded_files, is_submitted, submitted_at, existing_acc_verified,
         existing_acc_visited, created_at, status, submitted_by, folder, remarks, deleted_at
       ) VALUES ${placeholders.join(', ')}
@@ -2952,6 +3004,7 @@ export async function saveExistingAccountsBulkToCPanel(
         barangay = VALUES(barangay),
         purok = VALUES(purok),
         contact_number = VALUES(contact_number),
+        alternate_contact_number = VALUES(alternate_contact_number),
         pin = VALUES(pin),
         latitude = VALUES(latitude),
         longitude = VALUES(longitude),
@@ -4411,4 +4464,101 @@ export async function clearAllMaintenanceRecordsInCPanel(pdfFileName?: string): 
     return false;
   }
 }
+
+/**
+ * Saves or updates a Portal Attachment record in cPanel MySQL.
+ */
+export async function savePortalAttachmentToCPanel(item: any): Promise<boolean> {
+  if (!pool || !currentStatus.connected || !item) return false;
+  try {
+    const id = String(item.id || crypto.randomUUID());
+    const fullName = String(item.full_name || item.fullName || '').slice(0, 255);
+    const barangay = String(item.barangay || '').slice(0, 255);
+    const purok = String(item.purok || '').slice(0, 255);
+    const attachmentsJson = JSON.stringify(Array.isArray(item.attachments) ? item.attachments : []);
+    const uploadedBy = String(item.uploaded_by || item.uploadedBy || 'Staff').slice(0, 255);
+    const uploadedAt = String(item.uploaded_at || item.uploadedAt || new Date().toISOString()).slice(0, 100);
+    const status = String(item.status || 'SUBMITTED').slice(0, 50);
+    const notes = item.notes ? String(item.notes) : null;
+
+    await pool.query(
+      `INSERT INTO portal_attachments (
+        id, full_name, barangay, purok, attachments, uploaded_by, uploaded_at, status, return_reason, returned_at, returned_by, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        full_name = VALUES(full_name),
+        barangay = VALUES(barangay),
+        purok = VALUES(purok),
+        attachments = VALUES(attachments),
+        uploaded_by = VALUES(uploaded_by),
+        uploaded_at = VALUES(uploaded_at),
+        status = VALUES(status),
+        return_reason = VALUES(return_reason),
+        returned_at = VALUES(returned_at),
+        returned_by = VALUES(returned_by),
+        notes = VALUES(notes),
+        updated_at = CURRENT_TIMESTAMP`,
+      [id, fullName, barangay, purok, attachmentsJson, uploadedBy, uploadedAt, status, item.return_reason || '', item.returned_at || '', item.returned_by || '', notes]
+    );
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error saving Portal Attachment record to MySQL:', err.message || err);
+    return false;
+  }
+}
+
+/**
+ * Fetches all Portal Attachment records from cPanel MySQL.
+ */
+export async function fetchPortalAttachmentsFromCPanel(): Promise<any[]> {
+  if (!pool || !currentStatus.connected) return [];
+  try {
+    const [rows]: any = await pool.query(
+      `SELECT * FROM portal_attachments ORDER BY created_at DESC, id DESC`
+    );
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r: any) => {
+      let attachments: any[] = [];
+      try {
+        attachments = typeof r.attachments === 'string' ? JSON.parse(r.attachments) : (Array.isArray(r.attachments) ? r.attachments : []);
+      } catch {
+        attachments = [];
+      }
+      return {
+        id: String(r.id),
+        full_name: r.full_name || '',
+        barangay: r.barangay || '',
+        purok: r.purok || '',
+        attachments,
+        uploaded_by: r.uploaded_by || 'Staff',
+        uploaded_at: r.uploaded_at || (r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()),
+        status: r.status || 'VERIFICATION',
+        return_reason: r.return_reason || '',
+        returned_at: r.returned_at || '',
+        returned_by: r.returned_by || '',
+        notes: r.notes || '',
+        created_at: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+        updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : new Date().toISOString()
+      };
+    });
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error fetching Portal Attachment records from MySQL:', err.message || err);
+    return [];
+  }
+}
+
+/**
+ * Deletes a Portal Attachment record from cPanel MySQL.
+ */
+export async function deletePortalAttachmentFromCPanel(id: string): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    await pool.query('DELETE FROM portal_attachments WHERE id = ?', [String(id)]);
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error deleting Portal Attachment record from MySQL:', err.message || err);
+    return false;
+  }
+}
+
 

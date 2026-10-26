@@ -771,9 +771,6 @@ export const ContactTable: React.FC<ContactTableProps> = ({
     }
     try {
       let currentBarangay = activeFolder ? activeFolder : (addressFilter === 'All Barangays' ? 'All Addresses' : addressFilter);
-      if (isLeaderOrCoLeader && userBarangay) {
-        currentBarangay = userBarangay;
-      }
       let currentPurok = activePurokFolder ? activePurokFolder : (purokFilter === 'All Puroks' ? 'All Puroks' : purokFilter);
       if (activePurokFolder) {
         currentBarangay = associatedBarangayForPuroks || 'All Addresses';
@@ -823,24 +820,11 @@ export const ContactTable: React.FC<ContactTableProps> = ({
         setPurokFolders(data.purokFolders);
       }
 
-      if (isLeaderOrCoLeader && userBarangay) {
-        setAllAddresses([userBarangay]);
-        if (Array.isArray(data.barangayFolders)) {
-          const filtered = data.barangayFolders.filter(
-            (f: BarangayFolderInfo) => f.barangay.trim().toLowerCase() === userBarangay.trim().toLowerCase()
-          );
-          setBarangayFolders(filtered);
-          if (!activeSearch) {
-            setOverallBarangayFolders(filtered);
-          }
-        }
-      } else {
-        setAllAddresses(data.allAddresses || []);
-        if (Array.isArray(data.barangayFolders)) {
-          setBarangayFolders(data.barangayFolders);
-          if (!activeSearch) {
-            setOverallBarangayFolders(data.barangayFolders);
-          }
+      setAllAddresses(data.allAddresses || []);
+      if (Array.isArray(data.barangayFolders)) {
+        setBarangayFolders(data.barangayFolders);
+        if (!activeSearch) {
+          setOverallBarangayFolders(data.barangayFolders);
         }
       }
     } catch (err: any) {
@@ -1188,7 +1172,8 @@ export const ContactTable: React.FC<ContactTableProps> = ({
         'Full Name': item.full_name,
         'Barangay': item.barangay || '',
         'Purok': item.purok || '',
-        'Contact Number': item.contact_number,
+        'Primary Contact #': item.contact_number || '',
+        'Alternate Contact #': item.alternate_contact_number || '',
         'Date Recorded': formatDate(item.created_at)
       }));
 
@@ -1256,13 +1241,14 @@ export const ContactTable: React.FC<ContactTableProps> = ({
         item.full_name,
         item.barangay || '',
         item.purok || '',
-        item.contact_number,
+        item.contact_number || '',
+        item.alternate_contact_number || '',
         formatDate(item.created_at)
       ]);
 
       autoTable(doc, {
         startY: 30,
-        head: [['#', 'Full Name', 'Barangay', 'Purok', 'Contact Number', 'Date Added']],
+        head: [['#', 'Full Name', 'Barangay', 'Purok', 'Primary Contact #', 'Alternate Contact #', 'Date Added']],
         body: tableData,
         theme: 'striped',
         headStyles: {
@@ -1292,10 +1278,6 @@ export const ContactTable: React.FC<ContactTableProps> = ({
 
   // Open a Barangay Folder
   const openFolder = (barangayName: string) => {
-    if (isLeaderOrCoLeader && userBarangay && barangayName.trim().toLowerCase() !== userBarangay.trim().toLowerCase()) {
-      showToast(`Access restricted: Your account is assigned to Barangay ${userBarangay}`, 'warning');
-      return;
-    }
     setLastOpenedBarangay(barangayName);
     setFolderGrouping('purok');
     setAssociatedBarangayForPuroks(barangayName);
@@ -1306,20 +1288,9 @@ export const ContactTable: React.FC<ContactTableProps> = ({
 
   // Filter and sort Barangay Folders grid by contact population (highest first)
   const rawFiltered = [...barangayFolders]
-    .sort((a, b) => b.count - a.count || a.barangay.localeCompare(b.barangay))
-    .filter(f => {
-      if (isLeaderOrCoLeader && userBarangay) {
-        if (f.barangay.trim().toLowerCase() !== userBarangay.trim().toLowerCase()) {
-          return false;
-        }
-      }
-      // Server-side has already filtered the folders list based on the search term (including contact names).
-      return true;
-    });
+    .sort((a, b) => b.count - a.count || a.barangay.localeCompare(b.barangay));
 
-  const filteredFolders = (isLeaderOrCoLeader && userBarangay && rawFiltered.length === 0)
-    ? [{ barangay: userBarangay, count: total, purokCount: allPuroks.length, geotaggedCount: contacts.filter(c => c.geotagged).length }]
-    : rawFiltered;
+  const filteredFolders = rawFiltered;
 
   const maxHouseholds = Math.max(...barangayFolders.map(f => f.count), 1);
   const maxPuroks = Math.max(...barangayFolders.map(f => f.purokCount), 1);
@@ -1334,7 +1305,7 @@ export const ContactTable: React.FC<ContactTableProps> = ({
               onClick={() => {
                 if (activeFolder) {
                   setActiveFolder(null);
-                  setAddressFilter(isLeaderOrCoLeader && userBarangay ? userBarangay : 'All Barangays');
+                  setAddressFilter('All Barangays');
                 } else {
                   handleSetActivePurokFolder(null);
                 }
@@ -1370,11 +1341,9 @@ export const ContactTable: React.FC<ContactTableProps> = ({
                 ? `Showing member records stored inside ${activeFolder}`
                 : activePurokFolder
                   ? `Showing member records stored inside Purok ${formatPurokName(activePurokFolder)}`
-                  : isLeaderOrCoLeader && userBarangay && folderGrouping === 'barangay'
-                    ? `Assigned Barangay Folder for ${currentUser?.role || 'Leader'}: ${userBarangay}`
-                    : folderGrouping === 'barangay'
-                      ? `Organized into ${barangayFolders.length} Barangay Folders (Highest Population First)`
-                      : `Organized into ${purokFolders.length} Purok Folders (Highest Population First)`}
+                  : folderGrouping === 'barangay'
+                    ? `Organized into ${barangayFolders.length} Barangay Folders (Highest Population First)`
+                    : `Organized into ${purokFolders.length} Purok Folders (Highest Population First)`}
             </p>
           </div>
         </div>

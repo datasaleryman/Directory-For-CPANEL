@@ -37,10 +37,26 @@ import {
   Database,
   FileSpreadsheet,
   Edit2,
-  ArrowRight
+  ArrowRight,
+  ArrowUpDown
 } from 'lucide-react';
 import { ExistingAccountItem } from '../types.js';
 import { BarangaySummaryAnalytics } from './BarangaySummaryAnalytics.js';
+
+export function cleanBarangayName(raw?: string): string {
+  if (!raw) return 'UNASSIGNED';
+  let str = raw.trim().toUpperCase();
+  str = str.replace(/^(BARANGAY|BRGY\.?)\s+/i, '').trim();
+  str = str.replace(/^(BARANGAY|BRGY)/i, '').trim();
+  str = str.replace(/\bSTA\b\.?/g, 'STA.').replace(/\s+/g, ' ');
+  const compact = str.replace(/[\.\s]/g, '');
+  if (compact === 'STALUCIA' || compact === 'SANTALUCIA') return 'STA. LUCIA';
+  if (compact === 'STONINO' || compact === 'STONIÑO' || compact === 'SANTONINO' || compact === 'SANTONIÑO') return 'STO. NIÑO';
+  if (compact === 'WHITEBEACH') return 'WHITE BEACH';
+  if (compact === 'TAWAGANSUR') return 'TAWAGAN SUR';
+  if (compact === 'TAWAGANNORTE') return 'TAWAGAN NORTE';
+  return str;
+}
 
 interface ExistDirectoryProps {
   authToken: string | null;
@@ -89,9 +105,10 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
   const [accountToDelete, setAccountToDelete] = useState<ExistingAccountItem | null>(null);
   const [folderToDelete, setFolderToDelete] = useState<string | null>(null);
 
-  // Filters & Pagination
+  // Filters & Pagination & Sorting
   const [selectedBarangay, setSelectedBarangay] = useState<string>('all');
   const [selectedPurokFilter, setSelectedPurokFilter] = useState<string>('all');
+  const [sortOrder, setSortOrder] = useState<'highest' | 'lowest' | 'az'>('highest');
   const [folderPage, setFolderPage] = useState(1);
   const itemsPerPage = 20;
 
@@ -105,7 +122,6 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
   const [editLatitude, setEditLatitude] = useState('');
   const [editLongitude, setEditLongitude] = useState('');
   const [editGeotagged, setEditGeotagged] = useState(false);
-  const [facebookLink, setFacebookLink] = useState('');
   const [isGpsCapturing, setIsGpsCapturing] = useState(false);
   const [showManualCoords, setShowManualCoords] = useState(false);
   const [isSavingRecord, setIsSavingRecord] = useState(false);
@@ -153,21 +169,38 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
       .catch(() => {});
   }, [authToken]);
 
-  // Unique Barangays
+  // Unique Barangays - Sorted by population (highest to lowest by default), then alphabetical
   const uniqueBarangays = useMemo(() => {
+    const popMap = new Map<string, number>();
+    existingAccounts.forEach(acc => {
+      const b = cleanBarangayName(acc.barangay);
+      popMap.set(b, (popMap.get(b) || 0) + 1);
+    });
     const set = new Set<string>();
     existingAccounts.forEach(acc => {
-      if (acc.barangay) set.add(acc.barangay.trim().toUpperCase());
+      if (acc.barangay) set.add(cleanBarangayName(acc.barangay));
     });
-    barangayList.forEach(b => set.add(b.trim().toUpperCase()));
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [existingAccounts, barangayList]);
+    barangayList.forEach(b => set.add(cleanBarangayName(b)));
+    return Array.from(set).sort((a, b) => {
+      if (sortOrder === 'lowest') {
+        const diff = (popMap.get(a) || 0) - (popMap.get(b) || 0);
+        if (diff !== 0) return diff;
+        return a.localeCompare(b);
+      }
+      if (sortOrder === 'az') {
+        return a.localeCompare(b);
+      }
+      const diff = (popMap.get(b) || 0) - (popMap.get(a) || 0);
+      if (diff !== 0) return diff;
+      return a.localeCompare(b);
+    });
+  }, [existingAccounts, barangayList, sortOrder]);
 
-  // Barangay Folders
+  // Barangay Folders - Sorted strictly from highest data population to lowest
   const barangayFolders = useMemo(() => {
     const map = new Map<string, { barangay: string; count: number; puroks: Set<string>; verifiedCount: number; list: ExistingAccountItem[] }>();
     existingAccounts.forEach(acc => {
-      const b = (acc.barangay || 'UNASSIGNED').trim().toUpperCase();
+      const b = cleanBarangayName(acc.barangay);
       if (!map.has(b)) {
         map.set(b, { barangay: b, count: 0, puroks: new Set(), verifiedCount: 0, list: [] });
       }
@@ -186,50 +219,86 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
         verifiedCount: item.verifiedCount,
         list: item.list
       }))
-      .sort((a, b) => b.count - a.count || a.barangay.localeCompare(b.barangay));
-  }, [existingAccounts]);
+      .sort((a, b) => {
+        if (sortOrder === 'lowest') {
+          return a.count - b.count || a.purokCount - b.purokCount || a.barangay.localeCompare(b.barangay);
+        }
+        if (sortOrder === 'az') {
+          return a.barangay.localeCompare(b.barangay);
+        }
+        // default 'highest': Highest data population first
+        return b.count - a.count || b.purokCount - a.purokCount || a.barangay.localeCompare(b.barangay);
+      });
+  }, [existingAccounts, sortOrder]);
 
-  // Purok Folders for Active Barangay Folder
+  // Purok Folders for Active Barangay Folder - Sorted strictly from highest to lowest data population
   const purokFolders = useMemo(() => {
     if (!activeFolder) return [];
     const accountsInBarangay = existingAccounts.filter(
-      acc => (acc.barangay || '').trim().toUpperCase() === activeFolder.trim().toUpperCase()
+      acc => cleanBarangayName(acc.barangay) === cleanBarangayName(activeFolder)
     );
 
-    const map = new Map<string, number>();
+    const map = new Map<string, { count: number; rawPurok: string }>();
     accountsInBarangay.forEach(acc => {
       const p = (acc.purok || 'No Purok').trim();
-      map.set(p, (map.get(p) || 0) + 1);
+      const pKey = p.toUpperCase();
+      if (!map.has(pKey)) {
+        map.set(pKey, { count: 0, rawPurok: p });
+      }
+      map.get(pKey)!.count++;
     });
 
-    return Array.from(map.entries())
-      .map(([purok, count]) => ({ purok, count }))
-      .sort((a, b) => a.purok.localeCompare(b.purok, undefined, { numeric: true, sensitivity: 'base' }));
-  }, [existingAccounts, activeFolder]);
+    return Array.from(map.values())
+      .map(item => ({ purok: item.rawPurok, count: item.count }))
+      .sort((a, b) => {
+        if (sortOrder === 'lowest') {
+          return a.count - b.count || a.purok.localeCompare(b.purok, undefined, { numeric: true, sensitivity: 'base' });
+        }
+        if (sortOrder === 'az') {
+          return a.purok.localeCompare(b.purok, undefined, { numeric: true, sensitivity: 'base' });
+        }
+        // default 'highest': Highest data population first
+        return b.count - a.count || a.purok.localeCompare(b.purok, undefined, { numeric: true, sensitivity: 'base' });
+      });
+  }, [existingAccounts, activeFolder, sortOrder]);
 
-  // Accounts inside active Barangay folder - Sorted based on the Purok, then by Full Name
+  // Accounts inside active Barangay folder - Sorted based on Purok folder population (highest to lowest), then Full Name
   const accountsInActiveFolder = useMemo(() => {
     if (!activeFolder) return [];
     const list = existingAccounts.filter(
-      acc => (acc.barangay || '').trim().toUpperCase() === activeFolder.trim().toUpperCase()
+      acc => cleanBarangayName(acc.barangay) === cleanBarangayName(activeFolder)
     );
+
+    const purokCountMap = new Map<string, number>();
+    list.forEach(acc => {
+      const p = (acc.purok || 'No Purok').trim().toUpperCase();
+      purokCountMap.set(p, (purokCountMap.get(p) || 0) + 1);
+    });
+
     return list.slice().sort((a, b) => {
-      const pA = (a.purok || 'No Purok').trim();
-      const pB = (b.purok || 'No Purok').trim();
+      const pA = (a.purok || 'No Purok').trim().toUpperCase();
+      const pB = (b.purok || 'No Purok').trim().toUpperCase();
+      if (sortOrder === 'lowest') {
+        const countDiff = (purokCountMap.get(pA) || 0) - (purokCountMap.get(pB) || 0);
+        if (countDiff !== 0) return countDiff;
+      } else {
+        const countDiff = (purokCountMap.get(pB) || 0) - (purokCountMap.get(pA) || 0);
+        if (countDiff !== 0) return countDiff;
+      }
       const pCmp = pA.localeCompare(pB, undefined, { numeric: true, sensitivity: 'base' });
       if (pCmp !== 0) return pCmp;
       return (a.full_name || '').localeCompare(b.full_name || '');
     });
-  }, [existingAccounts, activeFolder]);
+  }, [existingAccounts, activeFolder, sortOrder]);
 
   // Filtered accounts inside folder (by search & purok) - preserves sorting based on Purok
   const filteredAccountsInFolder = useMemo(() => {
     let result = accountsInActiveFolder;
-    if (activePurokFolder) {
+    if (activePurokFolder && activePurokFolder !== 'all' && activePurokFolder !== 'All Puroks' && activePurokFolder !== 'ALL') {
       result = result.filter(
         acc => (acc.purok || 'No Purok').trim().toUpperCase() === activePurokFolder.trim().toUpperCase()
       );
-    } else if (selectedPurokFilter !== 'all') {
+    } else if (selectedPurokFilter !== 'all' && selectedPurokFilter !== 'All Puroks' && selectedPurokFilter !== 'ALL') {
       result = result.filter(
         acc => (acc.purok || 'No Purok').trim().toUpperCase() === selectedPurokFilter.trim().toUpperCase()
       );
@@ -239,6 +308,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
       result = result.filter(
         acc =>
           (acc.full_name || '').toLowerCase().includes(q) ||
+          (acc.barangay || '').toLowerCase().includes(q) ||
           (acc.purok || '').toLowerCase().includes(q) ||
           (acc.contact_number || '').includes(q) ||
           (acc.alternate_contact_number || '').includes(q) ||
@@ -347,7 +417,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to register bulk accounts.');
 
-      showToast(`Successfully registered ${data.count || parsedRecords.length} accounts to Exist. Directory!`, 'success');
+      showToast(`Successfully registered ${data.count || parsedRecords.length} patient(s) to Exist. Directory!`, 'success');
       setBulkText('');
       setShowAddModal(false);
       await fetchExistingAccounts();
@@ -455,7 +525,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Failed to create record.');
         setExistingAccounts(prev => [data, ...prev]);
-        showToast(`Account "${data.full_name}" registered to Exist. Directory!`, 'success');
+        showToast(`Patient "${data.full_name}" registered to Exist. Directory!`, 'success');
       }
 
       setShowSingleAddModal(false);
@@ -584,7 +654,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to delete record.');
       setExistingAccounts(prev => prev.filter(a => a.id !== id));
-      showToast('Account record permanently deleted.', 'success');
+      showToast('Patient record permanently deleted.', 'success');
       setAccountToDelete(null);
     } catch (err: any) {
       showToast(err.message, 'error');
@@ -600,7 +670,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to delete folder.');
-      setExistingAccounts(prev => prev.filter(a => (a.barangay || '').trim().toUpperCase() !== barangay.trim().toUpperCase()));
+      setExistingAccounts(prev => prev.filter(a => cleanBarangayName(a.barangay) !== cleanBarangayName(barangay)));
       showToast(`Barangay folder "${barangay}" has been deleted.`, 'success');
       setFolderToDelete(null);
       if (activeFolder === barangay) setActiveFolder(null);
@@ -665,34 +735,34 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
             </h2>
             <p className="text-xs text-slate-400 font-medium">
               {activePurokFolder
-                ? `Showing existing account records in ${activeFolder} > ${activePurokFolder} (${filteredAccountsInFolder.length} Accounts)`
+                ? `Showing existing patient records in ${activeFolder} > ${activePurokFolder} (${filteredAccountsInFolder.length} Patients)`
                 : activeFolder
-                ? `Showing existing account records in ${activeFolder} (${purokFolders.length} Purok Folders, sorted by Purok)`
-                : `Organized into ${barangayFolders.length} Barangay Folders (${existingAccounts.length} Total Accounts)`}
+                ? `Showing ${purokFolders.length} Purok Folders in ${activeFolder} (Highest to Lowest, ${accountsInActiveFolder.length} Total Patients)`
+                : `Organized into ${barangayFolders.length} Barangay Folders (Highest to Lowest Population, ${existingAccounts.length} Total Patients)`}
             </p>
           </div>
         </div>
 
         {/* Global Toolbar Controls */}
         <div className="flex flex-wrap items-center gap-2.5 self-end sm:self-auto">
-          {/* Add Single Account Button */}
+          {/* Add Single Patient Button */}
           <button
             onClick={handleOpenSingleNew}
             className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
-            title="Register new single account"
+            title="Register new single patient"
           >
             <Plus className="w-4 h-4 text-emerald-200" />
-            <span>+ Add Exist. Acc.</span>
+            <span>+ Add Patient</span>
           </button>
 
           {/* Bulk Register Button */}
           <button
             onClick={() => setShowAddModal(true)}
             className="px-3.5 py-2 bg-gradient-to-r from-teal-700 to-emerald-800 hover:from-teal-600 hover:to-emerald-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5 border border-emerald-500/30"
-            title="Bulk register existing accounts"
+            title="Bulk register existing patients"
           >
             <FileSpreadsheet className="w-4 h-4 text-emerald-300" />
-            <span>Bulk Exist. Acc.</span>
+            <span>Bulk Patients</span>
           </button>
 
           {/* Sync / Refresh Button */}
@@ -717,12 +787,14 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
             totalBarangaysInSystem={barangayList.length || 296}
             onSelectBarangay={bName => {
               setActiveFolder(bName);
+              setSelectedBarangay(bName);
               setActivePurokFolder(null);
               setSearchQuery('');
               setFolderPage(1);
             }}
             onSelectPurok={(bName, pName) => {
               setActiveFolder(bName);
+              setSelectedBarangay(bName);
               setActivePurokFolder(pName);
               setSearchQuery('');
               setFolderPage(1);
@@ -756,10 +828,13 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                   value={selectedBarangay}
                   onChange={e => {
                     const selected = e.target.value;
+                    setSelectedBarangay(selected);
                     if (selected === 'all') {
                       setActiveFolder(null);
+                      setActivePurokFolder(null);
                     } else {
                       setActiveFolder(selected);
+                      setActivePurokFolder(null);
                       setFolderPage(1);
                     }
                   }}
@@ -776,6 +851,19 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                   <ChevronDown className="w-3.5 h-3.5" />
                 </div>
               </div>
+
+              {/* Sort Order Selector Button */}
+              <button
+                type="button"
+                onClick={() => setSortOrder(prev => prev === 'highest' ? 'lowest' : prev === 'lowest' ? 'az' : 'highest')}
+                className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/90 text-emerald-900 rounded-xl text-xs font-black transition-all cursor-pointer shadow-2xs"
+                title="Change sorting order of folders"
+              >
+                <ArrowUpDown className="w-3.5 h-3.5 text-emerald-700" />
+                <span>
+                  {sortOrder === 'highest' ? 'Highest Population' : sortOrder === 'lowest' ? 'Lowest Population' : 'Alphabetical (A-Z)'}
+                </span>
+              </button>
 
               <div className="text-xs font-bold text-slate-500 flex items-center gap-2 shrink-0">
                 <Layers className="w-4 h-4 text-emerald-600" />
@@ -794,13 +882,14 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
               {barangayFolders
                 .filter(f => !searchQuery.trim() || f.barangay.toLowerCase().includes(searchQuery.toLowerCase()))
-                .map(folder => (
+                .map((folder, folderIdx) => (
                   <motion.div
                     key={folder.barangay}
                     whileHover={{ y: -3, shadow: '0 8px 20px -4px rgba(0, 0, 0, 0.05)' }}
                     className="bg-white rounded-2xl border border-slate-200/80 shadow-xs hover:border-emerald-300 transition-all overflow-hidden flex flex-col justify-between group cursor-pointer"
                     onClick={() => {
                       setActiveFolder(folder.barangay);
+                      setSelectedBarangay(folder.barangay);
                       setActivePurokFolder(null);
                       setSearchQuery('');
                       setFolderPage(1);
@@ -808,8 +897,15 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                   >
                     <div className="p-4 sm:p-4.5">
                       <div className="flex items-start justify-between gap-3 mb-3">
-                        <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-100 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white group-hover:border-emerald-600 transition-all shadow-xs">
-                          <Folder className="w-5 h-5 fill-emerald-100/40 group-hover:fill-white/10 transition-colors" />
+                        <div className="flex items-center gap-2">
+                          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-100 flex items-center justify-center group-hover:bg-emerald-600 group-hover:text-white group-hover:border-emerald-600 transition-all shadow-xs">
+                            <Folder className="w-5 h-5 fill-emerald-100/40 group-hover:fill-white/10 transition-colors" />
+                          </div>
+                          {sortOrder === 'highest' && (
+                            <span className="px-2 py-0.5 rounded-md text-[10px] font-black bg-emerald-100 text-emerald-900 border border-emerald-200/80 shadow-2xs">
+                              #{folderIdx + 1}
+                            </span>
+                          )}
                         </div>
 
                         {isMasterAdmin && (
@@ -834,7 +930,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                         {folder.barangay.toLowerCase()}
                       </h3>
                       <p className="text-[10px] text-slate-400 font-bold mt-0.5 uppercase tracking-wider">
-                        {folder.purokCount} Puroks
+                        {folder.purokCount} Puroks {sortOrder === 'highest' ? `· Rank #${folderIdx + 1}` : ''}
                       </p>
                     </div>
 
@@ -844,8 +940,8 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                           <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
                         </span>
-                        <span className="text-emerald-900 tracking-tight">
-                          {folder.count} {folder.count === 1 ? 'Account' : 'Accounts'}
+                        <span className="text-emerald-900 tracking-tight font-black">
+                          {folder.count} {folder.count === 1 ? 'Patient' : 'Patients'}
                         </span>
                       </div>
                       <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-emerald-600 transition-colors" />
@@ -857,8 +953,8 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
         </div>
       )}
 
-      {/* VIEW MODE 2: INSIDE ACTIVE BARANGAY FOLDER (MATCHING PCU DIRECTORY) */}
-      {activeFolder && (
+      {/* VIEW MODE 2: INSIDE ACTIVE BARANGAY FOLDER - PUROK FOLDERS OVERVIEW */}
+      {activeFolder && !activePurokFolder && (
         <div className="space-y-4">
           {/* Folder Toolbar */}
           <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between">
@@ -871,38 +967,39 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                   setSearchQuery(e.target.value);
                   setFolderPage(1);
                 }}
-                placeholder={`Search inside ${activeFolder} by name, phone, PIN...`}
+                placeholder={`Search inside ${activeFolder} by Purok or patient name...`}
                 className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none focus:border-emerald-500 focus:bg-white transition-all placeholder:text-slate-400"
               />
             </div>
 
             <div className="flex flex-wrap items-center gap-3">
-              {/* Purok Filter Dropdown */}
-              <div className="relative min-w-[140px]">
-                <select
-                  value={selectedPurokFilter}
-                  onChange={e => {
-                    setSelectedPurokFilter(e.target.value);
-                    setFolderPage(1);
-                  }}
-                  className="w-full appearance-none pl-3.5 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none cursor-pointer"
-                >
-                  <option value="all">All Puroks ({purokFolders.length})</option>
-                  {purokFolders.map(p => (
-                    <option key={p.purok} value={p.purok.toUpperCase()}>
-                      {p.purok} ({p.count})
-                    </option>
-                  ))}
-                </select>
-                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2.5 text-slate-500">
-                  <ChevronDown className="w-3.5 h-3.5" />
-                </div>
-              </div>
+              {/* Sort Order Selector Button */}
+              <button
+                type="button"
+                onClick={() => setSortOrder(prev => prev === 'highest' ? 'lowest' : prev === 'lowest' ? 'az' : 'highest')}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/90 text-emerald-900 rounded-xl text-xs font-black transition-all cursor-pointer shadow-2xs"
+                title="Change sorting order of Purok folders"
+              >
+                <ArrowUpDown className="w-3.5 h-3.5 text-emerald-700" />
+                <span>
+                  {sortOrder === 'highest' ? 'Highest Population' : sortOrder === 'lowest' ? 'Lowest Population' : 'Alphabetical (A-Z)'}
+                </span>
+              </button>
 
               {/* Patient Count Badge */}
               <span className="px-3 py-1.5 bg-emerald-50 text-emerald-800 font-extrabold text-xs rounded-xl border border-emerald-200">
-                {filteredAccountsInFolder.length} Accounts
+                {accountsInActiveFolder.length} Total Patients
               </span>
+
+              {/* Add Patient Button */}
+              <button
+                onClick={handleOpenSingleNew}
+                className="px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                title={`Add new patient into ${activeFolder}`}
+              >
+                <Plus className="w-4 h-4 text-emerald-200" />
+                <span>+ Add Patient</span>
+              </button>
 
               {isMasterAdmin && (
                 <button
@@ -934,24 +1031,10 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                     )}
                   </h3>
                   <p className="text-[11px] text-slate-500 font-medium">
-                    Click any Purok Folder to filter records. All data is automatically sorted base on the Purok.
+                    Click any Purok Folder to open it and view patient records. Folders are sorted from highest to lowest population.
                   </p>
                 </div>
               </div>
-
-              {activePurokFolder && (
-                <button
-                  onClick={() => {
-                    setActivePurokFolder(null);
-                    setSelectedPurokFilter('all');
-                    setFolderPage(1);
-                  }}
-                  className="text-xs font-bold text-emerald-700 hover:text-emerald-800 flex items-center gap-1.5 cursor-pointer bg-white hover:bg-emerald-50 px-3 py-1.5 rounded-xl border border-slate-200 transition-all shadow-2xs"
-                >
-                  <RotateCw className="w-3.5 h-3.5" />
-                  <span>Show All Purok Folders ({accountsInActiveFolder.length})</span>
-                </button>
-              )}
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2.5">
@@ -959,7 +1042,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setActivePurokFolder(null);
+                  setActivePurokFolder('All Puroks');
                   setSelectedPurokFilter('all');
                   setFolderPage(1);
                 }}
@@ -984,7 +1067,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
               </button>
 
               {/* Individual Purok Folder Tiles */}
-              {purokFolders.map(p => {
+              {purokFolders.map((p, pIdx) => {
                 const isActive = (activePurokFolder && activePurokFolder.toUpperCase() === p.purok.toUpperCase()) ||
                   (selectedPurokFilter !== 'all' && selectedPurokFilter.toUpperCase() === p.purok.toUpperCase());
                 return (
@@ -1003,7 +1086,14 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                     }`}
                   >
                     <div className="flex items-center justify-between gap-1 mb-1.5">
-                      <Folder className={`w-4 h-4 transition-transform group-hover:scale-110 ${isActive ? 'text-emerald-100' : 'text-emerald-600'}`} />
+                      <div className="flex items-center gap-1.5">
+                        <Folder className={`w-4 h-4 transition-transform group-hover:scale-110 ${isActive ? 'text-emerald-100' : 'text-emerald-600'}`} />
+                        {sortOrder === 'highest' && (
+                          <span className={`text-[9px] font-black px-1 rounded ${isActive ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'}`}>
+                            #{pIdx + 1}
+                          </span>
+                        )}
+                      </div>
                       <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-md tabular-nums ${
                         isActive ? 'bg-white/20 text-white' : 'bg-emerald-50 text-emerald-800 border border-emerald-200/60'
                       }`}>
@@ -1014,15 +1104,106 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                       {p.purok}
                     </div>
                     <div className={`text-[10px] font-medium mt-0.5 ${isActive ? 'text-emerald-100' : 'text-slate-400'}`}>
-                      {p.count} {p.count === 1 ? 'account' : 'accounts'}
+                      {p.count} {p.count === 1 ? 'patient' : 'patients'}
                     </div>
                   </button>
                 );
               })}
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Accounts Table Card */}
+      {/* VIEW MODE 3: INSIDE ACTIVE PUROK FOLDER - DATA TABLE & RECORDS */}
+      {activeFolder && activePurokFolder && (
+        <div className="space-y-4">
+          {/* Inner Purok Folder Toolbar */}
+          <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between">
+            <div className="flex items-center gap-3 flex-1">
+              <button
+                onClick={() => {
+                  setActivePurokFolder(null);
+                  setSelectedPurokFilter('all');
+                  setFolderPage(1);
+                }}
+                className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shrink-0 border border-emerald-200/80"
+                title="Back to Purok Folders"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Purok Folders</span>
+              </button>
+
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => {
+                    setSearchQuery(e.target.value);
+                    setFolderPage(1);
+                  }}
+                  placeholder={`Search inside ${activePurokFolder} by name, phone, PIN...`}
+                  className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none focus:border-emerald-500 focus:bg-white transition-all placeholder:text-slate-400"
+                />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* Quick Switch Purok Dropdown */}
+              <div className="relative min-w-[150px]">
+                <select
+                  value={activePurokFolder}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setActivePurokFolder(val);
+                    setSelectedPurokFilter(val === 'All Puroks' ? 'all' : val.toUpperCase());
+                    setFolderPage(1);
+                  }}
+                  className="w-full appearance-none pl-3.5 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 outline-none cursor-pointer"
+                >
+                  <option value="All Puroks">All Puroks ({accountsInActiveFolder.length})</option>
+                  {purokFolders.map(p => (
+                    <option key={p.purok} value={p.purok}>
+                      {p.purok} ({p.count})
+                    </option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2.5 text-slate-500">
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </div>
+              </div>
+
+              {/* Sort Order Selector Button */}
+              <button
+                type="button"
+                onClick={() => setSortOrder(prev => prev === 'highest' ? 'lowest' : prev === 'lowest' ? 'az' : 'highest')}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200/90 text-emerald-900 rounded-xl text-xs font-black transition-all cursor-pointer shadow-2xs"
+                title="Change sorting order"
+              >
+                <ArrowUpDown className="w-3.5 h-3.5 text-emerald-700" />
+                <span>
+                  {sortOrder === 'highest' ? 'Highest Pop.' : sortOrder === 'lowest' ? 'Lowest Pop.' : 'A - Z'}
+                </span>
+              </button>
+
+              {/* Patient Count Badge */}
+              <span className="px-3 py-1.5 bg-emerald-50 text-emerald-800 font-extrabold text-xs rounded-xl border border-emerald-200">
+                {filteredAccountsInFolder.length} Patients
+              </span>
+
+              {/* Add Patient into current Purok */}
+              <button
+                onClick={handleOpenSingleNew}
+                className="px-3 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5"
+                title="Register new patient in this Purok"
+              >
+                <Plus className="w-3.5 h-3.5 text-emerald-200" />
+                <span>+ Add Patient</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Patients Table Card */}
           <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -1042,8 +1223,8 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                     <tr>
                       <td colSpan={7} className="py-12 text-center text-slate-400">
                         <UserIcon className="w-10 h-10 mx-auto mb-2 text-slate-300" />
-                        <p className="font-extrabold text-slate-700 text-sm">No accounts found</p>
-                        <p className="text-xs text-slate-400 mt-0.5">Add accounts using the buttons above.</p>
+                        <p className="font-extrabold text-slate-700 text-sm">No patients found</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Add patients using the buttons above.</p>
                       </td>
                     </tr>
                   ) : (
@@ -1111,17 +1292,17 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                               <span>Edit</span>
                             </button>
 
-                            {/* Submit to Submit Exist. */}
+                            {/* Confirm Submit to Submit Exist. */}
                             <button
                               onClick={() => {
                                 setShowTransferModal(item);
                                 setTransferFiles([]);
                               }}
                               className="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg transition-all flex items-center gap-1 cursor-pointer shadow-2xs"
-                              title="Submit to Submit Exist. with attached files"
+                              title="Confirm Submit to Submit Exist."
                             >
                               <UploadCloud className="w-3.5 h-3.5 text-emerald-200" />
-                              <span>Submit</span>
+                              <span>Confirm Submit</span>
                             </button>
 
                             {/* Delete */}
@@ -1488,8 +1669,8 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                     <UploadCloud className="w-5 h-5 text-emerald-200" />
                   </div>
                   <div>
-                    <h3 className="font-extrabold text-sm font-display">Submit to Submit Exist.</h3>
-                    <p className="text-xs text-emerald-200/80">Submit record and upload medical attachments</p>
+                    <h3 className="font-extrabold text-sm font-display">Confirm Submit</h3>
+                    <p className="text-xs text-emerald-200/80">Submit record and upload medical attachments to Submit Exist.</p>
                   </div>
                 </div>
                 <button
@@ -1686,7 +1867,7 @@ export const ExistDirectory: React.FC<ExistDirectoryProps> = ({
                     className="px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold rounded-xl cursor-pointer flex items-center gap-1.5 shadow-sm"
                   >
                     <UploadCloud className="w-3.5 h-3.5" />
-                    <span>Submit to Submit Exist.</span>
+                    <span>Confirm Submit</span>
                   </button>
                 </div>
               </div>

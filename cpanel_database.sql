@@ -311,6 +311,25 @@ CREATE TABLE IF NOT EXISTS `submitted_exist_acc_history` (
   INDEX `idx_sea_hist_patient` (`patient_name`),
   INDEX `idx_sea_hist_action` (`action`),
   INDEX `idx_sea_hist_submitter` (`submitter`)
+-- -------------------------------------------------------------------------
+-- 18. Table: portal_attachments (Portal Attachment Grid & Multi-file Uploads)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `portal_attachments` (
+  `id` VARCHAR(100) NOT NULL PRIMARY KEY,
+  `full_name` VARCHAR(255) NOT NULL,
+  `barangay` VARCHAR(255) NOT NULL DEFAULT '',
+  `purok` VARCHAR(255) DEFAULT '',
+  `attachments` LONGTEXT NULL,
+  `uploaded_by` VARCHAR(255) DEFAULT 'Staff',
+  `uploaded_at` VARCHAR(100) DEFAULT '',
+  `status` VARCHAR(50) DEFAULT 'SUBMITTED',
+  `notes` TEXT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX `idx_pa_barangay` (`barangay`),
+  INDEX `idx_pa_full_name` (`full_name`),
+  INDEX `idx_pa_status` (`status`),
+  INDEX `idx_pa_uploaded_at` (`uploaded_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

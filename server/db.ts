@@ -45,6 +45,9 @@ import {
   fetchMaintenanceRecordsFromCPanel,
   deleteMaintenanceRecordFromCPanel,
   clearAllMaintenanceRecordsInCPanel,
+  savePortalAttachmentToCPanel,
+  fetchPortalAttachmentsFromCPanel,
+  deletePortalAttachmentFromCPanel,
   fetchAllFromCPanelDb,
   getCPanelDbStatus,
   isCPanelDbConnected,
@@ -381,6 +384,8 @@ export interface SubmittedExistAccRecord {
   barangay: string;
   purok: string;
   contactNumber: string;
+  alternateContactNumber?: string;
+  alternate_contact_number?: string;
   pin: string;
   latitude: number | null;
   longitude: number | null;
@@ -951,14 +956,14 @@ export const ROLE_PERMS_FILE = path.join(DATA_DIR, 'role_permissions.json');
 export const MAINTENANCE_RECORDS_FILE = path.join(DATA_DIR, 'maintenance_records.json');
 
 export const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
-  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
-  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry'],
-  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry']
+  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'IT': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'ADMIN': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'Administrator': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'LEADER': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'bulk', 'print'],
+  'CO-LEADER': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'bulk', 'print'],
+  'ENCODER': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry'],
+  'STAFF': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry']
 };
 
 export interface SiteSettings {
@@ -1846,6 +1851,21 @@ export async function initDb() {
     console.log(`[Init] Filtered submitted contacts so they are omitted from PCU Directory.`);
     safeWriteFileSync(CONTACTS_FILE, JSON.stringify(contactsCache, null, 2));
 
+function cleanExistingBarangay(raw?: string): string {
+  if (!raw) return 'UNASSIGNED';
+  let str = raw.trim().toUpperCase();
+  str = str.replace(/^(BARANGAY|BRGY\.?)\s+/i, '').trim();
+  str = str.replace(/^(BARANGAY|BRGY)/i, '').trim();
+  str = str.replace(/\bSTA\b\.?/g, 'STA.').replace(/\s+/g, ' ');
+  const compact = str.replace(/[\.\s]/g, '');
+  if (compact === 'STALUCIA' || compact === 'SANTALUCIA') return 'STA. LUCIA';
+  if (compact === 'STONINO' || compact === 'STONIÑO' || compact === 'SANTONINO' || compact === 'SANTONIÑO') return 'STO. NIÑO';
+  if (compact === 'WHITEBEACH') return 'WHITE BEACH';
+  if (compact === 'TAWAGANSUR') return 'TAWAGAN SUR';
+  if (compact === 'TAWAGANNORTE') return 'TAWAGAN NORTE';
+  return str;
+}
+
     // Init Existing Accounts
     if (!fs.existsSync(EXISTING_ACCOUNTS_FILE)) {
       const initialExistingAccounts: ExistingAccountItem[] = [];
@@ -1861,7 +1881,12 @@ export async function initDb() {
       try {
         const parsed = JSON.parse(content);
         if (Array.isArray(parsed)) {
-          existingAccountsCache = parsed.filter(acc => acc && acc.full_name && !isExistingAccountTombstoned(acc));
+          existingAccountsCache = parsed
+            .filter(acc => acc && acc.full_name && !isExistingAccountTombstoned(acc))
+            .map(acc => ({
+              ...acc,
+              barangay: cleanExistingBarangay(acc.barangay)
+            }));
           safeWriteFileSync(EXISTING_ACCOUNTS_FILE, JSON.stringify(existingAccountsCache, null, 2));
         } else {
           existingAccountsCache = [];
@@ -11125,6 +11150,49 @@ export async function getReturnedPcuRecords(userIdOrUsername: string, isSuperUse
     }
   }
 
+  // 4. Also include returned Portal Attachments
+  try {
+    ensurePortalAttachmentsLoadedSync();
+    for (const pa of portalAttachmentsCache) {
+      if (!pa || pa.status !== 'RETURNED') continue;
+      const upBy = (pa.uploaded_by || '').toLowerCase().trim();
+      const isOwner = isSuperUser || upBy === normUser || (userId && upBy === userId) || (userFullName && upBy === userFullName);
+      if (!isOwner) continue;
+
+      const key = `pa_${pa.id}`;
+      map.set(key, {
+        id: pa.id,
+        contactId: pa.id,
+        fullName: pa.full_name,
+        barangay: pa.barangay || 'General / Unassigned',
+        purok: pa.purok || '',
+        contactNumber: '',
+        fileName: pa.attachments?.[0]?.name || 'Portal Attachment Document',
+        fileUrl: pa.attachments?.[0]?.url || '',
+        uploadedFiles: (pa.attachments || []).map(a => ({
+          name: a.name,
+          url: a.url,
+          size: a.size,
+          uploadedAt: a.uploadedAt,
+          uploadedBy: pa.uploaded_by
+        })),
+        filesCount: (pa.attachments || []).length,
+        uploadedBy: pa.uploaded_by || 'Staff',
+        uploadedAt: pa.uploaded_at || pa.created_at || new Date().toISOString(),
+        submitter_id: pa.uploaded_by || 'Staff',
+        status: 'RETURNED',
+        returned_at: (pa as any).returned_at || pa.updated_at || new Date().toISOString(),
+        returned_by: (pa as any).returned_by || 'Admin',
+        returned_by_id: (pa as any).returned_by_id || '',
+        return_reason: (pa as any).return_reason || '',
+        source: 'portal_attachment',
+        isPortalAttachment: true
+      } as any);
+    }
+  } catch (err: any) {
+    console.warn('[Get Returned PCU] Warning parsing portal attachments:', err.message);
+  }
+
   return Array.from(map.values()).sort(
     (a, b) => new Date(b.returned_at || b.uploadedAt).getTime() - new Date(a.returned_at || a.uploadedAt).getTime()
   );
@@ -11142,15 +11210,51 @@ export async function resubmitPcuSubmission(params: {
   barangay?: string;
   purok?: string;
   contact_number?: string;
-  files?: { fileName: string; fileData: string }[];
+  files?: { fileName: string; fileData: string; size?: number }[];
   username: string;
+  isPortalAttachment?: boolean;
 }): Promise<{ success: boolean; message: string; data?: any }> {
-  const { id, contactId, fullName, barangay = '', purok = '', contact_number = '', files = [], username } = params;
+  const { id, contactId, fullName, barangay = '', purok = '', contact_number = '', files = [], username, isPortalAttachment } = params;
   const nowIso = new Date().toISOString();
   const idStr = id ? String(id).trim() : '';
   const normName = (fullName || '').trim().toLowerCase();
 
   console.log(`[PCU Resubmit] Resubmitting record: "${fullName}" by ${username}`);
+
+  // Check if target is a Portal Attachment record
+  ensurePortalAttachmentsLoadedSync();
+  const paItem = portalAttachmentsCache.find(p => p.id === idStr || (normName && (p.full_name || '').trim().toLowerCase() === normName));
+  if (idStr.startsWith('pa_') || paItem || isPortalAttachment) {
+    const target = paItem || portalAttachmentsCache.find(p => p.id === idStr);
+    if (target) {
+      target.status = 'VERIFICATION';
+      target.full_name = fullName.trim().toUpperCase() || target.full_name;
+      if (barangay) target.barangay = barangay.trim();
+      if (purok !== undefined) target.purok = purok.trim();
+      (target as any).return_reason = '';
+      (target as any).returned_at = null;
+      (target as any).returned_by = null;
+      target.updated_at = nowIso;
+
+      if (Array.isArray(files) && files.length > 0) {
+        const newAttachments = files.map(f => ({
+          name: f.fileName,
+          url: f.fileData,
+          size: f.size,
+          uploadedAt: nowIso
+        }));
+        target.attachments = [...(target.attachments || []), ...newAttachments];
+      }
+
+      await safeWriteFile(PORTAL_ATTACHMENTS_FILE, JSON.stringify(portalAttachmentsCache, null, 2), 'utf-8');
+      await savePortalAttachmentToCPanel(target);
+      await addActivity(username, `Resubmitted Portal Attachment for "${target.full_name}". Transferred from Returned page back to Portal Attachment (VERIFICATION).`);
+      return {
+        success: true,
+        message: `Portal Attachment for "${target.full_name}" has been resubmitted successfully for verification!`
+      };
+    }
+  }
 
   // 1. Update matching records in pcuUpdatesCache from RETURNED to FILES
   let matchedUpdate: PCUUpdate | null = null;
@@ -11339,9 +11443,34 @@ export function getBarangayTodayCounts(): {
   };
 }
 
-// Get local existing accounts
+// Get local existing accounts - sorted strictly from highest data population to lowest
 export function getLocalExistingAccounts(): ExistingAccountItem[] {
-  return existingAccountsCache.filter(acc => acc && acc.full_name && !isExistingAccountTombstoned(acc));
+  const active = existingAccountsCache.filter(acc => acc && acc.full_name && !isExistingAccountTombstoned(acc));
+  
+  const bgCountMap = new Map<string, number>();
+  const purokCountMap = new Map<string, number>();
+  
+  for (const acc of active) {
+    const bg = (acc.barangay || 'UNASSIGNED').trim().toUpperCase();
+    bgCountMap.set(bg, (bgCountMap.get(bg) || 0) + 1);
+    
+    const purKey = `${bg}___${(acc.purok || 'No Purok').trim().toUpperCase()}`;
+    purokCountMap.set(purKey, (purokCountMap.get(purKey) || 0) + 1);
+  }
+  
+  return active.slice().sort((a, b) => {
+    const bgA = (a.barangay || 'UNASSIGNED').trim().toUpperCase();
+    const bgB = (b.barangay || 'UNASSIGNED').trim().toUpperCase();
+    const bgDiff = (bgCountMap.get(bgB) || 0) - (bgCountMap.get(bgA) || 0);
+    if (bgDiff !== 0) return bgDiff;
+    
+    const purAKey = `${bgA}___${(a.purok || 'No Purok').trim().toUpperCase()}`;
+    const purBKey = `${bgB}___${(b.purok || 'No Purok').trim().toUpperCase()}`;
+    const purDiff = (purokCountMap.get(purBKey) || 0) - (purokCountMap.get(purAKey) || 0);
+    if (purDiff !== 0) return purDiff;
+    
+    return (a.full_name || '').localeCompare(b.full_name || '');
+  });
 }
 
 // Add local existing account
@@ -13940,7 +14069,334 @@ export async function clearAllMaintenanceRecords(deletedBy: string = 'Admin', pd
   return removed;
 }
 
+// ---------------------------------------------------------------------------
+// PORTAL ATTACHMENTS (Portal Attachment Page - Multi-file Uploads & Grid Gallery)
+// ---------------------------------------------------------------------------
+const PORTAL_ATTACHMENTS_FILE = path.join(DATA_DIR, 'portal_attachments.json');
 
+export interface PortalAttachmentFile {
+  name: string;
+  url: string;
+  size?: number;
+  type?: string;
+  uploadedAt?: string;
+}
 
+export interface PortalAttachmentItem {
+  id: string;
+  full_name: string;
+  barangay: string;
+  purok?: string;
+  attachments: PortalAttachmentFile[];
+  uploaded_by?: string;
+  uploaded_at?: string;
+  status?: 'VERIFICATION' | 'PENDING' | 'APPROVED' | 'RETURNED' | 'SUBMITTED' | 'VERIFIED' | 'ARCHIVED';
+  return_reason?: string;
+  returned_at?: string;
+  returned_by?: string;
+  notes?: string;
+  created_at?: string;
+  updated_at?: string;
+}
 
+let portalAttachmentsCache: PortalAttachmentItem[] = [];
+let portalAttachmentsLoaded = false;
+
+function ensurePortalAttachmentsLoadedSync() {
+  if (portalAttachmentsLoaded) return;
+  portalAttachmentsLoaded = true;
+  try {
+    if (fs.existsSync(PORTAL_ATTACHMENTS_FILE)) {
+      const raw = fs.readFileSync(PORTAL_ATTACHMENTS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        portalAttachmentsCache = parsed;
+      }
+    } else {
+      safeWriteFileSync(PORTAL_ATTACHMENTS_FILE, JSON.stringify([], null, 2), 'utf-8');
+    }
+  } catch (e: any) {
+    console.warn('[Portal Attachment] Local read error:', e.message);
+    portalAttachmentsCache = [];
+  }
+
+  // Auto-sync with cPanel MySQL if connected
+  if (isCPanelDbConnected()) {
+    fetchPortalAttachmentsFromCPanel().then(async (remote) => {
+      if (Array.isArray(remote) && remote.length > 0) {
+        const map = new Map<string, PortalAttachmentItem>();
+        for (const r of remote) {
+          if (r && r.id) map.set(String(r.id), r);
+        }
+        for (const local of portalAttachmentsCache) {
+          if (local && local.id && !map.has(String(local.id))) {
+            map.set(String(local.id), local);
+            await savePortalAttachmentToCPanel(local);
+          }
+        }
+        portalAttachmentsCache = Array.from(map.values()).sort(
+          (a, b) => new Date(b.created_at || b.uploaded_at || 0).getTime() - new Date(a.created_at || a.uploaded_at || 0).getTime()
+        );
+        await safeWriteFile(PORTAL_ATTACHMENTS_FILE, JSON.stringify(portalAttachmentsCache, null, 2), 'utf-8');
+      } else if (portalAttachmentsCache.length > 0) {
+        for (const local of portalAttachmentsCache) {
+          await savePortalAttachmentToCPanel(local);
+        }
+      }
+    }).catch(err => {
+      console.warn('[Portal Attachment] MySQL initial sync warning:', err.message);
+    });
+  }
+}
+
+export function getPortalAttachments(): PortalAttachmentItem[] {
+  ensurePortalAttachmentsLoadedSync();
+  return [...portalAttachmentsCache];
+}
+
+export async function savePortalAttachment(data: Partial<PortalAttachmentItem>, username: string = 'Staff'): Promise<PortalAttachmentItem> {
+  ensurePortalAttachmentsLoadedSync();
+  const now = new Date().toISOString();
+  const id = data.id || `pa_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+  const item: PortalAttachmentItem = {
+    id,
+    full_name: String(data.full_name || '').trim().toUpperCase(),
+    barangay: String(data.barangay || '').trim(),
+    purok: String(data.purok || '').trim(),
+    attachments: Array.isArray(data.attachments) ? data.attachments : [],
+    uploaded_by: data.uploaded_by || username || 'Staff',
+    uploaded_at: data.uploaded_at || now,
+    status: data.status || 'SUBMITTED',
+    notes: data.notes || '',
+    created_at: data.created_at || now,
+    updated_at: now
+  };
+
+  const existingIdx = portalAttachmentsCache.findIndex(p => p.id === id);
+  if (existingIdx >= 0) {
+    portalAttachmentsCache[existingIdx] = { ...portalAttachmentsCache[existingIdx], ...item, updated_at: now };
+  } else {
+    portalAttachmentsCache.unshift(item);
+  }
+
+  await safeWriteFile(PORTAL_ATTACHMENTS_FILE, JSON.stringify(portalAttachmentsCache, null, 2), 'utf-8');
+  await savePortalAttachmentToCPanel(item);
+  await addActivity(
+    username,
+    `Uploaded Portal Attachment for "${item.full_name}" (Barangay: ${item.barangay || 'N/A'}, Purok: ${item.purok || 'N/A'}) with ${item.attachments.length} file(s).`
+  );
+
+  return item;
+}
+
+export async function updatePortalAttachment(id: string, updates: Partial<PortalAttachmentItem>, username: string = 'Staff'): Promise<PortalAttachmentItem | null> {
+  ensurePortalAttachmentsLoadedSync();
+  const idx = portalAttachmentsCache.findIndex(p => String(p.id) === String(id));
+  if (idx === -1) return null;
+
+  const current = portalAttachmentsCache[idx];
+  const now = new Date().toISOString();
+
+  const updated: PortalAttachmentItem = {
+    ...current,
+    full_name: updates.full_name !== undefined ? String(updates.full_name).trim().toUpperCase() : current.full_name,
+    barangay: updates.barangay !== undefined ? String(updates.barangay).trim() : current.barangay,
+    purok: updates.purok !== undefined ? String(updates.purok).trim() : current.purok,
+    attachments: updates.attachments !== undefined ? updates.attachments : current.attachments,
+    status: updates.status !== undefined ? updates.status : current.status,
+    return_reason: updates.return_reason !== undefined ? updates.return_reason : (current as any).return_reason,
+    returned_at: updates.returned_at !== undefined ? updates.returned_at : (current as any).returned_at,
+    returned_by: updates.returned_by !== undefined ? updates.returned_by : (current as any).returned_by,
+    notes: updates.notes !== undefined ? updates.notes : current.notes,
+    updated_at: now
+  };
+
+  portalAttachmentsCache[idx] = updated;
+  await safeWriteFile(PORTAL_ATTACHMENTS_FILE, JSON.stringify(portalAttachmentsCache, null, 2), 'utf-8');
+  await savePortalAttachmentToCPanel(updated);
+  await addActivity(username, `Updated Portal Attachment entry for "${updated.full_name}" (Status: ${updated.status}).`);
+
+  return updated;
+}
+
+export async function deletePortalAttachment(id: string, username: string = 'Staff'): Promise<boolean> {
+  ensurePortalAttachmentsLoadedSync();
+  const idx = portalAttachmentsCache.findIndex(p => String(p.id) === String(id));
+  if (idx === -1) return false;
+
+  const target = portalAttachmentsCache[idx];
+  portalAttachmentsCache.splice(idx, 1);
+  await safeWriteFile(PORTAL_ATTACHMENTS_FILE, JSON.stringify(portalAttachmentsCache, null, 2), 'utf-8');
+  await deletePortalAttachmentFromCPanel(String(id));
+  await addActivity(username, `Deleted Portal Attachment for "${target.full_name}" (Barangay: ${target.barangay}).`);
+
+  return true;
+}
+
+// ============================================================================
+// MY DRAFTS STORAGE & API
+// ============================================================================
+export const DRAFTS_FILE = path.join(DATA_DIR, 'my_drafts.json');
+
+export interface DraftItem {
+  id: string;
+  full_name: string;
+  barangay: string;
+  purok?: string;
+  attachments: PortalAttachmentFile[];
+  notes?: string;
+  saved_by?: string;
+  saved_at: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+let draftsCache: DraftItem[] = [];
+let draftsLoaded = false;
+
+function ensureDraftsLoadedSync() {
+  if (draftsLoaded) return;
+  draftsLoaded = true;
+  try {
+    if (fs.existsSync(DRAFTS_FILE)) {
+      const raw = fs.readFileSync(DRAFTS_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        draftsCache = parsed;
+      }
+    } else {
+      safeWriteFileSync(DRAFTS_FILE, JSON.stringify([], null, 2), 'utf-8');
+    }
+  } catch (e: any) {
+    console.warn('[Drafts] Local read error:', e.message);
+    draftsCache = [];
+  }
+}
+
+export function getMyDrafts(username: string, isSuperUser: boolean = false): DraftItem[] {
+  ensureDraftsLoadedSync();
+  const u = (username || '').toLowerCase().trim();
+  if (isSuperUser || !u || u === 'admin') {
+    return [...draftsCache];
+  }
+  return draftsCache.filter(d => (d.saved_by || '').toLowerCase().trim() === u);
+}
+
+export async function saveDraft(data: Partial<DraftItem>, username: string = 'Staff'): Promise<DraftItem> {
+  ensureDraftsLoadedSync();
+  const now = new Date().toISOString();
+  const id = data.id || `draft_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+  const item: DraftItem = {
+    id,
+    full_name: String(data.full_name || '').trim().toUpperCase(),
+    barangay: String(data.barangay || '').trim(),
+    purok: String(data.purok || '').trim(),
+    attachments: Array.isArray(data.attachments) ? data.attachments : [],
+    notes: data.notes || '',
+    saved_by: data.saved_by || username || 'Staff',
+    saved_at: now,
+    created_at: data.created_at || now,
+    updated_at: now
+  };
+
+  const existingIdx = draftsCache.findIndex(d => d.id === id);
+  if (existingIdx >= 0) {
+    draftsCache[existingIdx] = { ...draftsCache[existingIdx], ...item, updated_at: now };
+  } else {
+    draftsCache.unshift(item);
+  }
+
+  await safeWriteFile(DRAFTS_FILE, JSON.stringify(draftsCache, null, 2), 'utf-8');
+  await addActivity(username, `Saved Draft for "${item.full_name}" (Barangay: ${item.barangay}) with ${item.attachments.length} attachment(s).`);
+
+  return item;
+}
+
+export async function deleteDraft(id: string, username: string = 'Staff'): Promise<boolean> {
+  ensureDraftsLoadedSync();
+  const idx = draftsCache.findIndex(d => d.id === id);
+  if (idx === -1) return false;
+  const removed = draftsCache.splice(idx, 1)[0];
+  await safeWriteFile(DRAFTS_FILE, JSON.stringify(draftsCache, null, 2), 'utf-8');
+  await addActivity(username, `Deleted Draft for "${removed.full_name}".`);
+  return true;
+}
+
+export async function submitDraftForVerification(id: string, username: string = 'Staff'): Promise<PortalAttachmentItem> {
+  ensureDraftsLoadedSync();
+  const draft = draftsCache.find(d => d.id === id);
+  if (!draft) {
+    throw new Error('Draft record not found.');
+  }
+
+  // Create Portal Attachment in VERIFICATION section
+  const portalItem = await savePortalAttachment({
+    full_name: draft.full_name,
+    barangay: draft.barangay,
+    purok: draft.purok,
+    attachments: draft.attachments,
+    notes: draft.notes,
+    status: 'VERIFICATION',
+    uploaded_by: username
+  }, username);
+
+  // Remove from drafts
+  await deleteDraft(id, username);
+
+  await addActivity(username, `Submitted Draft "${draft.full_name}" for verification to Portal Attachment.`);
+  return portalItem;
+}
+
+export function getPortalAttachmentSqlCode(): string {
+  return `-- =========================================================================
+-- SAINT FRANCIS CLINIC DIRECTORY - CPANEL MYSQL UPDATE
+-- Table: portal_attachments (Portal Attachment Page - Multi-file Uploads)
+-- Compatible with cPanel MySQL 5.7+, MySQL 8.0+, MariaDB 10.3+
+-- Ready for phpMyAdmin / cPanel MySQL Databases Import
+-- =========================================================================
+
+SET FOREIGN_KEY_CHECKS = 0;
+SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
+SET time_zone = "+00:00";
+
+-- 1. Create Table: portal_attachments
+CREATE TABLE IF NOT EXISTS \`portal_attachments\` (
+  \`id\` VARCHAR(100) NOT NULL PRIMARY KEY,
+  \`full_name\` VARCHAR(255) NOT NULL,
+  \`barangay\` VARCHAR(255) NOT NULL DEFAULT '',
+  \`purok\` VARCHAR(255) DEFAULT '',
+  \`attachments\` LONGTEXT NULL,
+  \`uploaded_by\` VARCHAR(255) DEFAULT 'Staff',
+  \`uploaded_at\` VARCHAR(100) DEFAULT '',
+  \`status\` VARCHAR(50) DEFAULT 'VERIFICATION',
+  \`return_reason\` TEXT NULL,
+  \`returned_at\` VARCHAR(100) NULL,
+  \`returned_by\` VARCHAR(255) NULL,
+  \`notes\` TEXT NULL,
+  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX \`idx_pa_barangay\` (\`barangay\`),
+  INDEX \`idx_pa_full_name\` (\`full_name\`),
+  INDEX \`idx_pa_status\` (\`status\`),
+  INDEX \`idx_pa_uploaded_at\` (\`uploaded_at\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 2. Update Role Permissions (if role_permissions table exists)
+-- Automatically add 'portal-attachment' and 'my-drafts' page permissions to all existing roles
+UPDATE \`role_permissions\` 
+SET \`allowed_pages\` = CONCAT(\`allowed_pages\`, ',"portal-attachment"')
+WHERE \`allowed_pages\` NOT LIKE '%portal-attachment%';
+
+UPDATE \`role_permissions\` 
+SET \`allowed_pages\` = CONCAT(\`allowed_pages\`, ',"my-drafts"')
+WHERE \`allowed_pages\` NOT LIKE '%my-drafts%';
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- Verification Check:
+SELECT 'portal_attachments table created successfully' AS status, COUNT(*) AS total_records FROM \`portal_attachments\`;
+`;
+}
 

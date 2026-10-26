@@ -24,7 +24,10 @@ import {
   MessageSquare,
   FolderCheck,
   RotateCcw,
-  HeartPulse
+  HeartPulse,
+  Paperclip,
+  FilePenLine,
+  Layers
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Contact, DashboardStats } from './types.js';
@@ -46,18 +49,20 @@ import { Returned } from './components/Returned.js';
 import { Maintenance } from './components/Maintenance.js';
 import { ExistDirectory } from './components/ExistDirectory.js';
 import { SubmittedExistAcc } from './components/SubmittedExistAcc.js';
+import { PortalAttachment } from './components/PortalAttachment.js';
+import { MyDrafts } from './components/MyDrafts.js';
 
 export const DEFAULT_SITE_LOGO = 'https://www.image2url.com/r2/default/images/1785037750375-501bcf0e-4b15-4e0e-8be2-610bc89d072e.png';
 
 const DEFAULT_ROLE_PERMISSIONS: Record<string, string[]> = {
-  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-  'IT': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-  'ADMIN': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-  'Administrator': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
-  'LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
-  'CO-LEADER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry', 'bulk', 'print'],
-  'ENCODER': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry'],
-  'STAFF': ['dashboard', 'map', 'directory', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'member-verification', 'verification-entry']
+  'MASTER ADMIN': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'IT': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'ADMIN': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'Administrator': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'accounts', 'bulk', 'print', 'admins', 'settings'],
+  'LEADER': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'bulk', 'print'],
+  'CO-LEADER': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry', 'bulk', 'print'],
+  'ENCODER': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry'],
+  'STAFF': ['dashboard', 'map', 'directory', 'my-drafts', 'submit-pcu', 'returned', 'maintenance', 'exist-directory', 'submit-exist', 'portal-attachment', 'member-verification', 'verification-entry']
 };
 
 export default function App() {
@@ -69,7 +74,7 @@ export default function App() {
   });
 
   // Navigation Panel Routing
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'map' | 'directory' | 'submit-pcu' | 'returned' | 'maintenance' | 'exist-directory' | 'submit-exist' | 'accounts' | 'bulk' | 'print' | 'admins' | 'settings'>(() => {
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'inbox' | 'map' | 'directory' | 'my-drafts' | 'submit-pcu' | 'returned' | 'maintenance' | 'exist-directory' | 'submit-exist' | 'portal-attachment' | 'accounts' | 'bulk' | 'print' | 'admins' | 'settings'>(() => {
     try {
       const saved = sessionStorage.getItem('clinic_active_tab') || localStorage.getItem('clinic_active_tab');
       if (saved && saved !== 'recent-upload' && !['existing-account', 'exist-acc-files', 'submitted-exist-acc'].includes(saved)) {
@@ -95,6 +100,16 @@ export default function App() {
   // Profile Modal State
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
+  // Submissions Dropdown State
+  const [isSubmissionsOpen, setIsSubmissionsOpen] = useState(false);
+
+  // Auto-expand "SUBMISSIONS" if a sub-tab is active
+  useEffect(() => {
+    if (['my-drafts', 'submit-pcu', 'exist-directory'].includes(activeTab)) {
+      setIsSubmissionsOpen(true);
+    }
+  }, [activeTab]);
+
   // Data Entry Dropdown State
   const [isDataEntryOpen, setIsDataEntryOpen] = useState(false);
 
@@ -105,7 +120,7 @@ export default function App() {
     }
   }, [activeTab]);
 
-  const handleTabChange = (tab: 'dashboard' | 'inbox' | 'map' | 'directory' | 'submit-pcu' | 'returned' | 'maintenance' | 'exist-directory' | 'submit-exist' | 'accounts' | 'bulk' | 'print' | 'admins' | 'settings') => {
+  const handleTabChange = (tab: 'dashboard' | 'inbox' | 'map' | 'directory' | 'my-drafts' | 'submit-pcu' | 'returned' | 'maintenance' | 'exist-directory' | 'submit-exist' | 'portal-attachment' | 'accounts' | 'bulk' | 'print' | 'admins' | 'settings') => {
     setActiveTab(tab);
     setIsMobileMenuOpen(false);
   };
@@ -132,6 +147,7 @@ export default function App() {
     navMaintenance?: string;
     navExistDirectory?: string;
     navSubmitExist?: string;
+    navPortalAttachment?: string;
     rolePermissions?: Record<string, string[]>;
   }>(() => {
     const defaults = {
@@ -143,7 +159,7 @@ export default function App() {
       navMap: 'Clinic Map',
       navDirectory: 'Clinic Directory',
       navSubmitPcu: 'Submit PCU',
-      navAccounts: 'Account Management',
+      navAccounts: 'Patients',
       navBulk: 'Bulk Entry',
       navPrint: 'Print List',
       navAdmins: 'Admin Credentials',
@@ -152,6 +168,7 @@ export default function App() {
       navMaintenance: 'Maintenance',
       navExistDirectory: 'Exist. Directory',
       navSubmitExist: 'Submit Exist.',
+      navPortalAttachment: 'Portal Attachment',
       rolePermissions: DEFAULT_ROLE_PERMISSIONS
     };
     try {
@@ -200,12 +217,18 @@ export default function App() {
         if (Array.isArray(rolePerms)) {
           if (rolePerms.includes(tabId)) return true;
           if (tabId === 'inbox' && (rolePerms.includes('inbox') || rolePerms.includes('dashboard'))) return true;
-          // If 'maintenance' is a newly introduced page not yet present in any role's saved array, allow access by default until explicitly configured
+          // If 'maintenance' or 'my-drafts' is newly introduced, allow access by default until explicitly configured
           if (tabId === 'maintenance') {
             const anyRoleHasMaintenance = Object.values(siteSettings.rolePermissions).some(
               arr => Array.isArray(arr) && arr.includes('maintenance')
             );
             if (!anyRoleHasMaintenance) return true;
+          }
+          if (tabId === 'my-drafts') {
+            const anyRoleHasDrafts = Object.values(siteSettings.rolePermissions).some(
+              arr => Array.isArray(arr) && arr.includes('my-drafts')
+            );
+            if (!anyRoleHasDrafts) return true;
           }
           return false;
         }
@@ -757,12 +780,6 @@ export default function App() {
             { id: 'inbox', label: 'Inbox', icon: Mail },
             { id: 'map', label: siteSettings.navMap || 'Clinic Map', icon: MapPin },
             { id: 'directory', label: siteSettings.navDirectory || 'Patient List', icon: Users },
-            { id: 'submit-pcu', label: siteSettings.navSubmitPcu || 'Submit PCU', icon: UploadCloud },
-            { id: 'returned', label: siteSettings.navReturned || 'Returned', icon: RotateCcw },
-            { id: 'maintenance', label: siteSettings.navMaintenance || 'Maintenance', icon: HeartPulse },
-            { id: 'exist-directory', label: siteSettings.navExistDirectory || 'Exist. Directory', icon: FolderCheck },
-            { id: 'submit-exist', label: siteSettings.navSubmitExist || 'Submit Exist.', icon: UploadCloud },
-            { id: 'accounts', label: siteSettings.navAccounts || 'Account Management', icon: ShieldCheck },
           ] as const)
             .filter((item) => hasTabPermission(item.id))
             .map((item) => {
@@ -797,6 +814,112 @@ export default function App() {
                       <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] shrink-0" />
                     )}
                   </div>
+                </button>
+              );
+            })}
+
+          {/* Collapsible SUBMISSIONS Dropdown (My Drafts, PCU Directory, Exist Directory) */}
+          {(() => {
+            const submissionItems = [
+              { id: 'my-drafts', label: 'My Drafts', icon: FilePenLine },
+              { id: 'submit-pcu', label: siteSettings.navSubmitPcu || 'PCU Directory', icon: UploadCloud },
+              { id: 'exist-directory', label: siteSettings.navExistDirectory || 'Exist Directory', icon: FolderCheck },
+            ] as const;
+
+            const visibleSubmissionItems = submissionItems.filter((item) => hasTabPermission(item.id));
+            if (visibleSubmissionItems.length === 0) return null;
+
+            const isSubTabActive = visibleSubmissionItems.some((item) => activeTab === item.id);
+
+            return (
+              <div className="pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => setIsSubmissionsOpen(!isSubmissionsOpen)}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-medium transition-all cursor-pointer group focus:outline-none ${
+                    isSubTabActive 
+                      ? 'text-white bg-gradient-to-r from-[#064e3b] to-[#047857] font-bold shadow-[3px_3px_8px_rgba(2,44,34,0.6)] border border-emerald-400/30' 
+                      : 'text-emerald-200/80 hover:text-white hover:bg-emerald-900/30'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Layers className={`w-4 h-4 shrink-0 transition-colors ${
+                      isSubTabActive ? 'text-emerald-300' : 'text-emerald-400/80 group-hover:text-emerald-200'
+                    }`} />
+                    <span className="truncate">Submissions</span>
+                  </div>
+                  <ChevronDown className={`w-3.5 h-3.5 text-emerald-400/70 group-hover:text-emerald-200 transition-transform duration-150 ${
+                    isSubmissionsOpen ? 'rotate-180' : ''
+                  }`} />
+                </button>
+
+                {isSubmissionsOpen && (
+                  <div className="pl-3 ml-3 border-l border-emerald-800/60 space-y-1 mt-1">
+                    {visibleSubmissionItems.map((item) => {
+                      const Icon = item.icon;
+                      const isActive = activeTab === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => handleTabChange(item.id)}
+                          className={`w-full flex items-center justify-between px-2.5 py-2.5 min-h-[40px] rounded-lg text-xs font-medium transition-all cursor-pointer group focus:outline-none ${
+                            isActive
+                              ? 'text-white bg-[#064e3b] font-bold border border-emerald-400/40 shadow-[2px_2px_6px_rgba(2,44,34,0.5)]'
+                              : 'text-emerald-300/70 hover:text-white hover:bg-emerald-900/25'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Icon className={`w-3.5 h-3.5 shrink-0 ${
+                              isActive ? 'text-emerald-300' : 'text-emerald-500/80 group-hover:text-emerald-300'
+                            }`} />
+                            <span className="truncate">{item.label}</span>
+                          </div>
+                          {isActive && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_#34d399] shrink-0" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Remaining Flat Tabs: Returned, Maintenance, Submit Exist., Portal Attachment, Patients */}
+          {([
+            { id: 'returned', label: siteSettings.navReturned || 'Returned', icon: RotateCcw },
+            { id: 'maintenance', label: siteSettings.navMaintenance || 'Maintenance', icon: HeartPulse },
+            { id: 'submit-exist', label: siteSettings.navSubmitExist || 'Submit Exist.', icon: UploadCloud },
+            { id: 'portal-attachment', label: siteSettings.navPortalAttachment || 'Portal Attachment', icon: Paperclip },
+            { id: 'accounts', label: siteSettings.navAccounts || 'Patients', icon: ShieldCheck },
+          ] as const)
+            .filter((item) => hasTabPermission(item.id))
+            .map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.id;
+
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => handleTabChange(item.id)}
+                  className={`w-full flex items-center justify-between px-3 py-2.5 min-h-[44px] rounded-xl text-xs font-medium transition-all cursor-pointer group focus:outline-none ${
+                    isActive
+                      ? 'bg-gradient-to-r from-[#064e3b] to-[#047857] text-white font-bold shadow-[3px_3px_8px_rgba(2,44,34,0.6),-1px_-1px_4px_rgba(52,211,153,0.2)] border border-emerald-400/30'
+                      : 'text-emerald-200/80 hover:text-white hover:bg-emerald-900/30 hover:shadow-[inset_1px_1px_3px_rgba(0,0,0,0.2)]'
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <Icon className={`w-4 h-4 shrink-0 transition-colors ${
+                      isActive ? 'text-emerald-300' : 'text-emerald-400/80 group-hover:text-emerald-200'
+                    }`} />
+                    <span className="truncate">{item.label}</span>
+                  </div>
+
+                  {isActive && (
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_8px_#34d399] shrink-0" />
+                  )}
                 </button>
               );
             })}
@@ -912,8 +1035,10 @@ export default function App() {
                         ? (siteSettings.navExistDirectory || 'Exist. Directory')
                       : activeTab === 'submit-exist'
                         ? (siteSettings.navSubmitExist || 'Submit Exist.')
-                        : activeTab === 'accounts'
-                        ? (siteSettings.navAccounts || 'Account Management')
+                      : activeTab === 'portal-attachment'
+                        ? (siteSettings.navPortalAttachment || 'Portal Attachment')
+                      : activeTab === 'accounts'
+                        ? (siteSettings.navAccounts || 'Patients')
                           : activeTab === 'admins' 
                             ? (siteSettings.navAdmins || 'Admin Credentials') 
                             : activeTab === 'settings'
@@ -1142,6 +1267,15 @@ export default function App() {
                 />
               )}
 
+              {activeTab === 'my-drafts' && (
+                <MyDrafts
+                  authToken={authToken}
+                  currentUser={adminUser}
+                  showToast={showToast}
+                  onNavigateToPortalAttachment={() => setActiveTab('portal-attachment')}
+                />
+              )}
+
               {activeTab === 'submit-pcu' && (
                 <SubmitPcu
                   authToken={authToken}
@@ -1183,6 +1317,14 @@ export default function App() {
                   currentUser={adminUser}
                   showToast={showToast}
                   onNavigateToExistDirectory={() => setActiveTab('exist-directory')}
+                />
+              )}
+
+              {activeTab === 'portal-attachment' && (
+                <PortalAttachment
+                  authToken={authToken}
+                  currentUser={adminUser}
+                  showToast={showToast}
                 />
               )}
 
