@@ -25,7 +25,8 @@ import {
   Send,
   Layers,
   Sparkles,
-  ArrowLeft
+  ArrowLeft,
+  Lock
 } from 'lucide-react';
 import { DraftItem, PortalAttachmentFile } from '../types.js';
 
@@ -98,7 +99,7 @@ export const MyDrafts: React.FC<MyDraftsProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch drafts
+  // Fetch drafts - strictly scoped to current logged-in account
   const fetchDrafts = async () => {
     setLoading(true);
     try {
@@ -107,7 +108,12 @@ export const MyDrafts: React.FC<MyDraftsProps> = ({
       });
       if (!res.ok) throw new Error('Failed to load drafts.');
       const data = await res.json();
-      setDrafts(Array.isArray(data) ? data : []);
+      const currentU = (currentUser?.username || '').toLowerCase().trim();
+      // Ensure only the user's own drafts are stored in state
+      const userDrafts = currentU && Array.isArray(data)
+        ? data.filter(d => (d.saved_by || '').toLowerCase().trim() === currentU)
+        : (Array.isArray(data) ? data : []);
+      setDrafts(userDrafts);
     } catch (err: any) {
       showToast(err.message, 'error');
     } finally {
@@ -586,16 +592,20 @@ export const MyDrafts: React.FC<MyDraftsProps> = ({
                 <FileEdit className="w-6 h-6 text-emerald-200" />
               </div>
               <div>
-                <div className="flex items-center gap-2.5">
+                <div className="flex flex-wrap items-center gap-2.5">
                   <h1 className="text-xl sm:text-2xl font-black text-slate-900 font-display">
                     My Drafts
                   </h1>
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
                     {drafts.length} {drafts.length === 1 ? 'Draft' : 'Drafts'}
                   </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-900 border border-amber-200/80 flex items-center gap-1 shadow-xs">
+                    <Lock className="w-3 h-3 text-amber-600" />
+                    <span>Private Workspace (@{currentUser?.username || 'You'})</span>
+                  </span>
                 </div>
                 <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-                  Save, stage, and manage your file uploads. Click <strong>Submit</strong> to transfer records to Portal Attachment for verification.
+                  Private to your account. Only you can view, edit, or submit your drafts. When ready, click <strong>Submit</strong> to transfer records to Portal Attachment for verification.
                 </p>
               </div>
             </div>

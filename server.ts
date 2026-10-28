@@ -1864,13 +1864,14 @@ export async function getApp(httpServer?: http.Server) {
   // MY DRAFTS API (My Drafts Page - Staging & Submission)
   // -------------------------------------------------------------------------
 
-  // Get all drafts for logged in user (or all drafts for admin)
+  // Get all drafts strictly for the logged in user (isolated per account - no other account can view)
   app.get('/api/my-drafts', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const username = req.user?.username || 'Staff';
-      const roleUpper = (req.user?.role || '').toUpperCase();
-      const isSuperUser = roleUpper.includes('ADMIN') || roleUpper.includes('LEADER') || username.toLowerCase() === 'admin';
-      const drafts = getMyDrafts(username, isSuperUser);
+      const username = req.user?.username || '';
+      if (!username) {
+        return res.status(401).json({ error: 'Authentication required.' });
+      }
+      const drafts = getMyDrafts(username);
       res.json(drafts);
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to fetch drafts.' });

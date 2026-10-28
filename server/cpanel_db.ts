@@ -446,6 +446,21 @@ export async function initCPanelTables(connectionPool: mysql.Pool): Promise<void
       INDEX idx_pa_full_name (full_name),
       INDEX idx_pa_status (status),
       INDEX idx_pa_uploaded_at (uploaded_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`,
+    `CREATE TABLE IF NOT EXISTS my_drafts (
+      id VARCHAR(100) NOT NULL PRIMARY KEY,
+      full_name VARCHAR(255) NOT NULL,
+      barangay VARCHAR(255) NOT NULL DEFAULT '',
+      purok VARCHAR(255) DEFAULT '',
+      attachments LONGTEXT NULL,
+      notes TEXT NULL,
+      saved_by VARCHAR(255) DEFAULT 'Staff',
+      saved_at VARCHAR(100) DEFAULT '',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_md_barangay (barangay),
+      INDEX idx_md_saved_by (saved_by),
+      INDEX idx_md_full_name (full_name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;`
   ];
 
@@ -4560,5 +4575,100 @@ export async function deletePortalAttachmentFromCPanel(id: string): Promise<bool
     return false;
   }
 }
+
+/**
+ * Saves or updates a Draft record in cPanel MySQL.
+ */
+export async function saveDraftToCPanel(item: any): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    const id = String(item.id || '');
+    const fullName = String(item.full_name || '').slice(0, 255);
+    const barangay = String(item.barangay || '').slice(0, 255);
+    const purok = String(item.purok || '').slice(0, 255);
+    const attachmentsJson = JSON.stringify(Array.isArray(item.attachments) ? item.attachments : []);
+    const notes = item.notes ? String(item.notes) : null;
+    const savedBy = String(item.saved_by || 'Staff').slice(0, 255);
+    const savedAt = String(item.saved_at || new Date().toISOString()).slice(0, 100);
+
+    await pool.query(
+      `INSERT INTO my_drafts (
+        id, full_name, barangay, purok, attachments, notes, saved_by, saved_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON DUPLICATE KEY UPDATE
+        full_name = VALUES(full_name),
+        barangay = VALUES(barangay),
+        purok = VALUES(purok),
+        attachments = VALUES(attachments),
+        notes = VALUES(notes),
+        saved_by = VALUES(saved_by),
+        saved_at = VALUES(saved_at),
+        updated_at = CURRENT_TIMESTAMP`,
+      [id, fullName, barangay, purok, attachmentsJson, notes, savedBy, savedAt]
+    );
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error saving draft to MySQL:', err.message || err);
+    return false;
+  }
+}
+
+/**
+ * Fetches drafts from cPanel MySQL (optionally filtered by username).
+ */
+export async function fetchDraftsFromCPanel(username?: string): Promise<any[]> {
+  if (!pool || !currentStatus.connected) return [];
+  try {
+    const u = (username || '').toLowerCase().trim();
+    let query = 'SELECT * FROM my_drafts';
+    const params: any[] = [];
+    if (u) {
+      query += ' WHERE LOWER(TRIM(saved_by)) = ?';
+      params.push(u);
+    }
+    query += ' ORDER BY created_at DESC, id DESC';
+
+    const [rows]: any = await pool.query(query, params);
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r: any) => {
+      let attachments: any[] = [];
+      try {
+        attachments = typeof r.attachments === 'string' ? JSON.parse(r.attachments) : (Array.isArray(r.attachments) ? r.attachments : []);
+      } catch {
+        attachments = [];
+      }
+      return {
+        id: String(r.id),
+        full_name: r.full_name || '',
+        barangay: r.barangay || '',
+        purok: r.purok || '',
+        attachments,
+        notes: r.notes || '',
+        saved_by: r.saved_by || '',
+        saved_at: r.saved_at || (r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString()),
+        created_at: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
+        updated_at: r.updated_at ? new Date(r.updated_at).toISOString() : new Date().toISOString()
+      };
+    });
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error fetching drafts from MySQL:', err.message || err);
+    return [];
+  }
+}
+
+/**
+ * Deletes a draft from cPanel MySQL.
+ */
+export async function deleteDraftFromCPanel(id: string): Promise<boolean> {
+  if (!pool || !currentStatus.connected) return false;
+  try {
+    await pool.query('DELETE FROM my_drafts WHERE id = ?', [String(id)]);
+    return true;
+  } catch (err: any) {
+    console.warn('[cPanel DB] Error deleting draft from MySQL:', err.message || err);
+    return false;
+  }
+}
+
 
 

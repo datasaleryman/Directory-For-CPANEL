@@ -48,6 +48,9 @@ import {
   savePortalAttachmentToCPanel,
   fetchPortalAttachmentsFromCPanel,
   deletePortalAttachmentFromCPanel,
+  saveDraftToCPanel,
+  fetchDraftsFromCPanel,
+  deleteDraftFromCPanel,
   fetchAllFromCPanelDb,
   getCPanelDbStatus,
   isCPanelDbConnected,
@@ -14274,19 +14277,31 @@ function ensureDraftsLoadedSync() {
   }
 }
 
-export function getMyDrafts(username: string, isSuperUser: boolean = false): DraftItem[] {
+export function getMyDrafts(username: string): DraftItem[] {
   ensureDraftsLoadedSync();
   const u = (username || '').toLowerCase().trim();
-  if (isSuperUser || !u || u === 'admin') {
-    return [...draftsCache];
+  if (!u) {
+    return [];
   }
+  // Strictly isolate drafts: only the exact account that saved the draft can view their work
   return draftsCache.filter(d => (d.saved_by || '').toLowerCase().trim() === u);
 }
 
 export async function saveDraft(data: Partial<DraftItem>, username: string = 'Staff'): Promise<DraftItem> {
   ensureDraftsLoadedSync();
   const now = new Date().toISOString();
+  const u = (username || 'Staff').trim();
+  const uLower = u.toLowerCase();
   const id = data.id || `draft_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+  const existingIdx = draftsCache.findIndex(d => d.id === id);
+  if (existingIdx >= 0) {
+    const existing = draftsCache[existingIdx];
+    // Enforce ownership: only the author who saved the draft can edit it
+    if ((existing.saved_by || '').toLowerCase().trim() !== uLower) {
+      throw new Error('Access Denied: Only the account that saved this draft can modify it.');
+    }
+  }
 
   const item: DraftItem = {
     id,
@@ -14295,13 +14310,12 @@ export async function saveDraft(data: Partial<DraftItem>, username: string = 'St
     purok: String(data.purok || '').trim(),
     attachments: Array.isArray(data.attachments) ? data.attachments : [],
     notes: data.notes || '',
-    saved_by: data.saved_by || username || 'Staff',
-    saved_at: now,
-    created_at: data.created_at || now,
+    saved_by: existingIdx >= 0 ? draftsCache[existingIdx].saved_by : u,
+    saved_at: existingIdx >= 0 ? draftsCache[existingIdx].saved_at : now,
+    created_at: data.created_at || (existingIdx >= 0 ? draftsCache[existingIdx].created_at : now),
     updated_at: now
   };
 
-  const existingIdx = draftsCache.findIndex(d => d.id === id);
   if (existingIdx >= 0) {
     draftsCache[existingIdx] = { ...draftsCache[existingIdx], ...item, updated_at: now };
   } else {
@@ -14309,26 +14323,42 @@ export async function saveDraft(data: Partial<DraftItem>, username: string = 'St
   }
 
   await safeWriteFile(DRAFTS_FILE, JSON.stringify(draftsCache, null, 2), 'utf-8');
-  await addActivity(username, `Saved Draft for "${item.full_name}" (Barangay: ${item.barangay}) with ${item.attachments.length} attachment(s).`);
+  await saveDraftToCPanel(item);
+  await addActivity(u, `Saved Draft for "${item.full_name}" (Barangay: ${item.barangay}) with ${item.attachments.length} attachment(s).`);
 
   return item;
 }
 
 export async function deleteDraft(id: string, username: string = 'Staff'): Promise<boolean> {
   ensureDraftsLoadedSync();
+  const uLower = (username || '').toLowerCase().trim();
   const idx = draftsCache.findIndex(d => d.id === id);
   if (idx === -1) return false;
+
+  const target = draftsCache[idx];
+  // Enforce ownership: only the author who saved the draft can delete it
+  if (uLower && (target.saved_by || '').toLowerCase().trim() !== uLower) {
+    throw new Error('Access Denied: Only the account that saved this draft can delete it.');
+  }
+
   const removed = draftsCache.splice(idx, 1)[0];
   await safeWriteFile(DRAFTS_FILE, JSON.stringify(draftsCache, null, 2), 'utf-8');
+  await deleteDraftFromCPanel(id);
   await addActivity(username, `Deleted Draft for "${removed.full_name}".`);
   return true;
 }
 
 export async function submitDraftForVerification(id: string, username: string = 'Staff'): Promise<PortalAttachmentItem> {
   ensureDraftsLoadedSync();
+  const uLower = (username || '').toLowerCase().trim();
   const draft = draftsCache.find(d => d.id === id);
   if (!draft) {
     throw new Error('Draft record not found.');
+  }
+
+  // Enforce ownership: only the author who saved the draft can submit it
+  if (uLower && (draft.saved_by || '').toLowerCase().trim() !== uLower) {
+    throw new Error('Access Denied: Only the account that saved this draft can submit it for verification.');
   }
 
   // Create Portal Attachment in VERIFICATION section
@@ -14351,8 +14381,8 @@ export async function submitDraftForVerification(id: string, username: string = 
 
 export function getPortalAttachmentSqlCode(): string {
   return `-- =========================================================================
--- SAINT FRANCIS CLINIC DIRECTORY - CPANEL MYSQL UPDATE
--- Table: portal_attachments (Portal Attachment Page - Multi-file Uploads)
+-- SAINT FRANCIS CLINIC - CPANEL MYSQL UPDATE SCRIPT
+-- Tables: my_drafts, portal_attachments
 -- Compatible with cPanel MySQL 5.7+, MySQL 8.0+, MariaDB 10.3+
 -- Ready for phpMyAdmin / cPanel MySQL Databases Import
 -- =========================================================================
@@ -14361,7 +14391,28 @@ SET FOREIGN_KEY_CHECKS = 0;
 SET SQL_MODE = "NO_AUTO_VALUE_ON_ZERO";
 SET time_zone = "+00:00";
 
--- 1. Create Table: portal_attachments
+-- -------------------------------------------------------------------------
+-- 1. Create Table: my_drafts (Staging drafts isolated per user account)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS \`my_drafts\` (
+  \`id\` VARCHAR(100) NOT NULL PRIMARY KEY,
+  \`full_name\` VARCHAR(255) NOT NULL,
+  \`barangay\` VARCHAR(255) NOT NULL DEFAULT '',
+  \`purok\` VARCHAR(255) DEFAULT '',
+  \`attachments\` LONGTEXT NULL,
+  \`notes\` TEXT NULL,
+  \`saved_by\` VARCHAR(255) NOT NULL,
+  \`saved_at\` VARCHAR(100) DEFAULT '',
+  \`created_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  \`updated_at\` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX \`idx_md_saved_by\` (\`saved_by\`),
+  INDEX \`idx_md_barangay\` (\`barangay\`),
+  INDEX \`idx_md_full_name\` (\`full_name\`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
+-- 2. Create Table: portal_attachments (Portal Attachment Workflow & Folders)
+-- -------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS \`portal_attachments\` (
   \`id\` VARCHAR(100) NOT NULL PRIMARY KEY,
   \`full_name\` VARCHAR(255) NOT NULL,
@@ -14383,8 +14434,42 @@ CREATE TABLE IF NOT EXISTS \`portal_attachments\` (
   INDEX \`idx_pa_uploaded_at\` (\`uploaded_at\`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 2. Update Role Permissions (if role_permissions table exists)
--- Automatically add 'portal-attachment' and 'my-drafts' page permissions to all existing roles
+-- -------------------------------------------------------------------------
+-- 3. Upgrade Existing portal_attachments Table (if columns are missing)
+-- -------------------------------------------------------------------------
+-- Safe column addition for MySQL 5.7+ / MariaDB
+DROP PROCEDURE IF EXISTS upgrade_portal_attachments_schema;
+DELIMITER ;;
+CREATE PROCEDURE upgrade_portal_attachments_schema()
+BEGIN
+  IF NOT EXISTS (
+    SELECT * FROM information_schema.COLUMNS 
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'portal_attachments' AND COLUMN_NAME = 'return_reason'
+  ) THEN
+    ALTER TABLE \`portal_attachments\` ADD COLUMN \`return_reason\` TEXT NULL AFTER \`status\`;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT * FROM information_schema.COLUMNS 
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'portal_attachments' AND COLUMN_NAME = 'returned_at'
+  ) THEN
+    ALTER TABLE \`portal_attachments\` ADD COLUMN \`returned_at\` VARCHAR(100) NULL AFTER \`return_reason\`;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT * FROM information_schema.COLUMNS 
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'portal_attachments' AND COLUMN_NAME = 'returned_by'
+  ) THEN
+    ALTER TABLE \`portal_attachments\` ADD COLUMN \`returned_by\` VARCHAR(255) NULL AFTER \`returned_at\`;
+  END IF;
+END;;
+DELIMITER ;
+CALL upgrade_portal_attachments_schema();
+DROP PROCEDURE IF EXISTS upgrade_portal_attachments_schema;
+
+-- -------------------------------------------------------------------------
+-- 4. Update Role Permissions (if role_permissions table exists in cPanel)
+-- -------------------------------------------------------------------------
 UPDATE \`role_permissions\` 
 SET \`allowed_pages\` = CONCAT(\`allowed_pages\`, ',"portal-attachment"')
 WHERE \`allowed_pages\` NOT LIKE '%portal-attachment%';
@@ -14395,8 +14480,12 @@ WHERE \`allowed_pages\` NOT LIKE '%my-drafts%';
 
 SET FOREIGN_KEY_CHECKS = 1;
 
+-- -------------------------------------------------------------------------
 -- Verification Check:
-SELECT 'portal_attachments table created successfully' AS status, COUNT(*) AS total_records FROM \`portal_attachments\`;
+-- -------------------------------------------------------------------------
+SELECT 'my_drafts table ready' AS status, COUNT(*) AS total_records FROM \`my_drafts\`
+UNION ALL
+SELECT 'portal_attachments table ready' AS status, COUNT(*) AS total_records FROM \`portal_attachments\`;
 `;
 }
 

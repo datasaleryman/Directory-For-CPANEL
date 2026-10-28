@@ -105,7 +105,7 @@ export default function App() {
 
   // Auto-expand "SUBMISSIONS" if a sub-tab is active
   useEffect(() => {
-    if (['my-drafts', 'submit-pcu', 'exist-directory'].includes(activeTab)) {
+    if (['my-drafts', 'directory', 'exist-directory'].includes(activeTab)) {
       setIsSubmissionsOpen(true);
     }
   }, [activeTab]);
@@ -779,7 +779,7 @@ export default function App() {
             { id: 'dashboard', label: siteSettings.navDashboard || 'Dashboard', icon: LayoutDashboard },
             { id: 'inbox', label: 'Inbox', icon: Mail },
             { id: 'map', label: siteSettings.navMap || 'Clinic Map', icon: MapPin },
-            { id: 'directory', label: siteSettings.navDirectory || 'Patient List', icon: Users },
+            { id: 'submit-pcu', label: siteSettings.navSubmitPcu || 'Submit PCU', icon: UploadCloud },
           ] as const)
             .filter((item) => hasTabPermission(item.id))
             .map((item) => {
@@ -822,7 +822,7 @@ export default function App() {
           {(() => {
             const submissionItems = [
               { id: 'my-drafts', label: 'My Drafts', icon: FilePenLine },
-              { id: 'submit-pcu', label: siteSettings.navSubmitPcu || 'PCU Directory', icon: UploadCloud },
+              { id: 'directory', label: siteSettings.navDirectory || 'PCU Directory', icon: Users },
               { id: 'exist-directory', label: siteSettings.navExistDirectory || 'Exist Directory', icon: FolderCheck },
             ] as const;
 

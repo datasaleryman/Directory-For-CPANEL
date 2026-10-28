@@ -870,9 +870,9 @@ export const Returned: React.FC<ReturnedProps> = ({
                   )}
 
                   {/* Existing Files indicator */}
-                  <div className="pt-2 text-[11px] text-slate-500">
-                    <span className="font-bold">Existing attachments ({resubmitTarget.uploadedFiles?.length || 1}):</span>
-                    <span className="ml-1 text-slate-400">will remain retained alongside any new documents uploaded.</span>
+                  <div className="pt-2 text-[11px] text-red-600 font-semibold">
+                    <span className="font-bold text-red-600">Existing attachments ({resubmitTarget.uploadedFiles?.length || 1}):</span>
+                    <span className="ml-1 text-red-600">will remain retained alongside any new documents uploaded.</span>
                   </div>
                 </div>
               </div>

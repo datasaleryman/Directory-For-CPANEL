@@ -111,6 +111,13 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
   const [returnReason, setReturnReason] = useState('');
   const [isProcessingStatus, setIsProcessingStatus] = useState(false);
 
+  // Central Confirmation Modal State (Approve, Pending, Return, Delete, RTV)
+  const [actionConfirmation, setActionConfirmation] = useState<{
+    type: 'APPROVE' | 'PENDING' | 'RETURN' | 'RTV' | 'DELETE';
+    item: PortalAttachmentItem;
+  } | null>(null);
+  const [actionReturnReason, setActionReturnReason] = useState('');
+
   // Form State for Add / Edit
   const [fullName, setFullName] = useState('');
   const [barangay, setBarangay] = useState('');
@@ -124,7 +131,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
 
   // Check if user is an administrator
   const roleUpper = (currentUser?.role || '').toUpperCase();
-  const isMasterAdmin = roleUpper.includes('ADMIN') || roleUpper.includes('LEADER') || currentUser?.username?.toLowerCase() === 'admin';
+  const isMasterAdmin = roleUpper.includes('ADMIN') || roleUpper.includes('LEADER') || roleUpper.includes('IT') || currentUser?.username?.toLowerCase() === 'admin';
 
   // Fetch portal attachment records
   const fetchPortalAttachments = async () => {
@@ -544,16 +551,63 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
     }
   };
 
+  // Open Confirmation Modal in center of screen for Approve, Pending, Return, Delete, RTV
+  const handleOpenConfirmAction = (
+    type: 'APPROVE' | 'PENDING' | 'RETURN' | 'RTV' | 'DELETE',
+    item: PortalAttachmentItem
+  ) => {
+    setActionReturnReason(item.return_reason || '');
+    setActionConfirmation({ type, item });
+  };
+
+  const handleExecuteConfirmedAction = async () => {
+    if (!actionConfirmation) return;
+    const { type, item } = actionConfirmation;
+
+    if (type === 'DELETE') {
+      setIsProcessingStatus(true);
+      try {
+        const res = await fetch(`/api/portal-attachments/${item.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Failed to delete record.');
+
+        showToast(`Record "${item.full_name}" deleted permanently.`, 'success');
+        setActionConfirmation(null);
+        if (viewItem && viewItem.id === item.id) setViewItem(null);
+        await fetchPortalAttachments();
+      } catch (err: any) {
+        showToast(err.message, 'error');
+      } finally {
+        setIsProcessingStatus(false);
+      }
+    } else if (type === 'RETURN') {
+      const finalReason = actionReturnReason.trim() || 'Returned by administrator for corrections / resubmission';
+      await handleUpdateStatus(item.id, 'RETURNED', finalReason);
+      setActionConfirmation(null);
+      setActionReturnReason('');
+    } else if (type === 'APPROVE') {
+      await handleUpdateStatus(item.id, 'APPROVED');
+      setActionConfirmation(null);
+    } else if (type === 'PENDING') {
+      await handleUpdateStatus(item.id, 'PENDING');
+      setActionConfirmation(null);
+    } else if (type === 'RTV') {
+      await handleUpdateStatus(item.id, 'VERIFICATION');
+      setActionConfirmation(null);
+    }
+  };
+
   // Open Return Modal
   const handleOpenReturnModal = (item: PortalAttachmentItem) => {
-    setReturnTarget(item);
-    setReturnReason('');
+    handleOpenConfirmAction('RETURN', item);
   };
 
   const handleConfirmReturn = async () => {
-    if (!returnTarget) return;
-    const finalReason = returnReason.trim() || 'Returned by administrator for corrections / resubmission';
-    await handleUpdateStatus(returnTarget.id, 'RETURNED', finalReason);
+    if (!actionConfirmation || actionConfirmation.type !== 'RETURN') return;
+    await handleExecuteConfirmedAction();
   };
 
   // Delete Action
@@ -591,49 +645,6 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Top Header Bar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-emerald-600 to-teal-800 text-white flex items-center justify-center shadow-md shadow-emerald-900/10">
-            <Paperclip className="w-5 h-5 text-emerald-100" />
-          </div>
-          <div>
-            <h1 className="text-xl sm:text-2xl font-black text-slate-800 tracking-tight font-display flex items-center gap-2">
-              <span>Portal Attachment</span>
-            </h1>
-            <p className="text-xs text-slate-400 font-medium">
-              Submissions organized into Barangay Folders across Verification, Pending, Approved &amp; Returned sections
-            </p>
-          </div>
-        </div>
-
-        {/* Global Action Buttons */}
-        <div className="flex flex-wrap items-center gap-2.5 self-end sm:self-auto">
-          {/* Refresh / Sync Button */}
-          <button
-            type="button"
-            onClick={fetchPortalAttachments}
-            disabled={loading}
-            className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl shadow-xs transition-all cursor-pointer flex items-center gap-1.5 border border-slate-700"
-            title="Refresh submissions"
-          >
-            <RotateCw className={`w-3.5 h-3.5 text-emerald-400 ${loading ? 'animate-spin' : ''}`} />
-            <span>Sync</span>
-          </button>
-
-          {/* New Attach Button */}
-          <button
-            type="button"
-            onClick={handleOpenAddModal}
-            className="px-4 py-2 bg-gradient-to-r from-emerald-700 to-teal-800 hover:from-emerald-800 hover:to-teal-900 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-900/10 transition-all cursor-pointer flex items-center gap-2"
-            title="Create a new attachment submission"
-          >
-            <Plus className="w-4 h-4 text-emerald-200" />
-            <span>New Attach.</span>
-          </button>
-        </div>
-      </div>
-
       {/* 4 SECTION TABS: VERIFICATION, PENDING, APPROVED, RETURNED */}
       <div className="bg-white border border-slate-200/80 rounded-2xl p-1.5 shadow-xs flex flex-wrap items-center gap-1.5">
         {(
@@ -671,6 +682,17 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
             </button>
           );
         })}
+
+        {/* Sync Button */}
+        <button
+          type="button"
+          onClick={fetchPortalAttachments}
+          disabled={loading}
+          className="p-2.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-xl transition-all cursor-pointer border border-transparent hover:border-slate-200"
+          title="Refresh submissions"
+        >
+          <RotateCw className={`w-4 h-4 text-emerald-600 ${loading ? 'animate-spin' : ''}`} />
+        </button>
       </div>
 
       {/* VIEW LEVEL 1: BARANGAY FOLDERS VIEW (When no specific folder is selected) */}
@@ -728,16 +750,6 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                     : `No records currently in ${activeSection} status.`}
                 </p>
               </div>
-              {activeSection === 'VERIFICATION' && (
-                <button
-                  type="button"
-                  onClick={handleOpenAddModal}
-                  className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
-                >
-                  <Plus className="w-4 h-4 text-emerald-200" />
-                  <span>New Attach.</span>
-                </button>
-              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
@@ -912,14 +924,6 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
               <p className="text-xs text-slate-400 max-w-sm mx-auto">
                 No submissions matching your current search or filters inside Barangay {selectedFolder}.
               </p>
-              <button
-                type="button"
-                onClick={handleOpenAddModal}
-                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Add Record to this Barangay</span>
-              </button>
             </div>
           ) : (
             <div className="space-y-6">
@@ -1047,7 +1051,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                             {/* Approve */}
                             <button
                               type="button"
-                              onClick={() => handleUpdateStatus(item.id, 'APPROVED')}
+                              onClick={() => handleOpenConfirmAction('APPROVE', item)}
                               disabled={isProcessingStatus}
                               className="py-1 px-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 shadow-2xs transition-all cursor-pointer"
                               title="Approve submission"
@@ -1059,7 +1063,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                             {/* Pending */}
                             <button
                               type="button"
-                              onClick={() => handleUpdateStatus(item.id, 'PENDING')}
+                              onClick={() => handleOpenConfirmAction('PENDING', item)}
                               disabled={isProcessingStatus}
                               className="py-1 px-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 shadow-2xs transition-all cursor-pointer"
                               title="Mark as Pending"
@@ -1071,7 +1075,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                             {/* Return */}
                             <button
                               type="button"
-                              onClick={() => handleOpenReturnModal(item)}
+                              onClick={() => handleOpenConfirmAction('RETURN', item)}
                               disabled={isProcessingStatus}
                               className="py-1 px-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 shadow-2xs transition-all cursor-pointer"
                               title="Return record for resubmission"
@@ -1087,7 +1091,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                             {/* Approve */}
                             <button
                               type="button"
-                              onClick={() => handleUpdateStatus(item.id, 'APPROVED')}
+                              onClick={() => handleOpenConfirmAction('APPROVE', item)}
                               disabled={isProcessingStatus}
                               className="py-1 px-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 shadow-2xs transition-all cursor-pointer"
                               title="Approve submission"
@@ -1099,7 +1103,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                             {/* Return */}
                             <button
                               type="button"
-                              onClick={() => handleOpenReturnModal(item)}
+                              onClick={() => handleOpenConfirmAction('RETURN', item)}
                               disabled={isProcessingStatus}
                               className="py-1 px-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 shadow-2xs transition-all cursor-pointer"
                               title="Return record for resubmission"
@@ -1111,7 +1115,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                             {/* RTV (Return to Verification) */}
                             <button
                               type="button"
-                              onClick={() => handleUpdateStatus(item.id, 'VERIFICATION')}
+                              onClick={() => handleOpenConfirmAction('RTV', item)}
                               disabled={isProcessingStatus}
                               className="py-1 px-1.5 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-extrabold text-[10px] uppercase tracking-wider flex items-center justify-center gap-1 shadow-2xs transition-all cursor-pointer"
                               title="Return to Verification (RTV)"
@@ -1127,7 +1131,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                             {/* RTV */}
                             <button
                               type="button"
-                              onClick={() => handleUpdateStatus(item.id, 'VERIFICATION')}
+                              onClick={() => handleOpenConfirmAction('RTV', item)}
                               disabled={isProcessingStatus}
                               className="flex-1 py-1 px-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-extrabold text-[11px] uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-2xs transition-all cursor-pointer"
                               title="Return to Verification (RTV)"
@@ -1143,7 +1147,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                             {/* RTV */}
                             <button
                               type="button"
-                              onClick={() => handleUpdateStatus(item.id, 'VERIFICATION')}
+                              onClick={() => handleOpenConfirmAction('RTV', item)}
                               disabled={isProcessingStatus}
                               className="flex-1 py-1 px-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white font-extrabold text-[11px] uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-2xs transition-all cursor-pointer"
                               title="Return to Verification (RTV)"
@@ -1175,10 +1179,10 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                               <Edit2 className="w-3 h-3" />
                             </button>
 
-                            {isMasterAdmin && (
+                            {(isMasterAdmin || item.submitted_by === currentUser?.username) && (
                               <button
                                 type="button"
-                                onClick={() => setDeleteTarget(item)}
+                                onClick={() => handleOpenConfirmAction('DELETE', item)}
                                 className="p-1 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-md transition-all cursor-pointer"
                                 title="Delete portal attachment"
                               >
@@ -1652,7 +1656,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                   {(viewItem.status === 'VERIFICATION' || viewItem.status === 'SUBMITTED' || viewItem.status === 'PENDING') && (
                     <button
                       type="button"
-                      onClick={() => handleUpdateStatus(viewItem.id, 'APPROVED')}
+                      onClick={() => handleOpenConfirmAction('APPROVE', viewItem)}
                       disabled={isProcessingStatus}
                       className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs uppercase flex items-center gap-1 shadow-xs cursor-pointer"
                     >
@@ -1665,7 +1669,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                   {(viewItem.status === 'VERIFICATION' || viewItem.status === 'SUBMITTED') && (
                     <button
                       type="button"
-                      onClick={() => handleUpdateStatus(viewItem.id, 'PENDING')}
+                      onClick={() => handleOpenConfirmAction('PENDING', viewItem)}
                       disabled={isProcessingStatus}
                       className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-extrabold text-xs uppercase flex items-center gap-1 shadow-xs cursor-pointer"
                     >
@@ -1678,7 +1682,7 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                   {(viewItem.status === 'VERIFICATION' || viewItem.status === 'SUBMITTED' || viewItem.status === 'PENDING') && (
                     <button
                       type="button"
-                      onClick={() => handleOpenReturnModal(viewItem)}
+                      onClick={() => handleOpenConfirmAction('RETURN', viewItem)}
                       disabled={isProcessingStatus}
                       className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs uppercase flex items-center gap-1 shadow-xs cursor-pointer"
                     >
@@ -1691,12 +1695,26 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
                   {(viewItem.status === 'PENDING' || viewItem.status === 'APPROVED' || viewItem.status === 'VERIFIED' || viewItem.status === 'RETURNED') && (
                     <button
                       type="button"
-                      onClick={() => handleUpdateStatus(viewItem.id, 'VERIFICATION')}
+                      onClick={() => handleOpenConfirmAction('RTV', viewItem)}
                       disabled={isProcessingStatus}
                       className="px-3 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-extrabold text-xs uppercase flex items-center gap-1 shadow-xs cursor-pointer"
                     >
                       <Undo2 className="w-3.5 h-3.5" />
                       <span>RTV</span>
+                    </button>
+                  )}
+
+                  {/* Delete (Admin only) */}
+                  {isMasterAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenConfirmAction('DELETE', viewItem)}
+                      disabled={isProcessingStatus}
+                      className="px-3 py-1.5 rounded-xl bg-rose-700/80 hover:bg-rose-700 text-white font-extrabold text-xs uppercase flex items-center gap-1 shadow-xs cursor-pointer"
+                      title="Delete record permanently"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete</span>
                     </button>
                   )}
                 </div>
@@ -1900,40 +1918,191 @@ export const PortalAttachment: React.FC<PortalAttachmentProps> = ({
         )}
       </AnimatePresence>
 
-      {/* MODAL 4: DELETE CONFIRMATION */}
+      {/* =========================================================================
+          MODAL 4: CONFIRMATION POPUP IN CENTER OF SCREEN (Approve, Pending, Return, Delete, RTV)
+         ========================================================================= */}
       <AnimatePresence>
-        {deleteTarget && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+        {actionConfirmation && (
+          <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4 z-50">
             <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 text-center space-y-4"
+              initial={{ opacity: 0, scale: 0.92, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 12 }}
+              transition={{ duration: 0.16 }}
+              className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 shadow-2xl border border-slate-200/90 flex flex-col items-center text-center space-y-4"
             >
-              <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
-                <Trash2 className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-black text-slate-800">Delete Record Permanently?</h3>
-                <p className="text-xs text-slate-500 mt-1">
-                  Are you sure you want to delete the portal attachment submission for{' '}
-                  <strong className="text-slate-800 font-bold">{deleteTarget.full_name}</strong>? All {deleteTarget.attachments?.length || 0} attached files will be removed.
+              {/* Action Icon Header */}
+              {actionConfirmation.type === 'APPROVE' && (
+                <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shadow-md shadow-emerald-600/20">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
+              )}
+              {actionConfirmation.type === 'PENDING' && (
+                <div className="w-14 h-14 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shadow-md shadow-amber-600/20">
+                  <Clock className="w-8 h-8" />
+                </div>
+              )}
+              {actionConfirmation.type === 'RETURN' && (
+                <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center shadow-md shadow-rose-600/20">
+                  <RotateCcw className="w-8 h-8" />
+                </div>
+              )}
+              {actionConfirmation.type === 'RTV' && (
+                <div className="w-14 h-14 rounded-2xl bg-teal-100 text-teal-800 flex items-center justify-center shadow-md shadow-teal-700/20">
+                  <Undo2 className="w-8 h-8" />
+                </div>
+              )}
+              {actionConfirmation.type === 'DELETE' && (
+                <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center shadow-md shadow-rose-600/20">
+                  <Trash2 className="w-8 h-8" />
+                </div>
+              )}
+
+              {/* Title & Description */}
+              <div className="space-y-1.5 w-full">
+                <h3 className="text-lg sm:text-xl font-black text-slate-900 font-display">
+                  {actionConfirmation.type === 'APPROVE' && 'Approve Submission?'}
+                  {actionConfirmation.type === 'PENDING' && 'Mark Record as Pending?'}
+                  {actionConfirmation.type === 'RETURN' && 'Return Submission for Resubmission?'}
+                  {actionConfirmation.type === 'RTV' && 'Return to Verification (RTV)?'}
+                  {actionConfirmation.type === 'DELETE' && 'Permanently Delete Record?'}
+                </h3>
+                <p className="text-xs text-slate-500 leading-relaxed max-w-md mx-auto">
+                  {actionConfirmation.type === 'APPROVE' && 'This submission will be approved and transferred immediately to the APPROVED section.'}
+                  {actionConfirmation.type === 'PENDING' && 'This submission will be placed on hold and moved to the PENDING section.'}
+                  {actionConfirmation.type === 'RETURN' && 'This submission will be moved to the RETURNED section and reflected on the Returned page for user resubmission.'}
+                  {actionConfirmation.type === 'RTV' && 'This record will be transferred back to the VERIFICATION section for review.'}
+                  {actionConfirmation.type === 'DELETE' && 'This record and all its uploaded attachments will be deleted permanently. This action cannot be undone.'}
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-3 pt-2">
+
+              {/* Patient and Record Summary Box */}
+              <div className="w-full bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 text-left space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Patient Name</span>
+                  <span className="font-black text-slate-900 text-xs sm:text-sm uppercase">{actionConfirmation.item.full_name}</span>
+                </div>
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200/60">
+                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Barangay & Purok</span>
+                  <span className="font-bold text-slate-700 text-xs">
+                    {actionConfirmation.item.barangay} {actionConfirmation.item.purok ? `· ${actionConfirmation.item.purok}` : ''}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200/60">
+                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Current Status / Files</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-slate-200 text-slate-800">
+                      {actionConfirmation.item.status || 'VERIFICATION'}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                      {actionConfirmation.item.attachments?.length || 0} file(s)
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Return Reason Field (Only When action is RETURN) */}
+              {actionConfirmation.type === 'RETURN' && (
+                <div className="w-full text-left space-y-1.5">
+                  <label className="block text-[11px] font-extrabold text-slate-700 uppercase tracking-wider">
+                    Reason for Return <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={actionReturnReason}
+                    onChange={e => setActionReturnReason(e.target.value)}
+                    placeholder="Provide specific details why this file is returned (e.g. Please re-upload clearer copy of valid ID or complete proof of residency)..."
+                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-rose-500 focus:bg-white rounded-xl text-xs font-medium text-slate-800 outline-none transition-all resize-none shadow-xs"
+                  />
+                  {/* Preset quick buttons */}
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {[
+                      'Incomplete attachments',
+                      'Blurry/unreadable image',
+                      'Wrong barangay selected',
+                      'Needs updated ID'
+                    ].map(preset => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setActionReturnReason(preset)}
+                        className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-[10px] font-semibold text-slate-600 transition-colors cursor-pointer"
+                      >
+                        + {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Action Confirmation Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-2 w-full">
                 <button
                   type="button"
-                  onClick={() => setDeleteTarget(null)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+                  disabled={isProcessingStatus}
+                  onClick={() => {
+                    setActionConfirmation(null);
+                    setActionReturnReason('');
+                  }}
+                  className="flex-1 sm:flex-none px-5 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs transition-colors cursor-pointer disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={handleConfirmDelete}
-                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all cursor-pointer"
+                  disabled={isProcessingStatus}
+                  onClick={handleExecuteConfirmedAction}
+                  className={`flex-1 sm:flex-none px-6 py-2.5 rounded-xl font-extrabold text-xs text-white shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${
+                    actionConfirmation.type === 'APPROVE'
+                      ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/30'
+                      : actionConfirmation.type === 'PENDING'
+                      ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/30'
+                      : actionConfirmation.type === 'RETURN'
+                      ? 'bg-rose-600 hover:bg-rose-700 shadow-rose-600/30'
+                      : actionConfirmation.type === 'RTV'
+                      ? 'bg-teal-700 hover:bg-teal-800 shadow-teal-800/30'
+                      : 'bg-rose-600 hover:bg-rose-700 shadow-rose-600/30'
+                  }`}
                 >
-                  Delete Record
+                  {isProcessingStatus ? (
+                    <>
+                      <RotateCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Processing...</span>
+                    </>
+                  ) : (
+                    <>
+                      {actionConfirmation.type === 'APPROVE' && (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Confirm Approve</span>
+                        </>
+                      )}
+                      {actionConfirmation.type === 'PENDING' && (
+                        <>
+                          <Clock className="w-3.5 h-3.5" />
+                          <span>Confirm Pending</span>
+                        </>
+                      )}
+                      {actionConfirmation.type === 'RETURN' && (
+                        <>
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>Confirm Return</span>
+                        </>
+                      )}
+                      {actionConfirmation.type === 'RTV' && (
+                        <>
+                          <Undo2 className="w-3.5 h-3.5" />
+                          <span>Confirm RTV</span>
+                        </>
+                      )}
+                      {actionConfirmation.type === 'DELETE' && (
+                        <>
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Delete Record</span>
+                        </>
+                      )}
+                    </>
+                  )}
                 </button>
               </div>
             </motion.div>
